@@ -13,7 +13,7 @@
 
 import type { DataAttr, DeclItem, Expr, FormatItem, Program, Ref, Stmt } from "./ast.js";
 import { groupNames, qualifyDeclareItems } from "./declare.js";
-import { BUILTIN_NAMES } from "./interp.js";
+import { BUILTIN_NAMES, BUILTIN_SUBROUTINE_NAMES } from "./interp.js";
 import { parse } from "./parser.js";
 import type { PliHost } from "./host.js";
 import { ASSERT_PROCEDURES, isTestSource } from "./testing.js";
@@ -731,7 +731,11 @@ class Linter {
         const key = s.name.toUpperCase();
         const proc = scope.lookupProc(key);
         if (proc) proc.calls++;
-        else if (!this.injected.has(key) && !scope.hasName(key)) {
+        else if (
+          !BUILTIN_SUBROUTINE_NAMES.has(key) &&
+          !this.injected.has(key) &&
+          !scope.hasName(key)
+        ) {
           this.report(
             "undefined-procedure",
             s.line,

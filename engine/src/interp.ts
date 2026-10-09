@@ -35,6 +35,11 @@ import {
   type StreamFile,
 } from "./streamio.js";
 import { parse } from "./parser.js";
+import { parseDbd } from "./dli/dbd.js";
+import { parsePsb } from "./dli/psb.js";
+import { Database } from "./dli/store.js";
+import { DliRuntime, DliUnsupported, type PcbState } from "./dli/dli.js";
+import { DliDefError, type DbdDef } from "./dli/types.js";
 import {
   FixedOverflow,
   MAX_BIN,
@@ -286,6 +291,8 @@ export class Interpreter {
   private inCondition = false;
   /** ENTRY で宣言された外部手続きの名前。呼ばれたときの説明に使う。 */
   private readonly externalEntries = new Set<string>();
+  /** DL/I ランタイム。PSB が指定されたときだけ作る。 */
+  private dli: DliRuntime | undefined;
   /**
    * BASED 宣言の雛形。確保の単位（構造体なら親の名前）ごとに
    * 葉の並びを覚えておき、ALLOCATE のときに記憶域を作る。
@@ -352,9 +359,13 @@ export class Interpreter {
     }
     // 主手続きが引数を取る場合はコマンドライン引数を渡す。
     // numwrd.pli の `NUMWRD: proc(parm) options(main)` がこれに依存する。
-    const args: Value[] = main.params.map((_, i) =>
-      makeChar(this.opts.args?.[i] ?? "", undefined, true),
-    );
+    //
+    // PSB が指定されているときは PCB のポインタになる。実機の IMS でも
+    // 主手続きは PCB のポインタの並びしか受け取らないので、混ぜない。
+    const args: Value[] =
+      this.opts.psb === undefined
+        ? main.params.map((_, i) => makeChar(this.opts.args?.[i] ?? "", undefined, true))
+        : this.pcbPointers(main.params.length, main.line);
     this.callProcedure({ stmt: main }, args, global);
   }
 
@@ -365,7 +376,22 @@ export class Interpreter {
 
   /** 実行の後始末。開いたままのファイルを閉じてホストへ書き戻す。 */
   finishFiles(): void {
+    this.finishDli();
     this.files.closeAll();
+  }
+
+  /**
+   * 更新したデータベースをホストへ書き戻す。
+   * 異常終了でも呼ばれるので、そこまでの更新は残る（ファイルと同じ約束）。
+   */
+  private finishDli(): void {
+    const dli = this.dli;
+    if (dli === undefined) return;
+    for (const name of dli.changed) {
+      const file = this.opts.host?.openFile?.(`${name}.dat`, "update");
+      file?.write?.(dli.database(name).unload());
+    }
+    dli.changed.clear();
   }
 
   // ---- 手続き ----
@@ -409,7 +435,9 @@ export class Interpreter {
    * ユーザー定義手続きの値渡しには手を付けない。
    */
   private callBuiltinSub(s: Extract<Stmt, { kind: "call" }>, scope: Scope): boolean {
-    switch (s.name.toUpperCase()) {
+    const key = s.name.toUpperCase();
+    if (!BUILTIN_SUBROUTINE_NAMES.has(key)) return false;
+    switch (key) {
       case "PLITDLI":
         this.plitdli(s, scope);
         return true;
@@ -429,19 +457,238 @@ export class Interpreter {
     }
   }
 
-  /** `CALL PLITDLI(個数, 機能, PCB, I/O 領域, SSA...)`。 */
+  // ---- DL/I（IMS/DB） ----
+
+  /**
+   * `CALL PLITDLI(引数個数, 機能コード, PCB, I/O 領域, SSA...)`。
+   *
+   * 引数は**値ではなく式のまま**受け取る。DL/I はステータスコードと
+   * セグメント I/O 領域を呼び先が書くので、値渡しでは成立しない。
+   * ユーザー定義手続きの値渡しには触らない（別経路）。
+   */
   private plitdli(s: Extract<Stmt, { kind: "call" }>, scope: Scope): void {
-    this.requireDli(s.line);
+    const dli = this.requireDli(s.line);
+    const args = s.args;
+    if (args.length < 3) {
+      throw new RuntimeError(
+        "CALL PLITDLI には 引数個数・機能コード・PCB の 3 つが最低限必要です",
+        s.line,
+      );
+    }
+    // 第 1 引数は「後続の引数の個数」。実機では合っていなくても
+    // 落ちるだけなので、ここで食い違いを指摘する（よくある誤り）
+    const declared = Number(render(asFixed(this.eval(args[0]!, scope, s.line), s.line)));
+    if (declared !== args.length - 1) {
+      throw new RuntimeError(
+        `CALL PLITDLI の第 1 引数は ${declared} ですが、後ろに渡した引数は ${args.length - 1} 個です`,
+        s.line,
+      );
+    }
+    const func = this.asText(this.eval(args[1]!, scope, s.line));
+    const pcbRef = args[2]!;
+    if (pcbRef.kind !== "ref") {
+      throw new RuntimeError("PLITDLI の第 3 引数は PCB マスクの変数です", s.line);
+    }
+    const index = this.pcbIndexFor(dli, pcbRef, scope, s.line);
+    const ioRef = args[3];
+    const ioArea =
+      ioRef === undefined || ioRef.kind !== "ref"
+        ? ""
+        : this.readIoArea(ioRef, scope, s.line);
+    const ssas = args.slice(4).map((a) => this.asText(this.eval(a, scope, s.line)));
+
+    let result;
+    try {
+      result = dli.call(index, func, ioArea, ssas);
+    } catch (e) {
+      if (e instanceof DliUnsupported) throw new RuntimeError(e.message, s.line);
+      throw e;
+    }
+    if (result.ioArea !== undefined && ioRef !== undefined && ioRef.kind === "ref") {
+      this.writeIoArea(ioRef, result.ioArea, scope, s.line);
+    }
+    this.writePcb(pcbRef, scope, dli.pcb(index), s.line);
   }
 
-  /** DL/I ランタイム。PSB が指定されていなければ誤りとして止める。 */
-  private requireDli(line: number): void {
+  /** DL/I ランタイム。最初に使うときに PSB とデータベースを読む。 */
+  private requireDli(line: number): DliRuntime {
+    if (this.dli !== undefined) return this.dli;
     if (this.opts.psb === undefined) {
       throw new RuntimeError(
         "PSB が指定されていません。DL/I を使うには実行するときに PSB の名前を与えてください",
         line,
       );
     }
+    const read = this.opts.host?.openFile;
+    if (read === undefined) {
+      throw new RuntimeError(
+        "DL/I を使うには、DBD・PSB・データを読めるホストが必要です",
+        line,
+      );
+    }
+    try {
+      this.dli = this.loadDli(this.opts.psb);
+    } catch (e) {
+      if (e instanceof DliDefError) throw new RuntimeError(e.message, line);
+      throw e;
+    }
+    return this.dli;
+  }
+
+  /** PSB を読み、そこから DBD とデータを読む。 */
+  private loadDli(psbName: string): DliRuntime {
+    const text = (name: string): string | undefined =>
+      this.opts.host?.openFile?.(name, "input")?.read?.();
+    const psbFile = `${psbName}.psb`;
+    const psbText = text(psbFile) ?? text(psbName);
+    if (psbText === undefined) {
+      throw new DliDefError("PSB が見つかりません", psbFile, 1);
+    }
+    const dbds = new Map<string, DbdDef>();
+    const resolve = (name: string): DbdDef | undefined => {
+      const found = dbds.get(name);
+      if (found !== undefined) return found;
+      const source = text(`${name}.dbd`);
+      if (source === undefined) return undefined;
+      const dbd = parseDbd(source, `${name}.dbd`);
+      dbds.set(name, dbd);
+      return dbd;
+    };
+    const psb = parsePsb(psbText, psbFile, resolve);
+    const databases = new Map<string, Database>();
+    for (const pcb of psb.pcbs) {
+      if (pcb.kind !== "db" || databases.has(pcb.dbdName!)) continue;
+      const name = pcb.dbdName!;
+      databases.set(name, Database.load(pcb.dbd!, text(`${name}.dat`) ?? "", `${name}.dat`));
+    }
+    return new DliRuntime(psb, databases);
+  }
+
+  /**
+   * 主手続きへ渡す PCB のポインタ。
+   *
+   * 記憶域は処理系が作り、`pcbIndex` の印を付ける。
+   * 葉の形はプログラムの `DCL 1 … BASED(ptr)` が決める（位置で結び付く）。
+   */
+  private pcbPointers(count: number, line: number): Value[] {
+    const dli = this.requireDli(line);
+    if (count > dli.pcbCount) {
+      throw new RuntimeError(
+        `PSB ${dli.psb.name} の PCB は ${dli.pcbCount} 個ですが、主手続きは ${count} 個受け取っています`,
+        line,
+      );
+    }
+    const out: Value[] = [];
+    for (let i = 0; i < count; i++) {
+      const pcb = dli.pcb(i);
+      const cells = new Map<string, Value[]>();
+      for (const slot of pcbLayout(pcb)) {
+        cells.set(slot.name, [slot.value()]);
+      }
+      out.push(
+        makePointer({
+          cells,
+          freed: false,
+          group: `PCB ${i + 1}`,
+          pcbIndex: i,
+        }),
+      );
+    }
+    return out;
+  }
+
+  /** PCB マスクの変数から、どの PCB を指しているかを決める。 */
+  private pcbIndexFor(dli: DliRuntime, ref: Ref, scope: Scope, line: number): number {
+    const name = ref.name.toUpperCase();
+    const v = scope.lookupVar(name) ?? this.leavesOf(name, scope)[0]?.v;
+    const locator = ref.locator ?? v?.based?.pointer;
+    if (locator !== undefined) {
+      const pv = this.eval(locator, scope, line);
+      if (pv.t === "pointer" && pv.target?.pcbIndex !== undefined) return pv.target.pcbIndex;
+    }
+    // BASED ではない構造体をそのまま渡した場合。
+    // DB の PCB が 1 つだけなら迷いようが無いので受け付ける
+    const dbPcbs = dli.psb.pcbs
+      .map((p, i) => ({ p, i }))
+      .filter(({ p }) => p.kind === "db");
+    if (dbPcbs.length === 1) return dbPcbs[0]!.i;
+    throw new RuntimeError(
+      `${ref.name} がどの PCB かを決められません。主手続きの引数で受けたポインタに BASED で宣言してください`,
+      line,
+    );
+  }
+
+  /** 構造体の葉を、書き戻せる形で宣言順に取り出す。 */
+  private leafCells(
+    group: Ref,
+    scope: Scope,
+    line: number,
+  ): { key: string; attr: DataAttr; cells: Value[]; index: number }[] {
+    return this.leavesOf(group.name, scope).map(({ key, v }) => {
+      const ref: Ref = {
+        kind: "ref",
+        name: key,
+        subscripts: [],
+        ...(group.locator === undefined ? {} : { locator: group.locator }),
+      };
+      const based = this.basedCells(v, ref, scope, line);
+      return { key, attr: v.attr, cells: based ?? v.cells, index: 0 };
+    });
+  }
+
+  /**
+   * セグメント I/O 領域を読む。
+   * 項目の幅の規則はレコード入出力と同じ（文字と PICTURE だけ）。
+   */
+  private readIoArea(ref: Ref, scope: Scope, line: number): string {
+    const leaves = this.leafCells(ref, scope, line);
+    if (leaves.length === 0) return this.asText(this.evalRef(ref, scope, line));
+    let text = "";
+    for (const l of leaves) {
+      const w = this.widthOfAttr(l.attr, l.key, line);
+      const cell = l.cells[l.index];
+      text += (cell === undefined ? "" : this.asText(cell)).padEnd(w).slice(0, w);
+    }
+    return text;
+  }
+
+  /** セグメント I/O 領域へ書く。 */
+  private writeIoArea(ref: Ref, record: string, scope: Scope, line: number): void {
+    const leaves = this.leafCells(ref, scope, line);
+    if (leaves.length === 0) {
+      this.assign(ref, makeChar(record, record.length, true), scope, line);
+      return;
+    }
+    let pos = 0;
+    for (const l of leaves) {
+      const w = this.widthOfAttr(l.attr, l.key, line);
+      const piece = record.slice(pos, pos + w).padEnd(w);
+      pos += w;
+      l.cells[l.index] = this.coerce(makeChar(piece, piece.length, true), l.attr, line);
+    }
+  }
+
+  /** DL/I の応答を PCB マスクへ写す。宣言された型に合わせて入れる。 */
+  private writePcb(ref: Ref, scope: Scope, pcb: PcbState, line: number): void {
+    const leaves = this.leafCells(ref, scope, line);
+    if (leaves.length === 0) {
+      throw new RuntimeError(
+        `${ref.name} は PCB マスクとして使えません。` +
+          "DCL 1 名前, 2 DBNAME CHAR(8), 2 SEG_LEVEL CHAR(2), … の形の構造体で宣言してください",
+        line,
+      );
+    }
+    const slots = pcbLayout(pcb);
+    if (leaves.length < slots.length) {
+      throw new RuntimeError(
+        `PCB マスクの項目が ${leaves.length} 個しかありません（${slots.length} 個必要です）`,
+        line,
+      );
+    }
+    slots.forEach((slot, i) => {
+      const leaf = leaves[i]!;
+      leaf.cells[leaf.index] = this.coerce(slot.value(), leaf.attr, line);
+    });
   }
 
   /**
@@ -1384,7 +1631,14 @@ export class Interpreter {
 
   /** 項目が占める文字数。文字として表現できない型は誤りにする。 */
   private recordWidth(v: Variable, key: string, line: number): number {
-    const attr = v.attr;
+    return this.widthOfAttr(v.attr, key, line);
+  }
+
+  /**
+   * 属性から項目の幅を出す。
+   * レコード入出力と DL/I のセグメント I/O 領域が同じ規則を使う。
+   */
+  private widthOfAttr(attr: DataAttr, key: string, line: number): number {
     if (attr.type === "char") return attr.length;
     if (attr.type === "picture") return parsePicture(attr.picture).width;
     throw new RuntimeError(
@@ -1464,6 +1718,18 @@ export class Interpreter {
     // ADDR で取ったポインタを別の BASED 宣言で見る場合。
     // 記憶域が 1 つしか持っていなければ、それを指しているとみなす
     if (storage.cells.size === 1) return [...storage.cells.values()][0]!;
+    // DL/I の PCB は、葉の名前ではなく宣言順で結び付ける。
+    // 名前はプログラムが自由に付けるので、名前では引けない
+    if (storage.pcbIndex !== undefined) {
+      const slots = [...storage.cells.values()];
+      const at = this.leavesOf(v.based.group, scope).findIndex((l) => l.key === key);
+      const slot = at < 0 ? undefined : slots[at];
+      if (slot !== undefined) return slot;
+      throw new RuntimeError(
+        `${ref.name} は PCB マスクの ${slots.length} 項目に収まりません`,
+        line,
+      );
+    }
     throw new RuntimeError(
       `${ref.name} はこの記憶域にありません（確保したのは ${storage.group}）`,
       line,
@@ -2214,6 +2480,46 @@ export type { Base, Value };
  * Linter が「宣言されていない識別子」と取り違えないために公開する。
  * `builtin()` の case と食い違わないことをテストで固定している。
  */
+/**
+ * 処理系が受け持つサブルーチン。CALL でしか呼べず、値は返さない。
+ *
+ * 組込関数（`BUILTIN_NAMES`）とは別に持つ。`builtin()` の中の case を
+ * 数えて組込関数の一覧と突き合わせるテストがあるので、そこへ混ぜない。
+ * Linter が「定義されていない手続き」と取り違えないためにも公開する。
+ */
+export const BUILTIN_SUBROUTINE_NAMES: ReadonlySet<string> = new Set([
+  "PLITDLI", // PL/I から DL/I を呼ぶ入口
+  "CBLTDLI", // COBOL 向け。名指しで断るために載せる
+  "ASMTDLI", // アセンブラ向け。同上
+  "AIBTDLI", // AIB インタフェース。未実装として断る
+]);
+
+/** PCB マスクの規定の並び。葉の名前ではなく、この順で結び付ける。 */
+function pcbLayout(
+  pcb: PcbState,
+): { name: string; attr: DataAttr; value: () => Value }[] {
+  const chars = (v: string, n: number): Value => makeChar(v, n, false);
+  const num = (n: number): Value => makeFixed("bin", MAX_BIN, 0, BigInt(n));
+  const keylen = Math.max(1, pcb.def.keylen);
+  const char = (length: number): DataAttr => ({ type: "char", length, varying: false });
+  const binary: DataAttr = { type: "fixed", base: "bin", p: MAX_BIN, q: 0 };
+  return [
+    { name: "DBNAME", attr: char(8), value: () => chars(pcb.def.dbdName ?? "", 8) },
+    {
+      name: "SEG_LEVEL",
+      attr: char(2),
+      value: () => chars(pcb.level === 0 ? "" : String(pcb.level).padStart(2, "0"), 2),
+    },
+    { name: "STAT_CODE", attr: char(2), value: () => chars(pcb.status, 2) },
+    { name: "PROC_OPT", attr: char(4), value: () => chars(pcb.def.procopt, 4) },
+    { name: "RESERVED", attr: binary, value: () => num(0) },
+    { name: "SEG_NAME", attr: char(8), value: () => chars(pcb.segName, 8) },
+    { name: "LEN_KFB", attr: binary, value: () => num(pcb.keyFeedback.length) },
+    { name: "NO_SENSEG", attr: binary, value: () => num(pcb.def.senseg.size) },
+    { name: "KEY_FB", attr: char(keylen), value: () => chars(pcb.keyFeedback, keylen) },
+  ];
+}
+
 export const BUILTIN_NAMES: ReadonlySet<string> = new Set([
   "ABS",
   "ADDR",
