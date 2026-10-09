@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { runProgram, VERSION } from "../src/index.js";
 
 /**
- * 公開 API。ブラウザ版と VSCode 拡張の両方がこれを使う。
+ * 公開 API。ブラウザ版と VSCode Extension の両方がこれを使う。
  * どちらも「何行目で何が起きたか」を構造化された形で必要とする。
  */
 describe("runProgram", () => {

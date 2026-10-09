@@ -140,7 +140,7 @@ npm run plitest -- a_test.pli --max-steps 100000   # 文の実行数の上限
 
 | 入口 | 操作 |
 |------|------|
-| VSCode 拡張 | `PL/I: テストを実行`（`Cmd/Ctrl+Alt+T`） |
+| VSCode Extension | `PL/I: テストを実行`（`Cmd/Ctrl+Alt+T`） |
 | ブラウザ版 | テストファイルを開いて「実行」。自動でテストとして走る |
 
 どちらも、主手続きが無く `TEST_` 手続きがある場合は

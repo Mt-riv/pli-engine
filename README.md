@@ -14,7 +14,7 @@ end hello;
 
 | できること | 入口 |
 |-----------|------|
-| PL/I を書いて即実行する | [ブラウザ版（HTML 1 枚）](docs/browser-manual.md) / [VSCode 拡張](docs/vscode-manual.md) |
+| PL/I を書いて即実行する | [ブラウザ版（HTML 1 枚）](docs/browser-manual.md) / [VSCode Extension](docs/vscode-manual.md) |
 | 書いたコードを**テスト**する（PL/I で書くテストフレームワーク） | 両方 + CLI `npm run plitest` |
 | 怪しい書き方を**検査**する（Linter 13 規則） | 両方 + CLI `npm run plilint` |
 | よく書く形を**Snippet**から入れる（38 本） | 両方 |
@@ -42,7 +42,7 @@ end hello;
 |--|----|------|
 | Node.js | 20 以上 | ビルドと CLI。[nodejs.org](https://nodejs.org/) |
 | git | 任意 | 取得 |
-| VSCode | 1.90 以上 | 拡張を使う場合のみ |
+| VSCode | 1.90 以上 | Extension を使う場合のみ |
 
 ブラウザで動かすだけなら、ビルドの後は Node.js も不要です
 （生成物は HTML ファイル 1 つ）。
@@ -93,7 +93,20 @@ xdg-open dist-web/index.html
 [nodesource](https://github.com/nodesource/distributions) か
 [nvm](https://github.com/nvm-sh/nvm) を使ってください。
 
-### VSCode 拡張を入れる
+### VSCode Extension を入れる
+
+#### リリースから入手する（手軽）
+
+[Releases](https://github.com/Mt-riv/pli-engine/releases) から
+`pli-lang-0.1.0.vsix` をダウンロードします。ビルドは要りません。
+
+`gh` が使えるなら次でも取れます。
+
+```bash
+gh release download vscode-v0.1.0 --repo Mt-riv/pli-engine
+```
+
+#### 自分でビルドする
 
 ```bash
 cd pli-engine/vscode-pli
@@ -102,8 +115,11 @@ npm run build
 npx @vscode/vsce package      # pli-lang-0.1.0.vsix ができる
 ```
 
+#### インストール
+
 VSCode の拡張ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）→ 右上の `…` →
 **「VSIX からのインストール」** で `pli-lang-0.1.0.vsix` を選びます。
+`code` コマンドが使えるなら `code --install-extension pli-lang-0.1.0.vsix` でも入ります。
 
 使い方は [`docs/vscode-manual.md`](docs/vscode-manual.md)。
 
@@ -123,7 +139,7 @@ Windows でも同じコマンドが動きます（`npm run` 経由なのでパ�
 | 文書 | 内容 |
 |------|------|
 | [`docs/browser-manual.md`](docs/browser-manual.md) | **ブラウザ版の使い方**。実行・テスト・検査・Snippet・ファイル・共有 |
-| [`docs/vscode-manual.md`](docs/vscode-manual.md) | **VSCode 拡張の使い方**。コマンド・設定・トラブルシュート |
+| [`docs/vscode-manual.md`](docs/vscode-manual.md) | **VSCode Extension の使い方**。コマンド・設定・トラブルシュート |
 | [`docs/test.md`](docs/test.md) | テストフレームワークの設計と書き方 |
 | [`docs/lint.md`](docs/lint.md) | Linter の規則一覧と、各規則の理由 |
 | [`engine/README.md`](engine/README.md) | 処理系の内部。字句・構文・評価・書式の作り |
@@ -136,10 +152,10 @@ engine/        処理系（TypeScript、Node 非依存）
   web/           ブラウザ版（HTML 1 枚にビルドされる）
   examples/      PL/I で書いたテストの例
   scripts/       CLI（plitest / plilint / Snippet 生成）
-vscode-pli/    VSCode 拡張（処理系を同梱）
+vscode-pli/    VSCode Extension（処理系を同梱）
 docs/          文書
   browser-manual.md  ブラウザ版の使い方
-  vscode-manual.md   VSCode 拡張の使い方
+  vscode-manual.md   VSCode Extension の使い方
   test.md            テストフレームワークの設計と書き方
   lint.md            Linter の規則一覧と理由
 ```

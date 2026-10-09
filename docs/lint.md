@@ -18,7 +18,7 @@ npm run plilint -- --list-rules            # 規則の一覧（全 13 件）と�
 
 | 入口 | 操作 |
 |------|------|
-| VSCode 拡張 | 入力中に自動。問題タブに規則 id 付きで出る |
+| VSCode Extension | 入力中に自動。問題タブに規則 id 付きで出る |
 | ブラウザ版 | 「検査」ボタン |
 | CLI | `npm run plilint` |
 | プログラム | `lint(source, opts)` |
