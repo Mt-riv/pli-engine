@@ -20,7 +20,7 @@ import {
 import { SAMPLES } from "./samples.js";
 import { decodeSource, share } from "./share.js";
 import { insertSnippet } from "./insert.js";
-import { parseFiles, serializeFiles } from "./files.js";
+import { parseFiles, psbNames, serializeFiles } from "./files.js";
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -153,6 +153,21 @@ function buildHost(): MemoryHost {
 }
 
 /**
+ * DL/I を使うかどうか。付随ファイルに `<名前>.psb` が 1 つだけあれば使う。
+ * 2 つ以上あるとどちらか決められないので、何も渡さずに知らせる。
+ */
+function dliOptions(): { psb?: string } {
+  const names = psbNames(parseFiles(aux.value));
+  if (names.length === 1) return { psb: names[0]! };
+  if (names.length > 1) {
+    out.textContent =
+      `PSB が ${names.length} つあります（${names.join(", ")}）。` +
+      "使うものだけを付随ファイルに置いてください。\n\n";
+  }
+  return {};
+}
+
+/**
  * 実行で書き出されたファイルを欄に反映する。
  *
  * プログラムが `put file(rep)` で作ったファイルは、画面に出さないと
@@ -234,6 +249,7 @@ function runTests(): void {
     maxSteps: 5_000_000,
     maxOutputBytes: 1_000_000,
     host: testHost,
+    ...dliOptions(),
   });
   syncFilesFromHost(testHost);
 
@@ -273,16 +289,19 @@ function run(): void {
   outTitle.textContent = "出力";
 
   const host = buildHost();
+  const dli = dliOptions();
+  const note = out.textContent ?? "";
   const r = runProgram(src.value, {
     // ブラウザを固めないための上限。別プロセスが無いので
     // エンジン側で文の数と出力量を制限する。
     maxSteps: 5_000_000,
     maxOutputBytes: 1_000_000,
     host,
+    ...dli,
   });
   syncFilesFromHost(host);
 
-  out.textContent = r.stdout;
+  out.textContent = note + r.stdout;
 
   if (r.diagnostics.length > 0) {
     showDiagnostics(
@@ -454,6 +473,8 @@ sampleSel.addEventListener("change", () => {
   const s = SAMPLES[Number(sampleSel.value)];
   if (s) {
     src.value = s.source;
+    // 付随ファイルを持つサンプル（DL/I など）は、それが無いと動かない
+    if (s.aux !== undefined) aux.value = s.aux;
     renderGutter();
     updatePos();
     save();

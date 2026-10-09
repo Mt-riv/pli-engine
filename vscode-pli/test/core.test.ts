@@ -8,6 +8,7 @@ import {
   toEditorLint,
   toEditorDiagnostics,
 } from "../src/core.js";
+import { MemoryHost } from "../../engine/src/index.js";
 
 const OK = `h: proc options(main);
   put list('HELLO');
@@ -281,5 +282,51 @@ end p;
       { rule: "not-operator", severity: "warning", message: "x", line: 2, col: 6 },
     ]);
     expect(d[0]?.range.start).toEqual({ line: 1, character: 5 });
+  });
+});
+
+describe("DL/I の受け渡し", () => {
+  const DBD = `         DBD  NAME=M,ACCESS=HDAM
+         SEGM NAME=C,PARENT=0,BYTES=6
+         FIELD NAME=(K,SEQ,U),BYTES=2,START=1,TYPE=C
+         DBDGEN
+         END
+`;
+  const PSB = `         PCB  TYPE=DB,DBDNAME=M,PROCOPT=A,KEYLEN=2
+         SENSEG NAME=C,PARENT=0
+         PSBGEN LANG=PLI,PSBNAME=P
+         END
+`;
+  const SRC = `p: proc options(main);
+  dcl plitdli entry;
+  dcl three fixed bin(31) init(3);
+  dcl func char(4) init('GN  ');
+  dcl seg_io char(6);
+  dcl 1 pcb,
+        2 dbname     char(8),
+        2 seg_level  char(2),
+        2 stat_code  char(2),
+        2 proc_opt   char(4),
+        2 reserved   fixed bin(31),
+        2 seg_name   char(8),
+        2 len_kfb    fixed bin(31),
+        2 no_senseg  fixed bin(31),
+        2 key_fb     char(2);
+  call plitdli(three, func, pcb, seg_io);
+  put skip edit(pcb.stat_code, seg_io)(a, a);
+end p;`;
+
+  const host = () =>
+    new MemoryHost({ "M.dbd": DBD, "P.psb": PSB, "M.dat": "C       01ABCD\n" });
+
+  it("psb を渡すと DL/I が動く", () => {
+    const outcome = runForEditor(SRC, "t.pli", { host: host(), psb: "P" });
+    expect(outcome.result.diagnostics).toEqual([]);
+    expect(outcome.result.stdout).toContain("01ABCD");
+  });
+
+  it("psb が空なら DL/I は動かず、PSB が無いと言う", () => {
+    const outcome = runForEditor(SRC, "t.pli", { host: host(), psb: "" });
+    expect(outcome.result.diagnostics[0]?.message).toContain("PSB");
   });
 });

@@ -3,7 +3,7 @@
  * 記法を間違えると %INCLUDE が静かに効かなくなるので固定しておく。
  */
 import { describe, expect, it } from "vitest";
-import { parseFiles, serializeFiles } from "../web/files.js";
+import { parseFiles, psbNames, serializeFiles } from "../web/files.js";
 import { MemoryHost, runProgram } from "../src/index.js";
 
 describe("parseFiles", () => {
@@ -46,5 +46,23 @@ describe("付随ファイルから %INCLUDE する", () => {
     );
     expect(r.diagnostics).toEqual([]);
     expect(r.stdout.trim()).toBe("3.00");
+  });
+});
+
+describe("付随ファイルから PSB を見つける", () => {
+  it("`<名前>.psb` を拾う", () => {
+    expect(psbNames({ "STUPSB.psb": "", "STUDENT.dbd": "" })).toEqual(["STUPSB"]);
+  });
+
+  it("大文字小文字を問わない", () => {
+    expect(psbNames({ "App.PSB": "" })).toEqual(["App"]);
+  });
+
+  it("無ければ空", () => {
+    expect(psbNames({ "data.txt": "" })).toEqual([]);
+  });
+
+  it("2 つあれば 2 つ返す（呼ぶ側が決められないと知る）", () => {
+    expect(psbNames({ "b.psb": "", "a.psb": "" })).toEqual(["a", "b"]);
   });
 });

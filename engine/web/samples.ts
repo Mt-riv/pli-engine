@@ -5,6 +5,12 @@
 export interface Sample {
   name: string;
   source: string;
+  /**
+   * 付随ファイル（`::: 名前` の記法）。
+   * DL/I のサンプルは DBD・PSB・データが揃っていないと動かないので、
+   * サンプルを選んだときに付随ファイル欄へ一緒に入れる。
+   */
+  aux?: string;
 }
 
 export const SAMPLES: Sample[] = [
@@ -223,6 +229,64 @@ end TEST_THIS_ONE_FAILS;
 DISABLED_TEST_NOT_READY: proc;
   call FAIL('DISABLED_ が付いているので実行されない');
 end DISABLED_TEST_NOT_READY;
+`,
+  },
+  {
+    name: "IMS/DB（DL/I）",
+    source: `/* 階層型データベースを階層順に読む。
+   PCB マスクは主手続きの引数で受けたポインタに BASED で宣言する。
+   DBD・PSB・データは「ファイル」欄にある。 */
+stuprt: proc(io_ptr, db_ptr) options(main);
+  dcl plitdli entry;
+  dcl (io_ptr, db_ptr) pointer;
+  dcl 1 db_pcb based(db_ptr),
+        2 dbname     char(8),
+        2 seg_level  char(2),
+        2 stat_code  char(2),
+        2 proc_opt   char(4),
+        2 reserved   fixed bin(31),
+        2 seg_name   char(8),
+        2 len_kfb    fixed bin(31),
+        2 no_senseg  fixed bin(31),
+        2 key_fb     char(9);
+  dcl three fixed bin(31) init(3);
+  dcl func_gn char(4) init('GN  ');
+  dcl seg_io char(13);
+
+  put skip list('LEVEL SEGMENT  DATA');
+  /* GA（上の階層へ戻った）と GK（同じ階層の別の型へ移った）は
+     警告でセグメントは返るので、GB（終端）まで読み続ける。 */
+  do while (db_pcb.stat_code ^= 'GB');
+    call plitdli(three, func_gn, db_pcb, seg_io);
+    if db_pcb.stat_code ^= 'GB' then
+      put skip edit(db_pcb.seg_level, '    ', db_pcb.seg_name, seg_io)(a, a, a, a);
+  end;
+  put skip list('STATUS=' || db_pcb.stat_code);
+end stuprt;
+`,
+    aux: `::: STUDENT.dbd
+         DBD  NAME=STUDENT,ACCESS=HDAM
+         SEGM NAME=STUDENT,PARENT=0,BYTES=13
+         FIELD NAME=(STUDNO,SEQ,U),BYTES=5,START=1,TYPE=C
+         FIELD NAME=STUDNAME,BYTES=8,START=6,TYPE=C
+         SEGM NAME=COURSE,PARENT=STUDENT,BYTES=8
+         FIELD NAME=(COURSEID,SEQ,U),BYTES=4,START=1,TYPE=C
+         FIELD NAME=TITLE,BYTES=4,START=5,TYPE=C
+         DBDGEN
+         FINISH
+         END
+::: STUPSB.psb
+         PCB  TYPE=DB,DBDNAME=STUDENT,PROCOPT=A,KEYLEN=9
+         SENSEG NAME=STUDENT,PARENT=0
+         SENSEG NAME=COURSE,PARENT=STUDENT
+         PSBGEN LANG=PLI,PSBNAME=STUPSB,CMPAT=YES
+         END
+::: STUDENT.dat
+STUDENT S0001YAMAKAWA
+COURSE  C001MATH
+COURSE  C002PHYS
+STUDENT S0002TSUKIMI
+COURSE  C001MATH
 `,
   },
 ];
