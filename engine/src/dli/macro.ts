@@ -1,0 +1,171 @@
+/**
+ * DBDGEN / PSBGEN への入力を読む。
+ *
+ * 書式はアセンブラのマクロ命令。実機の規則をそのまま使う。
+ *
+ *   1 桁目が `*` なら注釈行
+ *   1 桁目が非空白ならラベル、その後に命令、その後にオペランド
+ *   オペランドの後に空白が来たら、そこから先は注釈
+ *   72 桁目が非空白なら次の行へ継続し、続きは 16 桁目から
+ *
+ * 自由形式（行頭の空白の数は問わない）でも書けるようにしてある。
+ * ブラウザで手書きするとき 10 桁目に揃えるのは苦しいため。
+ */
+
+import { DliDefError } from "./types.js";
+
+/** 1 つのマクロ命令。 */
+export interface MacroStmt {
+  /** 命令の始まる行（1 始まり）。継続した場合は先頭の行。 */
+  line: number;
+  label?: string;
+  /** 命令の名前。大文字にそろえる。 */
+  op: string;
+  /** `キー=値` のオペランド。キーは大文字。値は書かれたまま。 */
+  operands: Map<string, string>;
+  /** `キー=` の形を取らないオペランド（`SEQ` など）。 */
+  flags: string[];
+}
+
+/** 継続行の印が入る桁（1 始まり）。 */
+const CONTINUE_COLUMN = 72;
+/** 継続した行で中身が始まる桁（1 始まり）。 */
+const CONTINUE_RESUME = 16;
+
+/**
+ * 空白で区切られた語を 1 つ取り出す。
+ * 括弧とアポストロフィの中の空白は区切りにしない
+ * （`ACCESS=(HDAM, OSAM)` のような書き方を許すため）。
+ */
+function takeWord(text: string, from: number): { word: string; next: number } {
+  let i = from;
+  while (i < text.length && text[i] === " ") i++;
+  const start = i;
+  let depth = 0;
+  let quoted = false;
+  for (; i < text.length; i++) {
+    const c = text[i]!;
+    if (quoted) {
+      if (c === "'") quoted = false;
+      continue;
+    }
+    if (c === "'") quoted = true;
+    else if (c === "(") depth++;
+    else if (c === ")") depth--;
+    else if (c === " " && depth === 0) break;
+  }
+  return { word: text.slice(start, i), next: i };
+}
+
+/**
+ * 括弧の外のカンマで区切る。
+ * `NAME=(A,SEQ,U),BYTES=5` を 2 つのオペランドに分けるのに使う。
+ */
+export function splitTop(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quoted = false;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quoted) {
+      if (c === "'") quoted = false;
+      continue;
+    }
+    if (c === "'") quoted = true;
+    else if (c === "(") depth++;
+    else if (c === ")") depth--;
+    else if (c === "," && depth === 0) {
+      out.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(text.slice(start));
+  return out.filter((s) => s.length > 0);
+}
+
+/**
+ * 括弧を 1 段はがして中身を取り出す。
+ * `(A,SEQ,U)` → `["A", "SEQ", "U"]`、`A` → `["A"]`。
+ */
+export function listOf(value: string): string[] {
+  const t = value.trim();
+  if (!t.startsWith("(") || !t.endsWith(")")) return [t];
+  return splitTop(t.slice(1, -1)).map((s) => s.trim());
+}
+
+/** 行を継続の印でつなぎ、1 命令ずつに組み立てる。 */
+function joinLines(text: string, file: string): { line: number; text: string }[] {
+  const raw = text.split("\n");
+  const out: { line: number; text: string }[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const first = raw[i]!;
+    if (first.trim() === "" || first.startsWith("*")) continue;
+    let body = first.slice(0, CONTINUE_COLUMN - 1).trimEnd();
+    let continuing = first.length >= CONTINUE_COLUMN && first[CONTINUE_COLUMN - 1] !== " ";
+    const startLine = i + 1;
+    while (continuing) {
+      const cont = raw[++i];
+      if (cont === undefined) {
+        throw new DliDefError("継続の印が付いていますが、続きの行がありません", file, startLine);
+      }
+      body += cont.slice(CONTINUE_RESUME - 1, CONTINUE_COLUMN - 1).trimEnd();
+      continuing = cont.length >= CONTINUE_COLUMN && cont[CONTINUE_COLUMN - 1] !== " ";
+    }
+    out.push({ line: startLine, text: body });
+  }
+  return out;
+}
+
+/** マクロ命令の並びに分解する。 */
+export function readMacros(text: string, file: string): MacroStmt[] {
+  const out: MacroStmt[] = [];
+  for (const { line, text: body } of joinLines(text, file)) {
+    let pos = 0;
+    let label: string | undefined;
+    if (body[0] !== undefined && body[0] !== " ") {
+      const t = takeWord(body, 0);
+      label = t.word;
+      pos = t.next;
+    }
+    const opWord = takeWord(body, pos);
+    if (opWord.word === "") continue;
+    const operandWord = takeWord(body, opWord.next);
+    // operandWord の後ろは注釈なので読まない
+
+    const operands = new Map<string, string>();
+    const flags: string[] = [];
+    for (const part of splitTop(operandWord.word)) {
+      const eq = part.indexOf("=");
+      if (eq < 0) flags.push(part.trim().toUpperCase());
+      else operands.set(part.slice(0, eq).trim().toUpperCase(), part.slice(eq + 1).trim());
+    }
+    out.push({
+      line,
+      ...(label === undefined ? {} : { label }),
+      op: opWord.word.toUpperCase(),
+      operands,
+      flags,
+    });
+  }
+  return out;
+}
+
+/** オペランドを取る。無ければ誤りとして止める。 */
+export function required(s: MacroStmt, key: string, file: string): string {
+  const v = s.operands.get(key);
+  if (v === undefined) {
+    throw new DliDefError(`${s.op} 文に ${key}= がありません`, file, s.line);
+  }
+  return v;
+}
+
+/** 数値のオペランドを取る。 */
+export function numberOf(s: MacroStmt, key: string, file: string): number {
+  const text = required(s, key, file);
+  const n = Number(listOf(text)[0]);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new DliDefError(`${s.op} 文の ${key}=${text} は正の整数ではありません`, file, s.line);
+  }
+  return n;
+}

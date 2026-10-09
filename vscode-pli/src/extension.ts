@@ -14,8 +14,8 @@ import {
   snippetCompletions,
   type EditorDiagnostic,
 } from "./core.js";
-import type { PliHost, RuleSetting } from "../../engine/src/index.js";
-import { existsSync, readFileSync } from "node:fs";
+import type { FileMode, PliFile, PliHost, RuleSetting } from "../../engine/src/index.js";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 
 /**
@@ -59,6 +59,8 @@ function toVsDiagnostic(d: EditorDiagnostic): vscode.Diagnostic {
 
 /** `%INCLUDE a;` で試す名前。 */
 const INCLUDE_EXTENSIONS = ["", ".inc", ".pli", ".pl1", ".cpy", ".plinc"];
+/** ファイル入出力で試す拡張子。PL/I のファイル名は `.` を含められない。 */
+const DATA_EXTENSIONS = ["", ".txt", ".dat", ".csv"];
 
 /**
  * 開いているファイルの隣とワークスペース直下から取り込みを解決するホスト。
@@ -91,6 +93,51 @@ function hostFor(doc: vscode.TextDocument): PliHost {
         }
       }
       return undefined;
+    },
+
+    /**
+     * ファイル入出力と、DL/I の DBD・PSB・データの読み書き。
+     *
+     * 名前に拡張子が付いていれば（`STUDENT.dbd` など）そのまま探す。
+     * 書き出しは閉じるときに 1 回だけ来るので、そこで実ファイルへ落とす。
+     */
+    openFile(name: string, mode: FileMode): PliFile | undefined {
+      const candidates = isAbsolute(name)
+        ? [name]
+        : dirs.flatMap((d) => DATA_EXTENSIONS.map((e) => join(d, name + e)));
+      let found: string | undefined;
+      for (const p of candidates) {
+        try {
+          if (existsSync(p)) {
+            found = p;
+            break;
+          }
+        } catch {
+          // 読めないものは「無い」と同じ扱いにする
+        }
+      }
+      if (mode === "input" && found === undefined) return undefined;
+      const path = found ?? candidates[0];
+      if (path === undefined) return undefined;
+      let buffer = "";
+      if (mode !== "output" && found !== undefined) {
+        try {
+          buffer = readFileSync(found, "utf8");
+        } catch {
+          buffer = "";
+        }
+      }
+      return {
+        read: () => buffer,
+        write: (contents: string) => {
+          buffer = contents;
+          try {
+            writeFileSync(path, contents);
+          } catch {
+            // 書けない場所なら黙って諦める。実行そのものは続ける
+          }
+        },
+      };
     },
   };
 }
@@ -163,6 +210,9 @@ export function activate(context: vscode.ExtensionContext): void {
     maxSteps: config().get<number>("run.maxSteps", 5_000_000),
     maxOutputBytes: config().get<number>("run.maxOutputBytes", 1_000_000),
     host: hostFor(doc),
+    // DL/I を使うときだけ設定する。空なら CALL PLITDLI は
+    // 「PSB が指定されていません」と言って止まる
+    psb: config().get<string>("dli.psb", ""),
   });
 
   const runTests = (): void => {

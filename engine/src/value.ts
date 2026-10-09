@@ -96,6 +96,14 @@ export interface Storage {
   freed: boolean;
   /** どの宣言から確保したか（診断用）。 */
   group: string;
+  /**
+   * DL/I の PCB として処理系が用意した記憶域なら、その PCB の番号。
+   *
+   * PCB マスクの葉の名前はプログラムが自由に付けるので（`STAT_CODE` でも
+   * `HOW_IT_WENT` でもよい）、名前では引けない。この印が付いた記憶域は
+   * **葉の宣言順**で項目を結び付ける。実機が変位で重ねるのと同じ構図。
+   */
+  pcbIndex?: number;
 }
 
 export type Value = FixedVal | FloatVal | CharVal | BitVal | PointerVal;
