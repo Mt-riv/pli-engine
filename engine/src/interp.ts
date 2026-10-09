@@ -241,6 +241,14 @@ export interface RunOptions {
    * 無限ループを止めるために必要（ブラウザには別プロセスが無い）。
    */
   maxSteps?: number;
+  /**
+   * DL/I（IMS/DB）で使う PSB の名前。
+   *
+   * 実機では JCL や領域パラメータが決めるもので、プログラムには書かない。
+   * 指定すると `<名前>.psb` をホストから読み、主手続きの引数が
+   * コマンドライン引数ではなく PCB のポインタになる。
+   */
+  psb?: string;
 }
 
 /** 出力上限に達したことを表す内部例外。 */
@@ -388,6 +396,52 @@ export class Interpreter {
       throw e;
     }
     return undefined;
+  }
+
+  // ---- 処理系が受け持つサブルーチン ----
+
+  /**
+   * 処理系が受け持つサブルーチン。受け持ったら true を返す。
+   *
+   * ユーザー定義手続きと違い、**引数の式をそのまま受け取る**。
+   * DL/I はステータスコードとセグメント I/O 領域を呼び先が書くので、
+   * 値渡しでは成立しない。書き戻しの要る引数だけ参照として扱い、
+   * ユーザー定義手続きの値渡しには手を付けない。
+   */
+  private callBuiltinSub(s: Extract<Stmt, { kind: "call" }>, scope: Scope): boolean {
+    switch (s.name.toUpperCase()) {
+      case "PLITDLI":
+        this.plitdli(s, scope);
+        return true;
+      case "CBLTDLI":
+      case "ASMTDLI":
+        throw new RuntimeError(
+          `${s.name} は COBOL / アセンブラ向けの入口です。PL/I では PLITDLI を使います`,
+          s.line,
+        );
+      case "AIBTDLI":
+        throw new RuntimeError(
+          "AIB インタフェース（AIBTDLI）は未実装です。PLITDLI を使ってください",
+          s.line,
+        );
+      default:
+        return false;
+    }
+  }
+
+  /** `CALL PLITDLI(個数, 機能, PCB, I/O 領域, SSA...)`。 */
+  private plitdli(s: Extract<Stmt, { kind: "call" }>, scope: Scope): void {
+    this.requireDli(s.line);
+  }
+
+  /** DL/I ランタイム。PSB が指定されていなければ誤りとして止める。 */
+  private requireDli(line: number): void {
+    if (this.opts.psb === undefined) {
+      throw new RuntimeError(
+        "PSB が指定されていません。DL/I を使うには実行するときに PSB の名前を与えてください",
+        line,
+      );
+    }
   }
 
   /**
@@ -593,10 +647,16 @@ export class Interpreter {
         return;
       case "call": {
         const def = scope.lookupProc(s.name.toUpperCase());
-        if (!def) throw new RuntimeError(`手続き ${s.name} が見つかりません`, s.line);
-        const args = s.args.map((a) => this.eval(a, scope, s.line));
-        this.callProcedure(def, args, scope);
-        return;
+        if (def) {
+          const args = s.args.map((a) => this.eval(a, scope, s.line));
+          this.callProcedure(def, args, scope);
+          return;
+        }
+        // 処理系が受け持つサブルーチン（DL/I の PLITDLI など）。
+        // 利用者が同じ名前の手続きを書いたらそちらが勝つので、
+        // 探すのはユーザー定義の解決が空振りした後。
+        if (this.callBuiltinSub(s, scope)) return;
+        throw new RuntimeError(`手続き ${s.name} が見つかりません`, s.line);
       }
       case "beginBlock": {
         // BEGIN ブロックは独自の名前の有効範囲を持つ
