@@ -50,3 +50,17 @@ export function serializeFiles(files: Record<string, string>): string {
   }
   return parts.length === 0 ? "" : parts.join("\n") + "\n";
 }
+
+/**
+ * 付随ファイルにある PSB の名前を並べる。
+ *
+ * DL/I を使うかどうかは、`<名前>.psb` を置いたかどうかで決める。
+ * 実機では JCL が PSB を指定するが、ブラウザには JCL が無い。
+ * 設定欄を増やすより、置いたファイルから決める方が迷いが少ない。
+ */
+export function psbNames(files: Record<string, string>): string[] {
+  return Object.keys(files)
+    .filter((name) => /\.psb$/i.test(name))
+    .map((name) => name.replace(/\.psb$/i, ""))
+    .sort();
+}

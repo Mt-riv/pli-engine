@@ -84,3 +84,19 @@ describe("package.json の寄与", () => {
     expect(Object.keys(snippets).length).toBeGreaterThanOrEqual(28);
   });
 });
+
+describe("DL/I の設定", () => {
+  interface WithConfig {
+    contributes: { configuration: { properties: Record<string, { default: unknown }> } };
+  }
+  const withConfig: WithConfig = JSON.parse(
+    readFileSync(join(import.meta.dirname, "../package.json"), "utf8"),
+  );
+
+  it("PSB の名前を設定できる", () => {
+    const props = withConfig.contributes.configuration.properties;
+    expect(props["pli.dli.psb"]).toBeDefined();
+    // 既定では DL/I を使わない（指定しないかぎり何も読まない）
+    expect(props["pli.dli.psb"]!.default).toBe("");
+  });
+});
