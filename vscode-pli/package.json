@@ -2,7 +2,7 @@
   "name": "pli-lang",
   "displayName": "PL/I",
   "description": "PL/I の構文強調・診断・実行。処理系は拡張に同梱されているので外部のコンパイラを必要としない。",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "publisher": "local",
   "repository": {

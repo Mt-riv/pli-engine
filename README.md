@@ -201,12 +201,12 @@ xdg-open dist-web/index.html
 #### リリースから入手する（手軽）
 
 [Releases](https://github.com/Mt-riv/pli-engine/releases) から
-`pli-lang-0.1.0.vsix` をダウンロードします。ビルドは要りません。
+`pli-lang-0.2.0.vsix` をダウンロードします。ビルドは要りません。
 
 `gh` が使えるなら次でも取れます。
 
 ```bash
-gh release download vscode-v0.1.0 --repo Mt-riv/pli-engine
+gh release download vscode-v0.2.0 --repo Mt-riv/pli-engine
 ```
 
 #### 自分でビルドする
@@ -215,14 +215,14 @@ gh release download vscode-v0.1.0 --repo Mt-riv/pli-engine
 cd pli-engine/vscode-pli
 npm ci
 npm run build
-npx @vscode/vsce package      # pli-lang-0.1.0.vsix ができる
+npx @vscode/vsce package      # pli-lang-0.2.0.vsix ができる
 ```
 
 #### インストール
 
 VSCode の拡張ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）→ 右上の `…` →
-**「VSIX からのインストール」** で `pli-lang-0.1.0.vsix` を選びます。
-`code` コマンドが使えるなら `code --install-extension pli-lang-0.1.0.vsix` でも入ります。
+**「VSIX からのインストール」** で `pli-lang-0.2.0.vsix` を選びます。
+`code` コマンドが使えるなら `code --install-extension pli-lang-0.2.0.vsix` でも入ります。
 
 使い方は [`docs/vscode-manual.md`](docs/vscode-manual.md)。
 
