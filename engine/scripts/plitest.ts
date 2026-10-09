@@ -37,6 +37,8 @@ interface Args {
   maxSteps?: number;
   /** DL/I を使うテストで読む PSB の名前。 */
   psb?: string;
+  /** 真ならテストの書き出しを実ファイルへ反映する。 */
+  write: boolean;
   quiet: boolean;
 }
 
@@ -45,12 +47,14 @@ function parseArgs(argv: string[]): Args {
   let xmlDir: string | undefined;
   let maxSteps: number | undefined;
   let psb: string | undefined;
+  let write = false;
   let quiet = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--xml") xmlDir = argv[++i];
     else if (a === "--max-steps") maxSteps = Number(argv[++i]);
     else if (a === "--psb") psb = argv[++i];
+    else if (a === "--write") write = true;
     else if (a === "--quiet" || a === "-q") quiet = true;
     else if (a.startsWith("-")) {
       console.error(`不明なオプション: ${a}`);
@@ -60,11 +64,11 @@ function parseArgs(argv: string[]): Args {
   if (targets.length === 0) {
     console.error(
       "使い方: plitest <ファイルまたはディレクトリ...> [--xml <出力先>] " +
-        "[--max-steps N] [--psb <PSB 名>] [--quiet]",
+        "[--max-steps N] [--psb <PSB 名>] [--write] [--quiet]",
     );
     process.exit(2);
   }
-  return { targets, xmlDir, maxSteps, psb, quiet };
+  return { targets, xmlDir, maxSteps, psb, write, quiet };
 }
 
 const args = parseArgs(process.argv.slice(2));
@@ -80,9 +84,13 @@ if (args.xmlDir) mkdirSync(args.xmlDir, { recursive: true });
 const reports: { file: string; report: TestReport }[] = [];
 for (const file of files) {
   const source = readFileSync(file, "utf8");
-  // %INCLUDE とファイル入出力は、そのテストファイルのあるディレクトリを基準にする
+  // %INCLUDE とファイル入出力は、そのテストファイルのあるディレクトリを基準にする。
+  //
+  // 書き出しは既定で実ファイルへ反映しない。テストを走らせるたびに
+  // 元データが変わると、2 回目から結果が変わってしまう
+  // （DL/I の DLET を試すテストで実際に起きた）。
   const report = runTestSource(source, {
-    host: hostForFile(file),
+    host: hostForFile(file, undefined, !args.write),
     ...(args.maxSteps !== undefined ? { maxSteps: args.maxSteps } : {}),
     ...(args.psb === undefined ? {} : { psb: args.psb }),
   });

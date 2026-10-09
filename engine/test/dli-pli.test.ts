@@ -230,7 +230,8 @@ describe("DL/I の使い方を間違えたとき", () => {
   });
 
   it("PSB が見つからなければ、探した名前を添えて止める", () => {
-    const r = runProgram("p: proc options(main); end p;", {
+    // PCB のポインタを受け取る形（引数を取る主手続き）で初めて PSB を読む
+    const r = runProgram("p: proc(a) options(main); end p;", {
       host: host(),
       psb: "NOSUCH",
     });

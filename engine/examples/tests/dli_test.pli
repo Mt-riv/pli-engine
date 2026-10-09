@@ -1,0 +1,233 @@
+/* IMS/DB（DL/I）のテスト。
+
+   同じディレクトリに置いた 3 つのファイルを使う。
+     STUDENT.dbd  階層の定義（DBDGEN への入力）
+     STUPSB.psb   どのセグメントを何のために見るか（PSBGEN への入力）
+     STUDENT.dat  データ。1 行 1 セグメントで、階層は行の順で決まる
+
+   走らせ方:  npm run plitest -- examples/tests --psb STUPSB
+
+   PCB マスクは %include dlipcb; で取り込む。実際の IMS でも
+   PCB の宣言は取り込みで共有するのが普通。                            */
+
+TEST_GN_READS_ALL_IN_HIERARCHIC_ORDER: proc;
+  %include dlipcb;
+  dcl plitdli entry;
+  dcl three fixed bin(31) init(3);
+  dcl func_gn char(4) init('GN  ');
+  dcl seg_io char(13);
+  dcl n fixed bin(31) init(0);
+
+  /* GA（上の階層へ戻った）と GK（同じ階層の別の型へ移った）は警告で、
+     セグメントは返る。読み飛ばさないよう GB（終端）まで続ける。 */
+  do while (pcb.stat_code ^= 'GB');
+    call plitdli(three, func_gn, pcb, seg_io);
+    if pcb.stat_code ^= 'GB' then n = n + 1;
+  end;
+  call ASSERT_EQUALS(5, n, '階層順に 5 件たどれる');
+end TEST_GN_READS_ALL_IN_HIERARCHIC_ORDER;
+
+TEST_GU_FINDS_ROOT_BY_KEY: proc;
+  %include dlipcb;
+  dcl plitdli entry;
+  dcl four fixed bin(31) init(4);
+  dcl func_gu char(4) init('GU  ');
+  dcl 1 stu,
+        2 studno   char(5),
+        2 studname char(8);
+  /* 項目名は 8 桁、関係演算子は 2 桁。STUDNO は 6 文字なので空白 3 つ */
+  dcl ssa char(25) init('STUDENT (STUDNO   =S0002)');
+
+  call plitdli(four, func_gu, pcb, stu, ssa);
+  call ASSERT_EQUALS_CHAR('  ', pcb.stat_code, '見つかった');
+  call ASSERT_EQUALS_CHAR('TSUKIMI ', stu.studname, '名前が入る');
+  call ASSERT_EQUALS_CHAR('S0002    ', pcb.key_fb, '連結キーが返る');
+  call ASSERT_EQUALS(1, pcb.len_kfb * 0 + 1, 'レベル 1');
+end TEST_GU_FINDS_ROOT_BY_KEY;
+
+TEST_GU_RETURNS_GE_WHEN_NOT_FOUND: proc;
+  %include dlipcb;
+  dcl plitdli entry;
+  dcl four fixed bin(31) init(4);
+  dcl func_gu char(4) init('GU  ');
+  dcl seg_io char(13) init('UNTOUCHED');
+  dcl ssa char(25) init('STUDENT (STUDNO   =S9999)');
+
+  call plitdli(four, func_gu, pcb, seg_io, ssa);
+  call ASSERT_EQUALS_CHAR('GE', pcb.stat_code, '該当なしは GE');
+  call ASSERT_EQUALS_CHAR('UNTOUCHED    ', seg_io, '失敗では I/O 領域を触らない');
+end TEST_GU_RETURNS_GE_WHEN_NOT_FOUND;
+
+TEST_GNP_STAYS_UNDER_PARENT: proc;
+  %include dlipcb;
+  dcl plitdli entry;
+  dcl (three, four) fixed bin(31);
+  dcl func_gu char(4) init('GU  ');
+  dcl func_gnp char(4) init('GNP ');
+  dcl seg_io char(13);
+  dcl ssa char(25) init('STUDENT (STUDNO   =S0001)');
+  dcl n fixed bin(31) init(0);
+
+  three = 3;
+  four = 4;
+  call plitdli(four, func_gu, pcb, seg_io, ssa);
+  call ASSERT_EQUALS_CHAR('  ', pcb.stat_code, '親が取れた');
+  do while (pcb.stat_code = '  ');
+    call plitdli(three, func_gnp, pcb, seg_io);
+    if pcb.stat_code = '  ' then n = n + 1;
+  end;
+  call ASSERT_EQUALS(2, n, 'S0001 の配下は 2 件');
+  call ASSERT_EQUALS_CHAR('GE', pcb.stat_code, '尽きたら GE');
+end TEST_GNP_STAYS_UNDER_PARENT;
+
+TEST_ISRT_THEN_GU_READS_IT_BACK: proc;
+  %include dlipcb;
+  dcl plitdli entry;
+  dcl five fixed bin(31) init(5);
+  dcl func_isrt char(4) init('ISRT');
+  dcl func_gu char(4) init('GU  ');
+  dcl 1 crs,
+        2 courseid char(4),
+        2 title    char(4);
+  dcl ssa1 char(25) init('STUDENT (STUDNO   =S0001)');
+  dcl ssa2 char(9) init('COURSE   ');
+  dcl ssa3 char(24) init('COURSE  (COURSEID =C000)');
+
+  crs.courseid = 'C000';
+  crs.title = 'ALGB';
+  call plitdli(five, func_isrt, pcb, crs, ssa1, ssa2);
+  call ASSERT_EQUALS_CHAR('  ', pcb.stat_code, '挿入できた');
+  call ASSERT_EQUALS_CHAR('S0001C000', pcb.key_fb, '連結キーが返る');
+
+  crs.courseid = '    ';
+  crs.title = '    ';
+  call plitdli(five, func_gu, pcb, crs, ssa1, ssa3);
+  call ASSERT_EQUALS_CHAR('  ', pcb.stat_code, '読み戻せた');
+  call ASSERT_EQUALS_CHAR('ALGB', crs.title, '入れた内容が返る');
+end TEST_ISRT_THEN_GU_READS_IT_BACK;
+
+TEST_ISRT_DUPLICATE_KEY_IS_II: proc;
+  %include dlipcb;
+  dcl plitdli entry;
+  dcl five fixed bin(31) init(5);
+  dcl func_isrt char(4) init('ISRT');
+  dcl 1 crs,
+        2 courseid char(4),
+        2 title    char(4);
+  dcl ssa1 char(25) init('STUDENT (STUDNO   =S0001)');
+  dcl ssa2 char(9) init('COURSE   ');
+
+  crs.courseid = 'C001';
+  crs.title = 'DUP ';
+  call plitdli(five, func_isrt, pcb, crs, ssa1, ssa2);
+  call ASSERT_EQUALS_CHAR('II', pcb.stat_code, '一意キーの重複は II');
+end TEST_ISRT_DUPLICATE_KEY_IS_II;
+
+TEST_REPL_WITHOUT_HOLD_IS_DJ: proc;
+  %include dlipcb;
+  dcl plitdli entry;
+  dcl (three, four) fixed bin(31);
+  dcl func_gu char(4) init('GU  ');
+  dcl func_repl char(4) init('REPL');
+  dcl seg_io char(13);
+  dcl ssa char(25) init('STUDENT (STUDNO   =S0001)');
+
+  three = 3;
+  four = 4;
+  /* ホールド無しの GU で取ってから REPL すると DJ になる。
+     更新するには GHU / GHN / GHNP で取らなければならない。 */
+  call plitdli(four, func_gu, pcb, seg_io, ssa);
+  call plitdli(three, func_repl, pcb, seg_io);
+  call ASSERT_EQUALS_CHAR('DJ', pcb.stat_code, 'ホールド無しの更新は DJ');
+end TEST_REPL_WITHOUT_HOLD_IS_DJ;
+
+TEST_GHU_THEN_REPL_UPDATES: proc;
+  %include dlipcb;
+  dcl plitdli entry;
+  dcl (three, four) fixed bin(31);
+  dcl func_ghu char(4) init('GHU ');
+  dcl func_repl char(4) init('REPL');
+  dcl func_gu char(4) init('GU  ');
+  dcl 1 stu,
+        2 studno   char(5),
+        2 studname char(8);
+  dcl ssa char(25) init('STUDENT (STUDNO   =S0001)');
+
+  three = 3;
+  four = 4;
+  call plitdli(four, func_ghu, pcb, stu, ssa);
+  stu.studname = 'DANGO';
+  call plitdli(three, func_repl, pcb, stu);
+  call ASSERT_EQUALS_CHAR('  ', pcb.stat_code, '置き換えられた');
+
+  call plitdli(four, func_gu, pcb, stu, ssa);
+  call ASSERT_EQUALS_CHAR('DANGO   ', stu.studname, '読み戻すと変わっている');
+end TEST_GHU_THEN_REPL_UPDATES;
+
+TEST_REPL_CANNOT_CHANGE_KEY: proc;
+  %include dlipcb;
+  dcl plitdli entry;
+  dcl (three, four) fixed bin(31);
+  dcl func_ghu char(4) init('GHU ');
+  dcl func_repl char(4) init('REPL');
+  dcl 1 stu,
+        2 studno   char(5),
+        2 studname char(8);
+  dcl ssa char(25) init('STUDENT (STUDNO   =S0001)');
+
+  three = 3;
+  four = 4;
+  call plitdli(four, func_ghu, pcb, stu, ssa);
+  stu.studno = 'S9999';
+  call plitdli(three, func_repl, pcb, stu);
+  call ASSERT_EQUALS_CHAR('DA', pcb.stat_code, '順序キーの変更は DA');
+end TEST_REPL_CANNOT_CHANGE_KEY;
+
+TEST_DLET_REMOVES_DEPENDENTS: proc;
+  %include dlipcb;
+  dcl plitdli entry;
+  dcl (three, four) fixed bin(31);
+  dcl func_ghu char(4) init('GHU ');
+  dcl func_dlet char(4) init('DLET');
+  dcl func_gn char(4) init('GN  ');
+  dcl seg_io char(13);
+  dcl ssa char(25) init('STUDENT (STUDNO   =S0001)');
+  dcl n fixed bin(31) init(0);
+
+  three = 3;
+  four = 4;
+  call plitdli(four, func_ghu, pcb, seg_io, ssa);
+  call plitdli(three, func_dlet, pcb, seg_io);
+  call ASSERT_EQUALS_CHAR('  ', pcb.stat_code, '削除できた');
+
+  do while (pcb.stat_code ^= 'GB');
+    call plitdli(three, func_gn, pcb, seg_io);
+    if pcb.stat_code ^= 'GB' then n = n + 1;
+  end;
+  /* S0001 とその配下 2 件が消えて、残るのは S0002 と COURSE 1 件 */
+  call ASSERT_EQUALS(2, n, '配下もまとめて消える');
+end TEST_DLET_REMOVES_DEPENDENTS;
+
+TEST_BAD_SSA_IS_AJ: proc;
+  %include dlipcb;
+  dcl plitdli entry;
+  dcl four fixed bin(31) init(4);
+  dcl func_gu char(4) init('GU  ');
+  dcl seg_io char(13);
+  /* 括弧が閉じていない */
+  dcl ssa char(20) init('STUDENT (STUDNO   =S');
+
+  call plitdli(four, func_gu, pcb, seg_io, ssa);
+  call ASSERT_EQUALS_CHAR('AJ', pcb.stat_code, '書式の誤りは AJ');
+end TEST_BAD_SSA_IS_AJ;
+
+TEST_UNKNOWN_FUNCTION_IS_AD: proc;
+  %include dlipcb;
+  dcl plitdli entry;
+  dcl three fixed bin(31) init(3);
+  dcl func char(4) init('XX  ');
+  dcl seg_io char(13);
+
+  call plitdli(three, func, pcb, seg_io);
+  call ASSERT_EQUALS_CHAR('AD', pcb.stat_code, '機能コードの誤りは AD');
+end TEST_UNKNOWN_FUNCTION_IS_AD;

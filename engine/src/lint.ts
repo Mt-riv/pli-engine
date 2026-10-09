@@ -123,6 +123,16 @@ export const RULES: readonly LintRule[] = [
       "SYSIN と SYSPRINT は既定で使えるので対象にしない。",
   },
   {
+    id: "dli-status-unchecked",
+    category: "correctness",
+    default: "warning",
+    summary: "DL/I を呼んだのにステータスコードを見ていない",
+    rationale:
+      "DL/I は失敗しても例外を出さず、PCB のステータスコードで知らせる。" +
+      "見ないと「取れなかったセグメント」を取れたものとして処理してしまう。" +
+      "IMS のプログラムで最も多い誤りなので、一度も読んでいなければ指摘する。",
+  },
+  {
     id: "endfile-without-on",
     category: "correctness",
     default: "warning",
@@ -232,6 +242,12 @@ interface VarInfo {
    * 「代入したが読んでいない」などの判定から外す。
    */
   isBased?: boolean;
+  /**
+   * DL/I の PCB マスクの項目。中身は DL/I が埋めるもので、
+   * プログラムは必要な項目だけ読む。読まない項目があって当然なので
+   * 「代入したが読んでいない」の判定から外す。
+   */
+  isDliPcb?: boolean;
 }
 
 interface ProcInfo {
@@ -742,6 +758,32 @@ class Linter {
             `${s.name} という手続きは定義されていません。`,
           );
         }
+        // `DCL PLITDLI ENTRY;` は外部手続きの宣言なので proc は立つ。
+        // 自分で PLITDLI という手続きを書いた場合だけ、ふつうの CALL に戻す
+        if (BUILTIN_SUBROUTINE_NAMES.has(key) && (!proc || proc.isExternal)) {
+          // PCB は第 3 引数。ステータスコードを見ているかの検査に使う
+          const pcbArg = s.args[2];
+          if (key === "PLITDLI" && pcbArg?.kind === "ref") {
+            const pcbKey = pcbArg.name.toUpperCase();
+            if (!this.dliPcbs.has(pcbKey)) this.dliPcbs.set(pcbKey, s.line);
+          }
+          // DL/I の引数は向きが決まっている。向きに合わせて数えないと
+          // 「代入していない」「代入したが読んでいない」を誤検出する。
+          //
+          //   個数・機能コード・SSA  入力（読むだけ）
+          //   PCB                    出力（DL/I が書く）
+          //   セグメント I/O 領域    入出力（GET では書き、ISRT では読む）
+          s.args.forEach((a, i) => {
+            const isPcb = key === "PLITDLI" && i === 2;
+            const isIoArea = key !== "PLITDLI" || i === 3;
+            if (a.kind === "ref" && (isPcb || isIoArea)) {
+              this.writeWhole(a, scope, s.line);
+            }
+            if (a.kind === "ref" && isIoArea) this.readWhole(a, scope, s.line);
+            else if (!isPcb) this.expr(a, scope, s.line);
+          });
+          return;
+        }
         for (const a of s.args) this.expr(a, scope, s.line);
         return;
       }
@@ -813,10 +855,41 @@ class Linter {
 
   // ---- 使われていないものの報告 ----
 
+  /** `CALL PLITDLI` に渡された PCB の名前と、最初に呼んだ行。 */
+  private readonly dliPcbs = new Map<string, number>();
+
+  /**
+   * DL/I を呼んだのにステータスコードを一度も読んでいない PCB を指摘する。
+   *
+   * ステータスコードは PCB マスクの 3 番目の項目。名前は自由に付けられる
+   * ので、名前ではなく位置で見る（処理系が結び付けるのと同じ規則）。
+   */
+  private reportDliStatus(scope: LintScope): void {
+    for (const [name, line] of this.dliPcbs) {
+      const leaves: VarInfo[] = [];
+      const prefix = `${name}.`;
+      for (const [key, v] of scope.vars) {
+        if (key.startsWith(prefix)) leaves.push(v);
+      }
+      if (leaves.length === 0) continue;
+      this.dliPcbs.delete(name);
+      for (const v of leaves) v.isDliPcb = true;
+      const status = leaves[2];
+      if (status === undefined || status.reads > 0) continue;
+      this.report(
+        "dli-status-unchecked",
+        line,
+        `${status.name} を一度も読んでいません。DL/I の失敗はステータスコードでしか分かりません。`,
+      );
+    }
+  }
+
   private reportUnused(scope: LintScope): void {
+    this.reportDliStatus(scope);
     for (const v of scope.vars.values()) {
       if (v.isParam) continue; // 引数は呼ぶ側の都合なので対象にしない
       if (v.isBased) continue; // BASED は別の記憶域を見るための窓
+      if (v.isDliPcb) continue; // PCB マスクは DL/I が埋める
       if (v.reads === 0 && v.writes === 0 && v.mentions === 0 && !v.hasInit) {
         this.report("unused-variable", v.line, `${v.name} は宣言されていますが使われていません。`);
       } else if (v.reads === 0 && (v.writes > 0 || v.hasInit)) {

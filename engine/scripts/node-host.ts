@@ -73,6 +73,14 @@ export class NodeHost implements PliHost {
 }
 
 /** ソースファイルのパスから、その隣を基準にするホストを作る。 */
-export function hostForFile(file: string, stdin?: string): NodeHost {
-  return new NodeHost({ baseDir: dirname(resolve(file)), ...(stdin === undefined ? {} : { stdin }) });
+export function hostForFile(
+  file: string,
+  stdin?: string,
+  dryRun?: boolean,
+): NodeHost {
+  return new NodeHost({
+    baseDir: dirname(resolve(file)),
+    ...(stdin === undefined ? {} : { stdin }),
+    ...(dryRun === undefined ? {} : { dryRun }),
+  });
 }
