@@ -1,7 +1,7 @@
 /**
  * PL/I のコード Snippet。
  *
- * VSCode 拡張とブラウザ版の両方で使うため、定義はここ一箇所に置く。
+ * VSCode Extension とブラウザ版の両方で使うため、定義はここ一箇所に置く。
  * VSCode 用の JSON は `scripts/gen-snippets.ts` がここから生成する。
  *
  * 本文は VSCode の Snippet 記法（`${1:名前}` と `$0`）で書く。

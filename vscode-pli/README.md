@@ -1,11 +1,11 @@
-# PL/I 拡張（VSCode）
+# PL/I VSCode Extension
 
 PL/I の構文強調・診断・実行・テスト・Snippet・Linter を VSCode に統合する。
 **処理系（`pli-engine`）を同梱している**ので、外部のコンパイラを必要としない。
 
 > **使い方の手引きはリポジトリの `docs/vscode-manual.md`。**
 > この文書は作りの説明と開発手順。
-> （vsix には拡張フォルダしか入らないので、外を指すリンクは張らない）
+> （vsix には Extension のフォルダしか入らないので、外を指すリンクは張らない）
 
 ## 機能
 
@@ -88,7 +88,7 @@ TextMate 文法による着色は原理的に近似でしかない。
 
 ```
 vscode-pli/
-  package.json              拡張の定義（言語・文法・コマンド・設定）
+  package.json              Extension の定義（言語・文法・コマンド・設定）
   language-configuration.json  コメント・括弧・字下げの規則
   syntaxes/pli.tmLanguage.json 構文強調の定義
   snippets/pli.json         Snippet （engine から生成。手で編集しない）
@@ -118,8 +118,8 @@ npm run build   # esbuild で dist/extension.js にバンドル（エンジン�
    `../engine/examples/tests/arith_test.pli` が開いた状態で立ち上がる
 3. `Cmd/Ctrl+Alt+T` でテスト、`Cmd/Ctrl+Alt+R` で実行
 4. キーが効かないときは `Cmd/Ctrl+Shift+P` から `PL/I: テストを実行` を選ぶ。
-   コマンドが出てこなければ、拡張が読み込まれていないか、ファイルが
-   別の言語 ID として開かれている（上の「他の PL/I 拡張との競合」を参照）
+   コマンドが出てこなければ、Extension が読み込まれていないか、
+   ファイルが別の言語 ID として開かれている（画面右下の言語モードを確認する）
 
 拡張開発ホストは `--disable-extensions` で起動する。他の拡張を読み込まないので、
 言語 ID の競合もログの騒音も出ない状態で確認できる。

@@ -8,7 +8,7 @@
  *   - `snippets.ts` — コード Snippet の定義（単一の定義源）
  *   - `testing.ts`  — テストフレームワーク
  *
- * 利用側（ブラウザ版・VSCode 拡張・CLI）はここだけを見ればよい。
+ * 利用側（ブラウザ版・VSCode Extension・CLI）はここだけを見ればよい。
  */
 
 export { VERSION, runProgram, LexError, ParseError, PreprocessError } from "./run.js";

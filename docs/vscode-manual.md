@@ -1,4 +1,4 @@
-# VSCode 拡張マニュアル
+# VSCode Extension マニュアル
 
 PL/I の構文強調・診断・実行・テスト・検査・Snippet を VSCode に統合します。
 **処理系を同梱している**ので、外部のコンパイラは要りません。
@@ -7,13 +7,22 @@ PL/I の構文強調・診断・実行・テスト・検査・Snippet を VSCode
 
 ## インストール
 
-### `.vsix` を作って入れる
+### リリースから入手する（手軽）
+
+[Releases](https://github.com/Mt-riv/pli-engine/releases) から
+`pli-lang-0.1.0.vsix`（約 62KB）をダウンロードします。ビルドは要りません。
+
+```bash
+gh release download vscode-v0.1.0 --repo Mt-riv/pli-engine
+```
+
+### 自分で `.vsix` を作る
 
 ```bash
 cd pli-engine/vscode-pli
 npm ci
 npm run build
-npx @vscode/vsce package      # pli-lang-0.1.0.vsix ができる（約 64KB）
+npx @vscode/vsce package      # pli-lang-0.1.0.vsix ができる
 ```
 
 VSCode の拡張ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）→ 右上の `…` →
@@ -28,7 +37,7 @@ code --install-extension pli-lang-0.1.0.vsix
 
 ### 開発しながら使う
 
-拡張を直しながら試す場合は、**`vscode-pli/` フォルダを VSCode で開いて**
+Extension を直しながら試す場合は、**`vscode-pli/` フォルダを VSCode で開いて**
 `F5` を押します。ビルドが走り、`--disable-extensions` 付きの別ウィンドウ
 （拡張開発ホスト）が立ち上がります。
 

@@ -240,7 +240,7 @@ p が広がり、出力幅が合わなくなる。結果精度を直接構成す
 |--------|---------|
 | ブラウザ版 | 画面の「ファイル」欄に書いた仮想ファイル（`MemoryHost`） |
 | CLI | 実ファイル（`scripts/node-host.ts`。`node:fs` はここだけ） |
-| VSCode 拡張 | 開いているファイルの隣とワークスペース直下 |
+| VSCode Extension | 開いているファイルの隣とワークスペース直下 |
 | テスト | その場で作ったオブジェクト |
 
 ```pli
@@ -488,7 +488,7 @@ Node 依存は無い（CLI だけは当然ファイルを読む）。
 | 入口 | 場所 | 説明 |
 |------|------|------|
 | ブラウザ版 | [`web/`](web/README.md) | **HTML 1枚**。ダブルクリックで開くだけ。サーバ不要・オフライン可 |
-| VSCode 拡張 | [`../vscode-pli/`](../vscode-pli/README.md) | 構文強調・診断・実行・テスト・Snippet。処理系を同梱 |
+| VSCode Extension | [`../vscode-pli/`](../vscode-pli/README.md) | 構文強調・診断・実行・テスト・Snippet。処理系を同梱 |
 | テストの CLI | `scripts/plitest.ts` | `npm run plitest -- <ファイル/ディレクトリ>` |
 | Linter の CLI | `scripts/plilint.ts` | `npm run plilint -- <ファイル/ディレクトリ>` |
 

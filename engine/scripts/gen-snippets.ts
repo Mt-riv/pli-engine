@@ -1,6 +1,6 @@
 /**
  * src/snippets.ts から VSCode 用の Snippet ファイルを生成する。
- * 定義を一箇所に保ち、ブラウザ版と VSCode 拡張で食い違わないようにする。
+ * 定義を一箇所に保ち、ブラウザ版と VSCode Extension で食い違わないようにする。
  */
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
