@@ -100,3 +100,21 @@ describe("拡張の定義", () => {
     expect(pkg.main).toBe("./dist/extension.js");
   });
 });
+
+describe("DL/I の入口", () => {
+  it("PLITDLI が組込として色付けされる", () => {
+    const dli = grammar.repository.dli;
+    expect(dli).toBeDefined();
+    expect(dli.name).toBe("support.function.dli.pli");
+    const re = new RegExp(dli.match.replace(/^\(\?i\)/, ""), "i");
+    for (const name of ["plitdli", "PLITDLI", "cbltdli", "asmtdli", "aibtdli"]) {
+      expect(re.test(name), name).toBe(true);
+    }
+    expect(re.test("plitdliX")).toBe(false);
+  });
+
+  it("組込関数より先に見る（長い列に混ぜない）", () => {
+    const order = grammar.patterns.map((p: { include: string }) => p.include);
+    expect(order.indexOf("#dli")).toBeLessThan(order.indexOf("#builtin"));
+  });
+});
