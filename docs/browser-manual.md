@@ -182,6 +182,36 @@ end p;
 - 取り込んだ先で誤りがあると `decls.inc 2行5桁: ...` と、そのファイルの
   位置で報告します
 
+### IMS/DB（DL/I）を使う
+
+付随ファイルに `<名前>.psb` を置くと、そのまま DL/I が有効になります。
+実機では JCL が PSB を決めますが、ブラウザに JCL はありません。
+設定欄を増やすより、置いたファイルから決める方が迷いが少ないためです。
+
+```
+::: STUDENT.dbd
+         DBD  NAME=STUDENT,ACCESS=HDAM
+         SEGM NAME=STUDENT,PARENT=0,BYTES=13
+         FIELD NAME=(STUDNO,SEQ,U),BYTES=5,START=1,TYPE=C
+         FIELD NAME=STUDNAME,BYTES=8,START=6,TYPE=C
+         DBDGEN
+         END
+::: STUPSB.psb
+         PCB  TYPE=DB,DBDNAME=STUDENT,PROCOPT=A,KEYLEN=5
+         SENSEG NAME=STUDENT,PARENT=0
+         PSBGEN LANG=PLI,PSBNAME=STUPSB,CMPAT=YES
+         END
+::: STUDENT.dat
+STUDENT S0001YAMAKAWA
+STUDENT S0002TSUKIMI
+```
+
+- `.psb` が 2 つ以上あるとどちらか決められないので、その旨を出して
+  DL/I を使わずに実行します
+- `ISRT` / `REPL` / `DLET` の更新は、実行後に `.dat` の欄へ戻ります
+- 書き方は [`dli.md`](dli.md)。サンプル「IMS/DB（DL/I）」を選ぶと
+  この 3 つのファイルも一緒に入ります
+
 ### 標準入力（SYSIN）
 
 `GET LIST` / `GET EDIT` が読む内容です。

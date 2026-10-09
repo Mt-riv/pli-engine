@@ -10,7 +10,7 @@
 npm run plilint -- examples/tests          # ディレクトリを再帰的に
 npm run plilint -- a.pli --strict          # 警告も失敗として扱う
 npm run plilint -- a.pli --rule goto-outside-on-unit=off
-npm run plilint -- --list-rules            # 規則の一覧（全 13 件）と理由
+npm run plilint -- --list-rules            # 規則の一覧（全 14 件）と理由
 ```
 
 既定では **error が 1 件でもあれば終了コード 1**、警告だけなら 0。
@@ -25,7 +25,7 @@ npm run plilint -- --list-rules            # 規則の一覧（全 13 件）と�
 
 ## 規則
 
-重さは `error` / `warning` / `info` の 3 段階。`off` で止められる。全 13 件。
+重さは `error` / `warning` / `info` の 3 段階。`off` で止められる。全 14 件。
 
 ### correctness — 誤りか、誤りの元になる
 
@@ -43,6 +43,7 @@ npm run plilint -- --list-rules            # 規則の一覧（全 13 件）と�
 | `file-not-declared` | warning | 宣言していないファイルを使っている |
 | `endfile-without-on` | warning | `ON ENDFILE` を置かずにファイルから読んでいる |
 | `free-then-use` | warning | `FREE` したポインタをそのまま使っている |
+| `dli-status-unchecked` | warning | DL/I を呼んだのにステータスコードを見ていない |
 
 **`implicit-declaration` がこの Linter の主目的**である。PL/I は宣言の無い名前を
 暗黙に宣言する（`I`〜`N` で始まる名前は `FIXED BIN(15,0)`、それ以外は `FLOAT DEC(6)`）。
@@ -52,6 +53,14 @@ npm run plilint -- --list-rules            # 規則の一覧（全 13 件）と�
 `mixed-base-arithmetic` は実際に踏んだ落とし穴に対応する。基数が混ざると
 PL/I は BINARY に変換して計算するため、10 進で持っていた桁が落ちる。
 13 の階乗が FIXEDOVERFLOW になるのがその例。
+
+`dli-status-unchecked` は IMS のプログラムで最も多い誤りに対応する。
+DL/I は失敗しても例外を出さず、PCB のステータスコードで知らせる。
+見ないと「取れなかったセグメント」を取れたものとして処理してしまう。
+ステータスコードは PCB マスクの 3 番目の項目で、名前は自由に付けられる
+ので、名前ではなく位置で見ている（処理系が結び付けるのと同じ規則）。
+PCB マスクの残りの項目は DL/I が埋めるものなので、読んでいなくても
+`assigned-but-never-read` の対象にしない。
 
 ### style
 
@@ -66,8 +75,9 @@ ON 単位からの脱出には GOTO が要るので、ON 単位の中は対象�
 Linter は誤検出が出た時点で切られるので、既知の正しいコードに
 指摘が出ないことをテストで固定している。
 
-- ブラウザ版のサンプル 12 本 → 指摘 0
-- `examples/tests` のテストファイル 4 本 → 指摘 0
+- ブラウザ版のサンプル 13 本 → 指摘 0
+- `examples/tests` のテストファイル 5 本 → 指摘 0
+- `examples/dli` の例 → 指摘 0
 
 判定で気を遣っている点:
 

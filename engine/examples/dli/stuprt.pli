@@ -1,0 +1,34 @@
+/* 階層型データベースを階層順に全件並べる。
+
+   走らせ方:  npm run pli -- examples/dli/stuprt.pli --psb STUPSB
+
+   PCB マスクは %include で取り込む（実機でも取り込みで共有する）。
+   主手続きの引数は PSB の PCB の並びと同じで、CMPAT=YES なので
+   先頭が入出力 PCB、2 つ目が STUDENT の DB PCB になる。          */
+
+stuprt: proc(io_ptr, db_ptr) options(main);
+  dcl plitdli entry;
+  dcl (io_ptr, db_ptr) pointer;
+  %include dlipcb;
+
+  dcl three fixed bin(31) init(3);
+  dcl func_gn char(4) init('GN  ');
+  dcl seg_io char(13);
+  dcl n fixed bin(31) init(0);
+
+  put skip list('LV SEGMENT  KEY       DATA');
+  put skip list('-- -------- --------- --------------');
+
+  /* GA（上の階層へ戻った）と GK（同じ階層の別の型へ移った）は警告で、
+     セグメントは返る。stat_code = '  ' を条件にすると読み落とす。 */
+  do while (db_pcb.stat_code ^= 'GB');
+    call plitdli(three, func_gn, db_pcb, seg_io);
+    if db_pcb.stat_code ^= 'GB' then do;
+      n = n + 1;
+      put skip edit(db_pcb.seg_level, ' ', db_pcb.seg_name,
+                    db_pcb.key_fb, ' ', seg_io)(a, a, a, a, a, a);
+    end;
+  end;
+
+  put skip edit('-- 合計 ', n, ' 件 / STATUS=', db_pcb.stat_code)(a, f(3), a, a);
+end stuprt;

@@ -129,6 +129,7 @@ i は宣言されていません。暗黙に FIXED BIN(15,0) として宣言さ�
 | `pli.lint.rules` | `{}` | 規則ごとの上書き |
 | `pli.run.maxSteps` | `5000000` | 実行する文の数の上限（無限ループ対策） |
 | `pli.run.maxOutputBytes` | `1000000` | 出力の上限（文字数） |
+| `pli.dli.psb` | `""` | IMS/DB（DL/I）で使う PSB の名前。空なら DL/I を使わない |
 
 ```jsonc
 {
