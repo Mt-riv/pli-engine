@@ -326,6 +326,8 @@ export function runTestSource(source: string, opts: TestOptions = {}): TestRepor
       ...(opts.args ? { args: opts.args } : {}),
       // %INCLUDE とファイル入出力はテストの中でも使える
       ...(opts.host ? { host: opts.host } : {}),
+      // DL/I もテストの中から呼べる
+      ...(opts.psb === undefined ? {} : { psb: opts.psb }),
       ...(opts.stdin === undefined ? {} : { stdin: opts.stdin }),
     });
     const marks = readMarks(r.stdout);

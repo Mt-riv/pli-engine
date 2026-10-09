@@ -81,6 +81,11 @@
           "default": true,
           "description": "入力中に構文を検査して問題を表示する。"
         },
+        "pli.dli.psb": {
+          "type": "string",
+          "default": "",
+          "description": "IMS/DB（DL/I）で使う PSB の名前。指定すると <名前>.psb を読み、主手続きの引数が PCB のポインタになる。空なら CALL PLITDLI は PSB が無いと言って止まる。"
+        },
         "pli.run.maxSteps": {
           "type": "number",
           "default": 5000000,

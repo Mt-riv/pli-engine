@@ -77,6 +77,12 @@ export interface CheckOptions {
   maxOutputBytes?: number;
   /** `%INCLUDE` とファイル入出力に使う。 */
   host?: PliHost;
+  /**
+   * DL/I（IMS/DB）で使う PSB の名前。
+   * 指定すると `<名前>.psb` をホストから読み、主手続きの引数が
+   * PCB のポインタになる。
+   */
+  psb?: string;
 }
 
 /** Linter の指摘をエディタの範囲に移す。 */
@@ -154,6 +160,7 @@ export function runForEditor(
     maxOutputBytes: opts.maxOutputBytes ?? 1_000_000,
     ...(opts.args ? { args: opts.args } : {}),
     ...(opts.host ? { host: opts.host } : {}),
+    ...(opts.psb === undefined || opts.psb === "" ? {} : { psb: opts.psb }),
   });
 
   const head = `--- ${fileName} ---`;
@@ -211,6 +218,7 @@ export function runTestsForEditor(
     maxSteps: opts.maxSteps ?? 5_000_000,
     maxOutputBytes: opts.maxOutputBytes ?? 1_000_000,
     ...(opts.host ? { host: opts.host } : {}),
+    ...(opts.psb === undefined || opts.psb === "" ? {} : { psb: opts.psb }),
   });
 
   return { report, text: formatReport(report, fileName, { failedOutput: true }) };
