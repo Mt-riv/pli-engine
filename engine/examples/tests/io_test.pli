@@ -1,0 +1,43 @@
+/* 入出力のテスト。付随ファイルを使わず、文字列入力で確かめられる範囲。 */
+
+TEST_GET_STRING_LIST: proc;
+  dcl (a, b) fixed bin(31);
+  get string('12 34') list(a, b);
+  call ASSERT_EQUALS(12, a, '1つ目');
+  call ASSERT_EQUALS(34, b, '2つ目');
+end TEST_GET_STRING_LIST;
+
+TEST_GET_STRING_COMMA: proc;
+  dcl (a, b) fixed bin(31);
+  get string('5,6') list(a, b);
+  call ASSERT_EQUALS(5, a, 'カンマ区切り1');
+  call ASSERT_EQUALS(6, b, 'カンマ区切り2');
+end TEST_GET_STRING_COMMA;
+
+TEST_GET_STRING_QUOTED: proc;
+  dcl s char(10) varying;
+  get string('''a b''') list(s);
+  call ASSERT_EQUALS_CHAR('a b', s, '引用符の中は1項目');
+end TEST_GET_STRING_QUOTED;
+
+TEST_GET_STRING_EDIT: proc;
+  dcl (a, b) fixed bin(31);
+  get string('123456') edit(a, b)(f(3), f(3));
+  call ASSERT_EQUALS(123, a, '桁で切り出す1');
+  call ASSERT_EQUALS(456, b, '桁で切り出す2');
+end TEST_GET_STRING_EDIT;
+
+TEST_PICTURE_EDITING: proc;
+  dcl amt pic'$$$,$$9V.99';
+  dcl memo char(30) varying;
+  amt = 1234.5;
+  memo = amt;
+  call ASSERT_EQUALS_CHAR(' $1,234.50', memo, '金額の編集');
+end TEST_PICTURE_EDITING;
+
+TEST_PICTURE_IS_ARITHMETIC: proc;
+  dcl amt pic'ZZZ9V.99';
+  amt = 100;
+  amt = amt / 4;
+  call ASSERT_EQUALS(25, amt, 'ピクチャ変数も計算に使える');
+end TEST_PICTURE_IS_ARITHMETIC;

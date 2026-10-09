@@ -1,0 +1,127 @@
+{
+  "name": "pli-lang",
+  "displayName": "PL/I",
+  "description": "PL/I の構文強調・診断・実行。処理系は拡張に同梱されているので外部のコンパイラを必要としない。",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "local",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Mt-riv/pli-engine.git",
+    "directory": "vscode-pli"
+  },
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Programming Languages"],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:pli",
+    "onLanguage:pl1"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "pli",
+        "aliases": ["PL/I", "pli"],
+        "extensions": [".pli", ".pl1", ".plinc", ".inc", ".cpy"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "pli",
+        "scopeName": "source.pli",
+        "path": "./syntaxes/pli.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "pli.run",
+        "title": "PL/I: 実行",
+        "icon": "$(play)"
+      },
+      {
+        "command": "pli.runWithArgs",
+        "title": "PL/I: 引数を指定して実行"
+      },
+      {
+        "command": "pli.runTests",
+        "title": "PL/I: テストを実行",
+        "icon": "$(beaker)"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        { "command": "pli.run", "when": "resourceLangId == pli || resourceLangId == pl1", "group": "navigation" }
+      ],
+      "commandPalette": [
+        { "command": "pli.run", "when": "resourceLangId == pli || resourceLangId == pl1" },
+        { "command": "pli.runWithArgs", "when": "resourceLangId == pli || resourceLangId == pl1" }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "pli.run",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
+        "when": "(resourceLangId == pli || resourceLangId == pl1) && editorTextFocus"
+      },
+      {
+        "command": "pli.runTests",
+        "key": "ctrl+alt+t",
+        "mac": "cmd+alt+t",
+        "when": "(resourceLangId == pli || resourceLangId == pl1) && editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "PL/I",
+      "properties": {
+        "pli.diagnostics.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "入力中に構文を検査して問題を表示する。"
+        },
+        "pli.run.maxSteps": {
+          "type": "number",
+          "default": 5000000,
+          "description": "実行する文の数の上限。無限ループを止めるために使う。"
+        },
+        "pli.lint.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "入力中に Linter をかける（構文が通っているときだけ動きます）。"
+        },
+        "pli.lint.rules": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "規則ごとの上書き。例: `{ \"goto-outside-on-unit\": \"off\", \"implicit-declaration\": \"error\" }`",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["off", "info", "warning", "error"]
+          }
+        },
+        "pli.run.maxOutputBytes": {
+          "type": "number",
+          "default": 1000000,
+          "description": "出力の上限（文字数）。超えると打ち切る。"
+        }
+      }
+    },
+    "snippets": [
+      { "language": "pli", "path": "./snippets/pli.json" }
+    ]
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "watch": "npm run build -- --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.6",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}

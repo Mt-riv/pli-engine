@@ -1,0 +1,52 @@
+/* 配列と SETUP / TEARDOWN のテスト。
+
+   SETUP は各テストの前に実行される。
+   テストは 1 件ずつ別のプログラムとして動くので、
+   あるテストが壊した状態が次のテストに漏れることはない。 */
+
+dcl a(5) fixed bin(31);
+
+SETUP: proc;
+  dcl i fixed bin(31);
+  do i = 1 to 5;
+    a(i) = i * 10;
+  end;
+end SETUP;
+
+TEST_SETUP_RAN: proc;
+  call ASSERT_EQUALS(10, a(1), 'SETUP が走っている');
+  call ASSERT_EQUALS(50, a(5), '末尾も初期化済み');
+end TEST_SETUP_RAN;
+
+TEST_BOUNDS: proc;
+  call ASSERT_EQUALS(1, lbound(a, 1), 'LBOUND');
+  call ASSERT_EQUALS(5, hbound(a, 1), 'HBOUND');
+  call ASSERT_EQUALS(5, dim(a, 1), 'DIM');
+end TEST_BOUNDS;
+
+TEST_ARRAY_EXPRESSION: proc;
+  /* 配列全体への代入は各要素に適用される */
+  a = 7;
+  call ASSERT_EQUALS(7, a(1), '全要素に 7');
+  call ASSERT_EQUALS(7, a(3), '途中も 7');
+end TEST_ARRAY_EXPRESSION;
+
+TEST_STATE_IS_ISOLATED: proc;
+  /* 前のテストが a を 7 で埋めていても、ここでは SETUP の値に戻っている */
+  call ASSERT_EQUALS(30, a(3), 'テストごとに状態が分離される');
+end TEST_STATE_IS_ISOLATED;
+
+TEST_SUM_BY_LOOP: proc;
+  dcl i fixed bin(31);
+  dcl total fixed bin(31);
+  total = 0;
+  do i = lbound(a, 1) to hbound(a, 1);
+    total = total + a(i);
+  end;
+  call ASSERT_EQUALS(150, total, '10+20+30+40+50');
+end TEST_SUM_BY_LOOP;
+
+DISABLED_TEST_NOT_WRITTEN_YET: proc;
+  /* DISABLED_ が付いているので実行されない（@Disabled 相当） */
+  call FAIL('まだ書いていない');
+end DISABLED_TEST_NOT_WRITTEN_YET;

@@ -1,0 +1,52 @@
+/* 文字列操作のテスト。 */
+
+TEST_SUBSTR: proc;
+  call ASSERT_EQUALS_CHAR('cd', substr('abcdef', 3, 2), '長さ指定');
+  call ASSERT_EQUALS_CHAR('cdef', substr('abcdef', 3), '長さ省略で末尾まで');
+end TEST_SUBSTR;
+
+TEST_SUBSTR_PSEUDO_VARIABLE: proc;
+  dcl s char(6);
+  s = 'abcdef';
+  substr(s, 3, 2) = 'XY';
+  call ASSERT_EQUALS_CHAR('abXYef', s, 'SUBSTR 疑似変数で部分代入');
+end TEST_SUBSTR_PSEUDO_VARIABLE;
+
+TEST_INDEX: proc;
+  call ASSERT_EQUALS(3, index('abcdef', 'cd'), '見つかる位置');
+  call ASSERT_EQUALS(0, index('abcdef', 'zz'), '見つからなければ 0');
+end TEST_INDEX;
+
+TEST_VERIFY: proc;
+  /* 集合に無い最初の文字の位置。全部含まれていれば 0 */
+  call ASSERT_EQUALS(0, verify('12345', '0123456789'), '全部数字');
+  call ASSERT_EQUALS(3, verify('12X45', '0123456789'), '3桁目が数字でない');
+end TEST_VERIFY;
+
+TEST_LENGTH_IS_FIXED_FOR_NONVARYING: proc;
+  dcl fixedlen char(10);
+  dcl vary     char(10) varying;
+  fixedlen = 'abc';
+  vary = 'abc';
+  call ASSERT_EQUALS(10, length(fixedlen), 'CHAR(n) は常に n');
+  call ASSERT_EQUALS(3, length(vary), 'VARYING は現在の長さ');
+end TEST_LENGTH_IS_FIXED_FOR_NONVARYING;
+
+TEST_CONCAT_AND_REPEAT: proc;
+  dcl s char(20) varying;
+  s = 'ab' || 'cd';
+  call ASSERT_EQUALS_CHAR('abcd', s, '連結');
+  /* REPEAT(s,n) は n 回「追加」する（合計 n+1 個） */
+  call ASSERT_EQUALS_CHAR('ababab', repeat('ab', 2), 'REPEAT は追加回数');
+end TEST_CONCAT_AND_REPEAT;
+
+TEST_TRANSLATE: proc;
+  call ASSERT_EQUALS_CHAR('ABC', translate('abc', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+                                           'abcdefghijklmnopqrstuvwxyz'), '大文字化');
+end TEST_TRANSLATE;
+
+TEST_CHAR_COMPARE_USES_COLLATION: proc;
+  /* 照合順序は ASCII 順。'Z' は 'a' より小さい */
+  call ASSERT_TRUE(('Z' < 'a'), '大文字は小文字より前');
+  call ASSERT_FALSE(('a' < 'Z'), '逆は成り立たない');
+end TEST_CHAR_COMPARE_USES_COLLATION;

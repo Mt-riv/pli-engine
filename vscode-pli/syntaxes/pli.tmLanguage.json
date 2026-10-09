@@ -1,0 +1,122 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "PL/I",
+  "scopeName": "source.pli",
+  "_comment": "PL/I には予約語が無く、IF や THEN をそのまま変数名に使える（IF IF = THEN THEN THEN = ELSE; は合法）。したがってキーワードの着色は本質的に近似でしかない。ここでは実用上読みやすくなることを優先し、語形だけで着色する。厳密な判定が必要な場合は拡張が提供する診断（エンジンによる構文解析）を使う。",
+  "patterns": [
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#preprocessor"
+    },
+    {
+      "include": "#string"
+    },
+    {
+      "include": "#number"
+    },
+    {
+      "include": "#label"
+    },
+    {
+      "include": "#condition"
+    },
+    {
+      "include": "#keyword"
+    },
+    {
+      "include": "#builtin"
+    },
+    {
+      "include": "#operator"
+    }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.block.pli",
+      "begin": "/\\*",
+      "end": "\\*/"
+    },
+    "preprocessor": {
+      "name": "meta.preprocessor.pli",
+      "begin": "(?i)(%)\\s*(replace|include|page|skip|print|noprint|process|declare|dcl|if|then|else|do|end|goto)\\b",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.control.directive.pli"
+        },
+        "2": {
+          "name": "keyword.control.directive.pli"
+        }
+      },
+      "end": ";",
+      "patterns": [
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#number"
+        }
+      ]
+    },
+    "string": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.pli",
+          "begin": "'",
+          "end": "'(?!')",
+          "patterns": [
+            {
+              "name": "constant.character.escape.pli",
+              "match": "''"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.pli",
+          "begin": "\"",
+          "end": "\"(?!\")",
+          "patterns": [
+            {
+              "name": "constant.character.escape.pli",
+              "match": "\"\""
+            }
+          ]
+        }
+      ]
+    },
+    "number": {
+      "patterns": [
+        {
+          "name": "constant.numeric.pli",
+          "match": "(?i)\\b\\d+(\\.\\d+)?([eE][-+]?\\d+)?\\b"
+        }
+      ]
+    },
+    "label": {
+      "name": "entity.name.function.pli",
+      "match": "(?i)^\\s*([A-Za-z_$#@][A-Za-z0-9_$#@]*)\\s*:",
+      "captures": {
+        "1": {
+          "name": "entity.name.function.pli"
+        }
+      }
+    },
+    "condition": {
+      "name": "support.type.condition.pli",
+      "match": "(?i)(?<=\\bon\\s)\\s*(subscriptrange|undefinedfile|fixedoverflow|anycondition|stringrange|stringsize|conversion|zerodivide|condition|underflow|attention|transmit|overflow|storage|endpage|endfile|record|finish|error|size|area|attn|name|key)\\b"
+    },
+    "keyword": {
+      "name": "keyword.other.pli",
+      "match": "(?i)\\b(nonconnected|environment|sequential|controlled|automatic|unaligned|connected|character|reentrant|procedure|recursive|otherwise|position|allocate|internal|unsigned|priority|external|picture|default|generic|package|options|iterate|defined|pointer|keyfrom|aligned|rewrite|byvalue|varying|returns|decimal|initial|builtin|display|declare|complex|string|record|offset|revert|direct|return|signed|binary|static|signal|select|stream|byaddr|locate|delete|update|output|repeat|format|other|refer|based|keyed|print|float|title|write|close|reply|union|event|while|entry|value|until|label|begin|input|fixed|leave|real|open|free|line|edit|stop|area|page|read|task|else|when|call|init|proc|auto|into|exit|data|goto|cplx|from|null|list|imag|then|like|skip|copy|file|char|bin|get|ptr|pos|key|put|end|bit|set|ext|int|pic|dcl|var|dec|env|def|ctl|if|do|on|go|to|by)\\b"
+    },
+    "builtin": {
+      "name": "support.function.builtin.pli",
+      "match": "(?i)\\b(currentstorage|binaryvalue|daystodate|allocation|translate|character|dimension|precision|maxlength|onsource|multiply|heximage|datetime|oncondid|omitted|pointer|reverse|charval|storage|collate|decimal|complex|hbound|string|offset|length|substr|divide|onfile|pageno|onchar|verify|oncode|lineno|lbound|unspec|random|repeat|count|trunc|floor|onloc|float|log10|empty|valid|decat|conjg|atanh|index|onkey|fixed|round|atand|rank|real|cosh|prec|time|addr|byte|ceil|atan|trim|log2|null|date|sqrt|imag|cosd|acos|tanh|erfc|sign|tand|copy|asin|sinh|high|bool|days|sind|dim|mod|sin|bit|add|sum|cos|hex|min|log|exp|low|max|tan|erf|abs)\\b(?=\\s*\\()"
+    },
+    "operator": {
+      "name": "keyword.operator.pli",
+      "match": "(\\*\\*|\\|\\||<=|>=|\\^=|¬=|\\^<|¬<|\\^>|¬>|[-+*/=<>|&^¬])"
+    }
+  }
+}
