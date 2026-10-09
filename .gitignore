@@ -1,5 +1,15 @@
+# 依存とビルド生成物。クローンすれば再生成できるものはコミットしない。
+# （gitignore は行末コメントを解釈しないので、注記は行を分ける）
+
 node_modules/
+
+# engine の tsc 出力と vscode-pli の拡張バンドル
 dist/
+
+# engine のブラウザ版（HTML 1 枚）
 dist-web/
+
+# vsce package の出力
 *.vsix
+
 .DS_Store
