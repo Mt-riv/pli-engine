@@ -108,7 +108,16 @@ npm run plitest -- a_test.pli b_test.pli           # ファイルを並べて
 npm run plitest -- examples/tests --xml out/     # CI 用の XML も出す
 npm run plitest -- examples/tests --quiet          # 失敗したファイルだけ表示
 npm run plitest -- a_test.pli --max-steps 100000   # 文の実行数の上限
+npm run plitest -- examples/tests --psb STUPSB     # DL/I（IMS/DB）を使うテスト
+npm run plitest -- a_test.pli --write              # 書き出しを実ファイルへ反映する
 ```
+
+**書き出しは既定で実ファイルへ反映しない。** テストを走らせるたびに
+元データが変わると、2 回目から結果が変わってしまう（DL/I の `DLET` を
+試すテストで実際に起きた）。反映したいときだけ `--write` を付ける。
+
+DL/I を使うテストの書き方は [`dli.md`](dli.md)。例は
+`engine/examples/tests/dli_test.pli`。
 
 ディレクトリを指定したときは `*_test.pli` / `test_*.pli` / `*.test.pli`
 （拡張子は `.pli` / `.pl1`）をテストファイルとみなす。
