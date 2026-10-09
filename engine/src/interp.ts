@@ -571,6 +571,10 @@ export class Interpreter {
    * 葉の形はプログラムの `DCL 1 … BASED(ptr)` が決める（位置で結び付く）。
    */
   private pcbPointers(count: number, line: number): Value[] {
+    // 引数を取らない主手続きは PCB を受け取れない。
+    // この時点で PSB を読む理由が無いので、読まずに返す
+    // （PL/I で書くテストの入口は引数を取らない）
+    if (count === 0) return [];
     const dli = this.requireDli(line);
     if (count > dli.pcbCount) {
       throw new RuntimeError(
