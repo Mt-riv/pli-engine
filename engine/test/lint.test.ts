@@ -254,3 +254,57 @@ describe("formatLint", () => {
     expect(text).toContain("誤り 1");
   });
 });
+
+describe("dli-status-unchecked", () => {
+  const PCB = `  dcl 1 pcb,
+        2 dbname     char(8),
+        2 seg_level  char(2),
+        2 stat_code  char(2),
+        2 proc_opt   char(4),
+        2 reserved   fixed bin(31),
+        2 seg_name   char(8),
+        2 len_kfb    fixed bin(31),
+        2 no_senseg  fixed bin(31),
+        2 key_fb     char(9);`;
+  const prog = (tail: string) => `p: proc options(main);
+  dcl plitdli entry;
+  dcl three fixed bin(31) init(3);
+  dcl func char(4) init('GN  ');
+  dcl seg_io char(13);
+${PCB}
+  call plitdli(three, func, pcb, seg_io);
+${tail}
+end p;`;
+
+  it("ステータスコードを一度も読まなければ指摘する", () => {
+    const found = lint(prog("  put skip list(seg_io);")).filter(
+      (m) => m.rule === "dli-status-unchecked",
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]!.message).toContain("pcb.stat_code");
+  });
+
+  it("読んでいれば指摘しない", () => {
+    const found = lint(
+      prog("  if pcb.stat_code = '  ' then put skip list(seg_io);"),
+    ).filter((m) => m.rule === "dli-status-unchecked");
+    expect(found).toEqual([]);
+  });
+
+  it("PCB マスクの読まない項目を「代入したが読んでいない」とは言わない", () => {
+    const found = lint(
+      prog("  if pcb.stat_code = '  ' then put skip list(seg_io);"),
+    ).filter((m) => m.rule === "assigned-but-never-read");
+    expect(found).toEqual([]);
+  });
+
+  it("DL/I を呼んでいなければ何も言わない", () => {
+    const src = `p: proc options(main);
+${PCB}
+  pcb.stat_code = '  ';
+  put skip list(pcb.stat_code);
+end p;`;
+    const found = lint(src).filter((m) => m.rule === "dli-status-unchecked");
+    expect(found).toEqual([]);
+  });
+});
