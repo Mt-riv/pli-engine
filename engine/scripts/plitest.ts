@@ -35,6 +35,8 @@ interface Args {
   targets: string[];
   xmlDir?: string;
   maxSteps?: number;
+  /** DL/I を使うテストで読む PSB の名前。 */
+  psb?: string;
   quiet: boolean;
 }
 
@@ -42,11 +44,13 @@ function parseArgs(argv: string[]): Args {
   const targets: string[] = [];
   let xmlDir: string | undefined;
   let maxSteps: number | undefined;
+  let psb: string | undefined;
   let quiet = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--xml") xmlDir = argv[++i];
     else if (a === "--max-steps") maxSteps = Number(argv[++i]);
+    else if (a === "--psb") psb = argv[++i];
     else if (a === "--quiet" || a === "-q") quiet = true;
     else if (a.startsWith("-")) {
       console.error(`不明なオプション: ${a}`);
@@ -55,11 +59,12 @@ function parseArgs(argv: string[]): Args {
   }
   if (targets.length === 0) {
     console.error(
-      "使い方: plitest <ファイルまたはディレクトリ...> [--xml <出力先>] [--max-steps N] [--quiet]",
+      "使い方: plitest <ファイルまたはディレクトリ...> [--xml <出力先>] " +
+        "[--max-steps N] [--psb <PSB 名>] [--quiet]",
     );
     process.exit(2);
   }
-  return { targets, xmlDir, maxSteps, quiet };
+  return { targets, xmlDir, maxSteps, psb, quiet };
 }
 
 const args = parseArgs(process.argv.slice(2));
@@ -79,6 +84,7 @@ for (const file of files) {
   const report = runTestSource(source, {
     host: hostForFile(file),
     ...(args.maxSteps !== undefined ? { maxSteps: args.maxSteps } : {}),
+    ...(args.psb === undefined ? {} : { psb: args.psb }),
   });
   reports.push({ file, report });
 

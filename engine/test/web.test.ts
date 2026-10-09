@@ -2,7 +2,19 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { SAMPLES } from "../web/samples.js";
-import { isTestSource, runProgram, runTestSource } from "../src/index.js";
+import { MemoryHost, isTestSource, runProgram, runTestSource } from "../src/index.js";
+import { parseFiles, psbNames } from "../web/files.js";
+
+/** サンプルの付随ファイルから、実行に使うホストと PSB を組む。 */
+function optionsFor(aux: string | undefined): { host?: MemoryHost; psb?: string } {
+  if (aux === undefined) return {};
+  const files = parseFiles(aux);
+  const names = psbNames(files);
+  return {
+    host: new MemoryHost(files),
+    ...(names.length === 1 ? { psb: names[0]! } : {}),
+  };
+}
 
 /**
  * ブラウザ版の検証。
@@ -20,7 +32,7 @@ describe("ブラウザ版のサンプル", () => {
       // 「失敗したテストの見え方」を示すためわざと失敗するテストを含めているが、
       // 想定外の異常（error）が出たらサンプルが壊れている。
       it(`「${s.name}」がテストとして実行できる`, () => {
-        const r = runTestSource(s.source, { maxSteps: 1_000_000 });
+        const r = runTestSource(s.source, { maxSteps: 1_000_000, ...optionsFor(s.aux) });
         expect(r.note).toBeUndefined();
         expect(r.passed).toBeGreaterThan(0);
         expect(r.results.filter((x) => x.status === "error")).toEqual([]);
@@ -28,7 +40,7 @@ describe("ブラウザ版のサンプル", () => {
       continue;
     }
     it(`「${s.name}」がエラーなく実行できる`, () => {
-      const r = runProgram(s.source, { maxSteps: 1_000_000 });
+      const r = runProgram(s.source, { maxSteps: 1_000_000, ...optionsFor(s.aux) });
       expect(r.diagnostics).toEqual([]);
       expect(r.ok).toBe(true);
       expect(r.stdout.length).toBeGreaterThan(0);
