@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PL/I エンジン</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --border: #d8d8d8;
+    --panel: #f6f6f6; --accent: #2b5fd9; --err: #c0392b; --ok: #1e7a3c; --warn: #9a6700;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16181d; --fg: #e6e6e6; --muted: #9aa0a8; --border: #333842;
+      --panel: #1e2128; --accent: #7aa2f7; --err: #ff6b6b; --ok: #73d393; --warn: #d9a441;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg); display: flex; flex-direction: column;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  h1 { font-size: 14px; margin: 0; font-weight: 600; }
+  .ver { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+  button, select {
+    font: inherit; padding: 5px 11px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--bg); color: var(--fg); cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #fff; border-color: transparent; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr; min-height: 0; }
+  @media (max-width: 820px) { main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
+  .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .pane + .pane { border-left: 1px solid var(--border); }
+  @media (max-width: 820px) { .pane + .pane { border-left: 0; border-top: 1px solid var(--border); } }
+  .pane-head {
+    padding: 5px 12px; font-size: 12px; color: var(--muted);
+    border-bottom: 1px solid var(--border); background: var(--panel);
+    display: flex; gap: 10px; align-items: center;
+  }
+  /* 行番号付きエディタ。外部依存を持たないため textarea を使う。 */
+  .editor { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+  .gutter {
+    padding: 10px 6px 10px 10px; text-align: right; user-select: none;
+    color: var(--muted); background: var(--panel); border-right: 1px solid var(--border);
+    font: 13px/1.55 var(--mono); overflow: hidden; white-space: pre;
+  }
+  .gutter .cur { color: var(--accent); font-weight: 700; }
+  .gutter .bad { color: var(--err); font-weight: 700; }
+  textarea {
+    flex: 1; border: 0; outline: 0; resize: none; padding: 10px 12px;
+    background: var(--bg); color: var(--fg); font: 13px/1.55 var(--mono);
+    white-space: pre; overflow-wrap: normal; overflow-x: auto; tab-size: 2;
+  }
+  pre {
+    flex: 1; margin: 0; padding: 10px 12px; overflow: auto; min-height: 0;
+    font: 13px/1.55 var(--mono); white-space: pre-wrap; word-break: break-word;
+  }
+  .diags { border-top: 1px solid var(--border); max-height: 30%; overflow: auto; }
+  .diags ul { margin: 0; padding: 6px 12px 6px 28px; }
+  .diags li { cursor: pointer; color: var(--err); }
+  .diags li.warn { color: var(--warn); }
+  .diags li.info { color: var(--muted); }
+  .diags li:hover { text-decoration: underline; }
+  .diags .rule { color: var(--muted); font-size: 11px; }
+  .status {
+    padding: 5px 12px; border-top: 1px solid var(--border); background: var(--panel);
+    font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap;
+  }
+  .status .ok { color: var(--ok); } .status .err { color: var(--err); }
+  .hidden { display: none !important; }
+  /* 付随ファイル（%INCLUDE の取り込み元や入出力の相手）を書く引き出し */
+  .drawer { display: flex; flex-direction: column; height: 38%; min-height: 0;
+            border-top: 1px solid var(--border); }
+  .drawer textarea { flex: 1; }
+  button.on { background: var(--accent); color: #fff; border-color: transparent; }
+  button.tab { padding: 2px 10px; font-size: 12px; border-radius: 5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PL/I エンジン</h1>
+  <span class="ver" id="ver"></span>
+  <select id="sample" aria-label="サンプル"></select>
+  <select id="snippet" aria-label="Snippet"></select>
+  <button id="run" class="primary">実行 (Ctrl+Enter)</button>
+  <button id="files">ファイル</button>
+  <button id="lint">検査</button>
+  <button id="share">URLで共有</button>
+  <div class="spacer"></div>
+  <span class="ver">すべてブラウザ内で動作（サーバ不要）</span>
+</header>
+
+<main>
+  <div class="pane">
+    <div class="pane-head">
+      <span>ソース</span>
+      <span class="spacer"></span>
+      <span id="pos">1:1</span>
+    </div>
+    <div class="editor">
+      <div class="gutter" id="gutter">1</div>
+      <textarea id="src" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+    </div>
+    <div class="drawer hidden" id="drawer">
+      <div class="pane-head">
+        <button id="tab-files" class="tab on">付随ファイル</button>
+        <button id="tab-stdin" class="tab">標準入力 (SYSIN)</button>
+        <span class="spacer"></span>
+        <span class="ver" id="drawer-hint"></span>
+      </div>
+      <textarea id="aux" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+      <textarea id="stdin" class="hidden" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+    </div>
+  </div>
+  <div class="pane">
+    <div class="pane-head"><span id="out-title">出力</span></div>
+    <pre id="out"></pre>
+    <div class="diags hidden" id="diags"></div>
+    <div class="status"><span id="status">準備完了</span></div>
+  </div>
+</main>
+
+<script type="module" src="./main.ts"></script>
+</body>
+</html>

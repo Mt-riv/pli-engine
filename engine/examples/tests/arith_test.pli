@@ -1,0 +1,49 @@
+/* 算術のテスト。
+   FIXED DECIMAL が 10 進のまま正確に計算されることを確かめる。 */
+
+TEST_DECIMAL_MULTIPLY_IS_EXACT: proc;
+  dcl x fixed dec(5,2);
+  dcl y fixed dec(3,1);
+  x = 123.45;
+  y = 6.7;
+  /* 2 進浮動小数点なら 827.11499... になるところ */
+  call ASSERT_EQUALS(827.115, x * y, '10進の乗算は正確');
+end TEST_DECIMAL_MULTIPLY_IS_EXACT;
+
+TEST_DECIMAL_ADD_KEEPS_SCALE: proc;
+  dcl a fixed dec(5,2);
+  a = 0.1;
+  a = a + 0.2;
+  call ASSERT_EQUALS(0.3, a, '0.1 + 0.2 は 0.3');
+end TEST_DECIMAL_ADD_KEEPS_SCALE;
+
+TEST_DIVIDE_BUILTIN_CONTROLS_PRECISION: proc;
+  /* DIVIDE は結果の精度と尺度を明示できる */
+  call ASSERT_EQUALS(0.333, divide(1, 3, 5, 3), 'DIVIDE(1,3,5,3)');
+end TEST_DIVIDE_BUILTIN_CONTROLS_PRECISION;
+
+TEST_MOD: proc;
+  call ASSERT_EQUALS(2, mod(17, 5), '17 mod 5');
+  call ASSERT_EQUALS(0, mod(10, 5), '割り切れる場合');
+  /* MOD は負の第1引数でも非負を返す */
+  call ASSERT_EQUALS(3, mod(-17, 5), '-17 mod 5');
+end TEST_MOD;
+
+TEST_ROUNDING: proc;
+  call ASSERT_EQUALS(3, floor(3.7), 'FLOOR');
+  call ASSERT_EQUALS(4, ceil(3.2), 'CEIL');
+  call ASSERT_EQUALS(3, trunc(3.9), 'TRUNC');
+  call ASSERT_EQUALS(3.1, round(3.14159, 1), 'ROUND(x,1)');
+end TEST_ROUNDING;
+
+TEST_SIGN_AND_ABS: proc;
+  call ASSERT_EQUALS(-1, sign(-42), 'SIGN(負)');
+  call ASSERT_EQUALS(0, sign(0), 'SIGN(0)');
+  call ASSERT_EQUALS(1, sign(42), 'SIGN(正)');
+  call ASSERT_EQUALS(42, abs(-42), 'ABS');
+end TEST_SIGN_AND_ABS;
+
+TEST_MAX_MIN: proc;
+  call ASSERT_EQUALS(9, max(3, 9, 5), 'MAX は 3 引数でも可');
+  call ASSERT_EQUALS(3, min(3, 9, 5), 'MIN');
+end TEST_MAX_MIN;

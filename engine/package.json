@@ -1,0 +1,29 @@
+{
+  "name": "pli-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PL/I サブセット処理系（自作）。ブラウザでも Node でも動く。",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "web:dev": "vite",
+    "web:build": "vite build",
+    "web:preview": "vite preview",
+    "gen:snippets": "tsx scripts/gen-snippets.ts",
+    "plitest": "tsx scripts/plitest.ts",
+    "plilint": "tsx scripts/plilint.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.6",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4",
+    "vite": "^6.0.7",
+    "tsx": "^4.19.2"
+  }
+}

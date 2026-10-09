@@ -1,0 +1,12 @@
+# vsix に入れるのは実行に必要なものだけ。
+# dist/extension.js にエンジンごとバンドルしてあるので、
+# src/ も node_modules/ も要らない。
+.vscode/**
+node_modules/**
+src/**
+test/**
+tsconfig.json
+vitest.config.ts
+package-lock.json
+.gitignore
+**/*.map

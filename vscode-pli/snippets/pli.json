@@ -1,0 +1,397 @@
+{
+  "主手続き": {
+    "prefix": "main",
+    "body": [
+      "${1:prog}: proc options(main);",
+      "  $0",
+      "end ${1:prog};",
+      ""
+    ],
+    "description": "OPTIONS(MAIN) を持つ主手続き"
+  },
+  "Hello World": {
+    "prefix": "hello",
+    "body": [
+      "hello: proc options(main);",
+      "  put list('HELLO, PL/I');",
+      "end hello;",
+      ""
+    ],
+    "description": "最小のプログラム"
+  },
+  "引数を取る主手続き": {
+    "prefix": "mainarg",
+    "body": [
+      "${1:prog}: proc(parm) options(main);",
+      "  dcl parm char(100) varying;",
+      "  put skip list(parm);",
+      "  $0",
+      "end ${1:prog};",
+      ""
+    ],
+    "description": "コマンドライン引数を受け取る主手続き"
+  },
+  "内部手続き": {
+    "prefix": "proc",
+    "body": [
+      "${1:name}: proc(${2:arg});",
+      "  dcl ${2:arg} fixed bin(31);",
+      "  $0",
+      "end ${1:name};"
+    ],
+    "description": "引数を取る内部手続き"
+  },
+  "値を返す手続き": {
+    "prefix": "func",
+    "body": [
+      "${1:name}: proc(${2:arg}) returns(${3:fixed bin(31)});",
+      "  dcl ${2:arg} fixed bin(31);",
+      "  $0",
+      "  return(${2:arg});",
+      "end ${1:name};"
+    ],
+    "description": "RETURNS を持つ手続き"
+  },
+  "再帰手続き": {
+    "prefix": "recur",
+    "body": [
+      "${1:fib}: proc(n) returns(fixed bin(31)) recursive;",
+      "  dcl n fixed bin(31);",
+      "  if n < 2 then return(n);",
+      "  return(${1:fib}(n-1) + ${1:fib}(n-2));",
+      "end ${1:fib};"
+    ],
+    "description": "RECURSIVE を持つ手続き"
+  },
+  "宣言（整数）": {
+    "prefix": "dclbin",
+    "body": [
+      "dcl ${1:i} fixed bin(${2:31});$0"
+    ],
+    "description": "FIXED BINARY の宣言"
+  },
+  "宣言（10進固定小数点）": {
+    "prefix": "dcldec",
+    "body": [
+      "dcl ${1:amount} fixed dec(${2:15},${3:2});$0"
+    ],
+    "description": "FIXED DECIMAL の宣言。金額など正確な10進計算に使う"
+  },
+  "宣言（文字列）": {
+    "prefix": "dclchar",
+    "body": [
+      "dcl ${1:s} char(${2:80}) varying;$0"
+    ],
+    "description": "CHARACTER VARYING の宣言"
+  },
+  "宣言（配列）": {
+    "prefix": "dclarr",
+    "body": [
+      "dcl ${1:a}(${2:10}) fixed bin(31) init(${3:0});$0"
+    ],
+    "description": "初期値付きの配列"
+  },
+  "宣言（構造体）": {
+    "prefix": "struct",
+    "body": [
+      "dcl 1 ${1:rec},",
+      "      2 ${2:name} char(${3:20}) varying,",
+      "      2 ${4:count} fixed bin(31);",
+      "$0"
+    ],
+    "description": "レベル番号を使った構造体"
+  },
+  "IF / THEN / ELSE": {
+    "prefix": "if",
+    "body": [
+      "if ${1:cond} then",
+      "  ${2:;}",
+      "else",
+      "  ${3:;}",
+      "$0"
+    ],
+    "description": "条件分岐"
+  },
+  "IF と DO 群": {
+    "prefix": "ifdo",
+    "body": [
+      "if ${1:cond} then",
+      "  do;",
+      "    $0",
+      "  end;"
+    ],
+    "description": "複数文を持つ条件分岐"
+  },
+  "DO 反復": {
+    "prefix": "do",
+    "body": [
+      "do ${1:i} = ${2:1} to ${3:10};",
+      "  $0",
+      "end;"
+    ],
+    "description": "添字による繰り返し"
+  },
+  "DO WHILE": {
+    "prefix": "dowhile",
+    "body": [
+      "do while(${1:cond});",
+      "  $0",
+      "end;"
+    ],
+    "description": "条件が真の間繰り返す"
+  },
+  "DO UNTIL": {
+    "prefix": "dountil",
+    "body": [
+      "do until(${1:cond});",
+      "  $0",
+      "end;"
+    ],
+    "description": "条件が真になるまで繰り返す"
+  },
+  "SELECT": {
+    "prefix": "select",
+    "body": [
+      "select (${1:expr});",
+      "  when (${2:1}) ${3:;}",
+      "  otherwise ${4:;}",
+      "end;",
+      "$0"
+    ],
+    "description": "値による分岐"
+  },
+  "SELECT（条件式）": {
+    "prefix": "selectw",
+    "body": [
+      "select;",
+      "  when (${1:cond}) ${2:;}",
+      "  otherwise ${3:;}",
+      "end;",
+      "$0"
+    ],
+    "description": "条件による分岐（SELECT; 形式）"
+  },
+  "PUT LIST": {
+    "prefix": "put",
+    "body": [
+      "put skip list(${1:x});$0"
+    ],
+    "description": "値を並べて出力（24桁ごとに配置される）"
+  },
+  "PUT EDIT": {
+    "prefix": "pute",
+    "body": [
+      "put skip edit(${1:x})(${2:f(10)});$0"
+    ],
+    "description": "書式を指定して出力"
+  },
+  "GET STRING": {
+    "prefix": "gets",
+    "body": [
+      "get string(${1:text}) edit(${2:x})(${3:f(10)});$0"
+    ],
+    "description": "文字列から値を読み取る"
+  },
+  "ON 条件": {
+    "prefix": "on",
+    "body": [
+      "on ${1|error,zerodivide,fixedoverflow,conversion,subscriptrange|}",
+      "  begin;",
+      "    $0",
+      "  end;"
+    ],
+    "description": "条件が起きたときの処理"
+  },
+  "BEGIN ブロック": {
+    "prefix": "begin",
+    "body": [
+      "begin;",
+      "  $0",
+      "end;"
+    ],
+    "description": "独自の名前の有効範囲を持つブロック"
+  },
+  "%REPLACE": {
+    "prefix": "replace",
+    "body": [
+      "%replace ${1:NAME} by ${2:1};$0"
+    ],
+    "description": "定数の定義（プリプロセッサ）"
+  },
+  "DEFINED（別名）": {
+    "prefix": "defined",
+    "body": [
+      "dcl ${1:d}(${2:3}) fixed bin(31) def (${3:b}(1sub,1sub));$0"
+    ],
+    "description": "別の変数への別名。iSUB で添字を対応づけられる"
+  },
+  "FizzBuzz": {
+    "prefix": "fizzbuzz",
+    "body": [
+      "fb: proc options(main);",
+      "  dcl i fixed bin(31);",
+      "  do i = 1 to 20;",
+      "    if mod(i, 15) = 0 then put skip list('FizzBuzz');",
+      "    else if mod(i, 3) = 0 then put skip list('Fizz');",
+      "    else if mod(i, 5) = 0 then put skip list('Buzz');",
+      "    else put skip list(i);",
+      "  end;",
+      "end fb;",
+      ""
+    ],
+    "description": "動作確認用のサンプル"
+  },
+  "10進計算の例": {
+    "prefix": "decdemo",
+    "body": [
+      "money: proc options(main);",
+      "  dcl price fixed dec(7,2);",
+      "  dcl rate  fixed dec(3,2);",
+      "  dcl tax   fixed dec(9,4);",
+      "  price = 1980.00;",
+      "  rate  = 0.10;",
+      "  tax   = price * rate;",
+      "  put skip list('税抜', price);",
+      "  put skip list('税額', tax);",
+      "  put skip list('税込', price + tax);",
+      "end money;",
+      ""
+    ],
+    "description": "FIXED DECIMAL による正確な10進計算（浮動小数では誤差が出る）"
+  },
+  "テスト手続き": {
+    "prefix": "test",
+    "body": [
+      "TEST_${1:name}: proc;",
+      "  call ASSERT_EQ(${2:actual}, ${3:expected}, '${1:name}');",
+      "  $0",
+      "end TEST_${1:name};"
+    ],
+    "description": "pli-test のテスト手続き（TEST_ で始める）"
+  },
+  "標準入力から読む": {
+    "prefix": "getlist",
+    "body": [
+      "${1:prog}: proc options(main);",
+      "  dcl ${2:value} fixed bin(31);",
+      "  dcl done bit(1);",
+      "  done = '0'b;",
+      "  on endfile(sysin) done = '1'b;",
+      "  do while(^done);",
+      "    get list(${2:value});",
+      "    if ^done then do;",
+      "      $0",
+      "    end;",
+      "  end;",
+      "end ${1:prog};",
+      ""
+    ],
+    "description": "SYSIN から読み、ENDFILE で終わるループ"
+  },
+  "ファイルを読む": {
+    "prefix": "readfile",
+    "body": [
+      "dcl ${1:inp} file stream input;",
+      "dcl done bit(1);",
+      "done = '0'b;",
+      "on endfile(${1:inp}) done = '1'b;",
+      "open file(${1:inp}) input;",
+      "do while(^done);",
+      "  get file(${1:inp}) list(${2:value});",
+      "  if ^done then do;",
+      "    $0",
+      "  end;",
+      "end;",
+      "close file(${1:inp});"
+    ],
+    "description": "名前付きファイルを開いて読み、閉じる"
+  },
+  "ファイルへ書く": {
+    "prefix": "writefile",
+    "body": [
+      "dcl ${1:rep} file stream output print;",
+      "open file(${1:rep}) output linesize(${2:80});",
+      "put file(${1:rep}) list(${3:'text'});",
+      "$0",
+      "close file(${1:rep});"
+    ],
+    "description": "名前付きファイルを開いて書き、閉じる"
+  },
+  "取り込み": {
+    "prefix": "include",
+    "body": [
+      "%include ${1:decls};",
+      "$0"
+    ],
+    "description": "宣言群を取り込む"
+  },
+  "金額のピクチャ": {
+    "prefix": "picamt",
+    "body": [
+      "dcl ${1:amount} pic'\\$\\$\\$,\\$\\$9V.99';",
+      "$0"
+    ],
+    "description": "通貨記号付きの金額（浮動する $ とカンマ）"
+  },
+  "ゼロ抑制のピクチャ": {
+    "prefix": "piczz",
+    "body": [
+      "dcl ${1:count} pic'ZZZZ9';",
+      "$0"
+    ],
+    "description": "先行ゼロを空白にする整数"
+  },
+  "連結リストの節": {
+    "prefix": "node",
+    "body": [
+      "dcl ${1:cur} pointer;",
+      "dcl 1 ${2:node} based(${1:cur}),",
+      "      2 value fixed bin(31),",
+      "      2 next pointer;",
+      "$0"
+    ],
+    "description": "BASED の構造体とポインタ"
+  },
+  "確保して繋ぐ": {
+    "prefix": "alloc",
+    "body": [
+      "allocate ${1:node} set(${2:cur});",
+      "${2:cur} -> ${1:node}.value = ${3:0};",
+      "${2:cur} -> ${1:node}.next = ${4:head};",
+      "${4:head} = ${2:cur};",
+      "$0"
+    ],
+    "description": "ALLOCATE して先頭に挿す"
+  },
+  "リストを走査": {
+    "prefix": "walk",
+    "body": [
+      "${1:cur} = ${2:head};",
+      "do while(${1:cur} ^= null());",
+      "  $0",
+      "  ${1:cur} = ${1:cur} -> ${3:node}.next;",
+      "end;"
+    ],
+    "description": "NULL まで辿る"
+  },
+  "レコードを読む": {
+    "prefix": "readrec",
+    "body": [
+      "dcl ${1:inp} file record input env(f recsize(${2:80}));",
+      "dcl 1 ${3:rec},",
+      "      2 ${4:name} char(10),",
+      "      2 ${5:value} pic'999';",
+      "dcl done bit(1);",
+      "done = '0'b;",
+      "on endfile(${1:inp}) done = '1'b;",
+      "open file(${1:inp}) input;",
+      "do while('1'b);",
+      "  read file(${1:inp}) into(${3:rec});",
+      "  if done then leave;",
+      "  $0",
+      "end;",
+      "close file(${1:inp});"
+    ],
+    "description": "固定長レコードを順に読む"
+  }
+}

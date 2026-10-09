@@ -1,0 +1,22 @@
+{
+  // F5 で拡張開発ホストを起動する。
+  // preLaunchTask で毎回バンドルを作り直すので、
+  // ソースを直したまま古い dist/extension.js で動くことが無い。
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "拡張を起動",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        // 他の拡張を読み込まない。.pli を別の言語 ID として
+        // 登録する拡張が入っていると判定が競合するため
+        "--disable-extensions",
+        "${workspaceFolder}/../engine/examples/tests/arith_test.pli"
+      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: build"
+    }
+  ]
+}
