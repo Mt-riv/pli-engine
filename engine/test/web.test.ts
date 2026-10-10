@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { SAMPLES } from "../web/samples.js";
-import { MemoryHost, isTestSource, runProgram, runTestSource } from "../src/index.js";
+import { MemoryHost, isTestSource, loadMfs, runProgram, runTestSource } from "../src/index.js";
+import { parseKeys, playKeys } from "../src/tm/keys.js";
 import { parseFiles, psbNames } from "../web/files.js";
 
 /** サンプルの付随ファイルから、実行に使うホストと PSB を組む。 */
@@ -27,6 +28,28 @@ describe("ブラウザ版のサンプル", () => {
   });
 
   for (const s of SAMPLES) {
+    if (s.keys !== undefined) {
+      // 画面入出力のサンプルは、台本どおりに打たないと何も起きない。
+      // 1 回の入力 = 1 回の実行なので、台本を流して全ての往復を見る
+      it(`「${s.name}」が台本どおりに動く`, () => {
+        const files = parseFiles(s.aux ?? "");
+        const { steps } = playKeys({
+          source: s.source,
+          library: loadMfs(files),
+          host: new MemoryHost(files),
+          psb: psbNames(files)[0]!,
+          script: parseKeys(s.keys!, `${s.name}.keys`),
+          limits: { maxSteps: 1_000_000 },
+        });
+        expect(steps.length).toBeGreaterThan(1);
+        for (const step of steps) {
+          expect(step.step.diagnostics).toEqual([]);
+          expect(step.step.notice).toBeUndefined();
+          expect(step.step.screen).toBeDefined();
+        }
+      });
+      continue;
+    }
     if (isTestSource(s.source)) {
       // テストファイルのサンプルは主手続きを持たないのでテストとして実行する。
       // 「失敗したテストの見え方」を示すためわざと失敗するテストを含めているが、
@@ -126,8 +149,25 @@ describe("ビルド成果物（単一ファイル）", () => {
       expect(html).toContain("options(main)");
     });
 
-    it("単一ファイルでも 200KB 未満に収まる", () => {
-      expect(html.length).toBeLessThan(200_000);
+    it("画面入出力（MFS）も埋め込まれている", () => {
+      // 端末と書式定義の読み取りが落ちていないこと。
+      // 遅延読み込みにすると HTML 1 枚で完結しなくなる
+      expect(html).toContain("FMTEND");
+      expect(html).toContain("書式 ");
+    });
+
+    /**
+     * 大きさの上限。
+     *
+     * 守りたいのは「1 枚を添付して渡せば、どこでも開いて動く」こと。
+     * 圧縮して配られる前提ではないので、素のバイト数で見る。
+     * 中身は処理系・Linter・テストフレームワーク・DL/I・MFS・端末と
+     * サンプル。これらを入れて 300KB（gzip で 75KB 前後）に収める。
+     * 超えたら、まず何が増えたかを確かめる（遅延読み込みに逃げると
+     * HTML 1 枚で完結する形が壊れるので、安易に上限を上げない）。
+     */
+    it("単一ファイルでも 300KB 未満に収まる", () => {
+      expect(html.length).toBeLessThan(300_000);
     });
   });
 });

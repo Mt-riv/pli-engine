@@ -15,12 +15,17 @@ import {
   plainText,
   SNIPPETS,
   VERSION,
+  loadMfs,
+  Session,
+  type Aid,
   type LintMessage,
+  type SessionStep,
 } from "../src/index.js";
 import { SAMPLES } from "./samples.js";
 import { decodePayload, share } from "./share.js";
 import { insertSnippet } from "./insert.js";
 import { parseFiles, psbNames, serializeFiles, splitAux } from "./files.js";
+import { functionKeys, Terminal } from "./terminal.js";
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -48,6 +53,15 @@ const tabStdin = $<HTMLButtonElement>("tab-stdin");
 const sampleSel = $<HTMLSelectElement>("sample");
 const snippetSel = $<HTMLSelectElement>("snippet");
 const outTitle = $<HTMLSpanElement>("out-title");
+const termBtn = $<HTMLButtonElement>("term-btn");
+const termPane = $<HTMLDivElement>("term");
+const termScreen = $<HTMLDivElement>("term-screen");
+const termMod = $<HTMLInputElement>("term-mod");
+const termStart = $<HTMLButtonElement>("term-start");
+const termEnter = $<HTMLButtonElement>("term-enter");
+const termKey = $<HTMLSelectElement>("term-key");
+const termSend = $<HTMLButtonElement>("term-send");
+const termNext = $<HTMLButtonElement>("term-next");
 
 $("ver").textContent = `v${VERSION}`;
 
@@ -334,6 +348,144 @@ function run(): void {
   runBtn.disabled = false;
 }
 
+// ---- 端末（MFS の画面） ----
+
+/**
+ * 画面入出力は「1 回の入力 = 1 回のプログラム実行」で回す。
+ *
+ * 実機の MPP と同じ形なので、実行器を止めて人の入力を待つ必要がない。
+ * ブラウザで待つには Worker と SharedArrayBuffer が要り、
+ * そのためのヘッダ（COOP/COEP）はサーバを必要とするので、
+ * 「HTML 1 枚で動く」という前提が壊れる。
+ */
+const terminal = new Terminal(termScreen);
+let session: Session | undefined;
+
+for (const k of functionKeys()) {
+  const opt = document.createElement("option");
+  opt.value = k.label;
+  opt.textContent = k.label;
+  termKey.appendChild(opt);
+}
+
+/** 端末の表示を切り替える。 */
+function showTerminal(on: boolean): void {
+  termPane.classList.toggle("hidden", !on);
+  out.classList.toggle("hidden", on);
+  termBtn.classList.toggle("on", on);
+  outTitle.textContent = on ? "端末（3270）" : "出力";
+  if (on && termMod.value === "") termMod.value = firstMod();
+}
+
+/** 台本（`MOD 名前`）から最初に出す画面の名前を拾う。 */
+function modOfScript(keys: string): string {
+  for (const line of keys.split("\n")) {
+    const m = /^\s*MOD\s+(\S+)/i.exec(line);
+    if (m) return m[1]!.toUpperCase();
+  }
+  return "";
+}
+
+/** 付随ファイルにある書式定義から、最初の出力用の記述を選ぶ。 */
+function firstMod(): string {
+  try {
+    const lib = loadMfs(parseFiles(aux.value));
+    for (const [name, m] of lib.messages) if (m.type === "OUTPUT") return name;
+  } catch {
+    // 書式定義の誤りは「開始」を押したときに知らせる
+  }
+  return "";
+}
+
+/** 端末を開始する（最初の画面を出す）。 */
+function startSession(): void {
+  const files = parseFiles(aux.value);
+  const psbs = psbNames(files);
+  if (psbs.length !== 1) {
+    termScreen.textContent =
+      "入出力 PCB を含む PSB を 1 つだけ、付随ファイルに置いてください" +
+      `（いま ${psbs.length} 個）。`;
+    return;
+  }
+  let library;
+  try {
+    library = loadMfs(files);
+  } catch (e) {
+    termScreen.textContent = `書式定義が読めません: ${(e as Error).message}`;
+    return;
+  }
+  if (library.empty) {
+    termScreen.textContent =
+      "書式定義がありません。付随ファイルに「::: 名前.mfs」で FMT と MSG を書いてください。";
+    return;
+  }
+  const host = buildHost();
+  session = new Session({
+    source: src.value,
+    library,
+    host,
+    psb: psbs[0]!,
+    ...(termMod.value.trim() === "" ? {} : { mod: termMod.value.trim().toUpperCase() }),
+    lterm: "WEBTERM1",
+    now: () => new Date(),
+    limits: { maxSteps: 5_000_000, maxOutputBytes: 1_000_000 },
+  });
+  showStep(session.start(), host);
+}
+
+/** 1 回の往復の結果を画面と状態欄に出す。 */
+function showStep(step: SessionStep, host: MemoryHost): void {
+  syncFilesFromHost(host);
+  terminal.render(step.screen);
+  out.textContent = step.stdout;
+  if (step.diagnostics.length > 0) {
+    showDiagnostics(
+      step.diagnostics.map((d) => ({
+        line: d.line,
+        col: d.col,
+        file: d.file,
+        text: d.message,
+        kind: "error" as const,
+      })),
+    );
+  } else {
+    diags.classList.add("hidden");
+    badLines = new Set();
+    renderGutter();
+  }
+  const bits: string[] = [];
+  bits.push(step.ok ? '<span class="ok">成功</span>' : '<span class="err">失敗</span>');
+  if (step.notice !== undefined) bits.push(`通知: ${step.notice}`);
+  if (step.queued > 0) bits.push(`未出力 ${step.queued} 件`);
+  if (session?.inConversation === true) bits.push("会話中");
+  if (session?.inputFormat !== undefined) bits.push(`次の入力 ${session.inputFormat}`);
+  status.innerHTML = bits.join(" / ");
+}
+
+/** 送る。押したキーと、打ち込んだ値を渡す。 */
+function sendKey(aid: Aid, fields: Map<string, string>): void {
+  if (session === undefined) {
+    status.textContent = "先に「開始」を押してください";
+    return;
+  }
+  const host = buildHost();
+  // ホストは実行をまたいで引き継ぐ（データベースの更新を残すため）
+  showStep(session.send({ aid, fields }), host);
+}
+
+terminal.listen(sendKey);
+termBtn.addEventListener("click", () => showTerminal(termPane.classList.contains("hidden")));
+termStart.addEventListener("click", startSession);
+termEnter.addEventListener("click", () => terminal.submit({ kind: "enter" }));
+termSend.addEventListener("click", () => {
+  const found = functionKeys().find((k) => k.label === termKey.value);
+  if (found !== undefined) terminal.submit(found.aid);
+});
+termNext.addEventListener("click", () => {
+  if (session === undefined) return;
+  showStep(session.next(), buildHost());
+});
+
 interface DiagEntry {
   line: number;
   col?: number;
@@ -486,6 +638,15 @@ sampleSel.addEventListener("change", () => {
     renderGutter();
     updatePos();
     save();
+    if (s.keys !== undefined) {
+      // 画面入出力のサンプルは、ふつうに実行しても
+      // 「メッセージキューが無い」で終わる。端末を開いて最初の画面を出す
+      termMod.value = modOfScript(s.keys);
+      showTerminal(true);
+      startSession();
+      return;
+    }
+    showTerminal(false);
     run();
   }
 });
