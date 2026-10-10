@@ -79,6 +79,8 @@ export type {
 } from "./mfs/blocks.js";
 
 export { loadMfs, mfsFileNames, parseMfs } from "./mfs/source.js";
+export { checkMfs, formatWarning } from "./mfs/check.js";
+export type { MfsWarning } from "./mfs/check.js";
 export {
   addressOf,
   blankScreen,

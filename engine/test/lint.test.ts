@@ -52,6 +52,41 @@ describe("規則の定義", () => {
   });
 });
 
+describe("unqualified-member", () => {
+  /**
+   * この処理系は構造体の項目を「親.項目」で持つ。項目だけを書くと
+   * 宣言の無い名前になり、**別の変数が暗黙に宣言される**。
+   * 止まらないので、名指しで言わないと気付けない。
+   */
+  it("項目だけを書いたら、親を添えて示す", () => {
+    const src = MAIN("  dcl 1 s,\n    2 a char(2);\n  a = 'xy';\n  put list(s.a);");
+    const m = only(lint(src), "unqualified-member");
+    expect(m).toHaveLength(1);
+    expect(m[0]?.message).toContain("S.a と書いてください");
+  });
+
+  it("どの構造体か決まらないときは、候補を並べる", () => {
+    const src = MAIN(
+      "  dcl 1 s,\n    2 b char(2);\n  dcl 1 t,\n    2 b char(2);\n  b = 'xy';",
+    );
+    const m = only(lint(src), "unqualified-member");
+    expect(m).toHaveLength(1);
+    expect(m[0]?.message).toContain("S / T");
+  });
+
+  it("修飾して書けば出ない", () => {
+    const src = MAIN("  dcl 1 s,\n    2 a char(2);\n  s.a = 'xy';\n  put list(s.a);");
+    expect(only(lint(src), "unqualified-member")).toEqual([]);
+  });
+
+  it("同じ名前の変数を別に宣言していれば出ない（そちらが使われる）", () => {
+    const src = MAIN(
+      "  dcl 1 s,\n    2 a char(2);\n  dcl a char(2);\n  a = 'xy';\n  put list(a, s.a);",
+    );
+    expect(only(lint(src), "unqualified-member")).toEqual([]);
+  });
+});
+
 describe("implicit-declaration", () => {
   it("宣言の無い名前を指摘し、暗黙の型を示す", () => {
     const m = only(lint(MAIN("  i = 1;\n  x = 2;")), "implicit-declaration");

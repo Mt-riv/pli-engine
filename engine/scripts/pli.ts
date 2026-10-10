@@ -17,7 +17,7 @@
  */
 import { readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { loadMfs, runProgram } from "../src/index.js";
+import { checkMfs, formatWarning, loadMfs, runProgram } from "../src/index.js";
 import { parseKeys, playKeys, transcript } from "../src/tm/keys.js";
 import { hostForFile } from "./node-host.js";
 import { fail, main, positiveInt, readText, usage, value } from "./cli-util.js";
@@ -114,9 +114,12 @@ function runWithScreen(args: Args & { file: string; keys: string }): void {
   if (args.psb === undefined) {
     fail("--keys を使うには --psb も必要です（入出力 PCB を含む PSB）");
   }
+  const library = loadMfs(mfsFiles(args));
+  // 止めるほどではないが、たぶん間違いというもの
+  for (const w of checkMfs(library)) console.error(formatWarning(w));
   const { steps } = playKeys({
     source: readText(args.file, "ソース"),
-    library: loadMfs(mfsFiles(args)),
+    library,
     host: hostForFile(args.file, args.stdin, undefined, {
       ...(args.includeDirs.length === 0 ? {} : { includeDirs: args.includeDirs }),
       ...(args.allowOutside ? { allowOutside: true } : {}),

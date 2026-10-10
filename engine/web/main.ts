@@ -15,6 +15,8 @@ import {
   plainText,
   SNIPPETS,
   VERSION,
+  checkMfs,
+  formatWarning,
   loadMfs,
   Session,
   type Aid,
@@ -419,6 +421,8 @@ function startSession(): void {
       "書式定義がありません。付随ファイルに「::: 名前.mfs」で FMT と MSG を書いてください。";
     return;
   }
+  // 止めるほどではないが、たぶん間違いというものを先に出す
+  const notes = checkMfs(library).map(formatWarning);
   const host = buildHost();
   session = new Session({
     source: src.value,
@@ -430,7 +434,12 @@ function startSession(): void {
     now: () => new Date(),
     limits: { maxSteps: 5_000_000, maxOutputBytes: 1_000_000 },
   });
-  showStep(session.start(), host);
+  const step = session.start();
+  showStep(step, host);
+  if (notes.length > 0) {
+    status.innerHTML = `${status.innerHTML} / <span class="warn">書式の指摘 ${notes.length} 件</span>`;
+    out.textContent = notes.join("\n") + "\n" + out.textContent;
+  }
 }
 
 /** 1 回の往復の結果を画面と状態欄に出す。 */

@@ -10,7 +10,7 @@
 npm run plilint -- examples/tests          # ディレクトリを再帰的に
 npm run plilint -- a.pli --strict          # 警告も失敗として扱う
 npm run plilint -- a.pli --rule goto-outside-on-unit=off
-npm run plilint -- --list-rules            # 規則の一覧（全 14 件）と理由
+npm run plilint -- --list-rules            # 規則の一覧（全 15 件）と理由
 ```
 
 既定では **error が 1 件でもあれば終了コード 1**、警告だけなら 0。
@@ -25,13 +25,14 @@ npm run plilint -- --list-rules            # 規則の一覧（全 14 件）と�
 
 ## 規則
 
-重さは `error` / `warning` / `info` の 3 段階。`off` で止められる。全 14 件。
+重さは `error` / `warning` / `info` の 3 段階。`off` で止められる。全 15 件。
 
 ### correctness — 誤りか、誤りの元になる
 
 | id | 既定 | 内容 |
 |----|------|------|
 | `implicit-declaration` | warning | 宣言していない名前を使っている |
+| `unqualified-member` | **error** | 構造体の項目を名前だけで指している |
 | `undefined-procedure` | **error** | 定義されていない手続きを呼んでいる |
 | `unused-variable` | warning | 宣言したが一度も使っていない |
 | `assigned-but-never-read` | warning | 代入しているが読んでいない |
@@ -49,6 +50,12 @@ npm run plilint -- --list-rules            # 規則の一覧（全 14 件）と�
 暗黙に宣言する（`I`〜`N` で始まる名前は `FIXED BIN(15,0)`、それ以外は `FLOAT DEC(6)`）。
 綴り間違いが黙って別の変数になり、エラーにならないまま誤った値で動き続ける。
 予約語が無い言語なので、この種の誤りを機械が拾う価値が特に高い。
+
+`unqualified-member` は `implicit-declaration` の特に質の悪い形。この処理系は
+構造体の項目を「親.項目」の名前で持つので、項目だけを書くと**別の変数が
+暗黙に宣言される**。`msg_out.out_attr = '00E8'X;` のつもりで
+`out_attr = '00E8'X;` と書くと、止まらないまま別の変数へ代入される。
+どの構造体の項目かを添えて指摘する。
 
 `mixed-base-arithmetic` は実際に踏んだ落とし穴に対応する。基数が混ざると
 PL/I は BINARY に変換して計算するため、10 進で持っていた桁が落ちる。

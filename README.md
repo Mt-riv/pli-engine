@@ -113,7 +113,8 @@ if db_pcb.stat_code = '  ' then put list(seg_io);
 | PL/I を書いて即実行する | [ブラウザ版（HTML 1 枚）](docs/browser-manual.md) / [VSCode Extension](docs/vscode-manual.md) |
 | 書いたコードを**テスト**する（PL/I で書くテストフレームワーク） | 両方 + CLI `npm run plitest` |
 | **階層型データベース（IMS/DB）**を読み書きする | 両方 + CLI `npm run pli -- x.pli --psb NAME` |
-| 怪しい書き方を**検査**する（Linter 14 規則） | 両方 + CLI `npm run plilint` |
+| **3270 の画面（MFS）**を読み書きする | ブラウザ版の「端末」 + CLI `npm run pli -- x.pli --psb NAME --keys x.keys` + VSCode |
+| 怪しい書き方を**検査**する（Linter 15 規則） | 両方 + CLI `npm run plilint` |
 | よく書く形を **Snippet** から入れる（43 本） | 両方 |
 
 対応している PL/I の範囲（内部の作りは [`engine/README.md`](engine/README.md)）:
@@ -137,6 +138,9 @@ if db_pcb.stat_code = '  ' then put list(seg_io);
 - **レコード入出力**（`READ` / `WRITE` / `REWRITE`、`ENVIRONMENT(F RECSIZE(n))`）
 - **IMS/DB（DL/I）**（`CALL PLITDLI` で階層型 DB を読み書き。DBD / PSB / SSA /
   PCB のステータスコード。詳細は [`docs/dli.md`](docs/dli.md)）
+- **画面入出力（MFS）と IMS TM**（`FMT` / `MSG` の書式定義から MID / MOD /
+  DIF / DOF を作り、3270 の画面を組む。入出力 PCB への `GU` / `GN` / `ISRT` /
+  `PURG`、会話型の SPA、`/FORMAT`。詳細は [`docs/mfs.md`](docs/mfs.md)）
 - 組込関数 21 種、`%REPLACE`
 
 出力書式と精度規則は、実在の PL/I 処理系の出力と突き合わせて決めています。
@@ -152,9 +156,12 @@ if db_pcb.stat_code = '  ' then put list(seg_io);
 「実機と違えている点」に書いてあります（10 進の最大精度を IBM PL/I for
 MVS and VM 1.1 の 15 桁に合わせていること、レコードの区切りを行にしていること）。
 
-ただし **IMS/DB（DL/I）だけは突き合わせる相手がありません**（IMS は z/OS
-専用です）。DL/I は IBM の仕様文書を正とし、各ステータスコードの意味を
-テストのコメントに引用して担保しています。
+ただし **IMS 関連（DL/I と MFS）だけは突き合わせる相手がありません**（IMS は
+z/OS 専用で、手元で動かせる実装も入手できません）。この 2 つは IBM の仕様文書を
+正とし、各規則の根拠をテストに引用して担保しています。画面像のゴールデンは
+実機由来のものと混ざらないよう別の場所（`engine/test/screen/`）に置き、
+出処の 1 行目を「IBM 仕様に基づく（実機の出力ではない）」で始めることを
+テストで機械的に確かめています。
 
 ## 必要なもの
 
@@ -264,6 +271,7 @@ Windows でも同じコマンドが動きます（`npm run` 経由なのでパ�
 | オプション | 対象 | 内容 |
 |-----------|------|------|
 | `--psb <名前>` | `pli` / `plitest` | IMS/DB（DL/I）を使う。`plitest` は省略すると隣の `*.psb` を自動で使う |
+| `--keys <ファイル>` | `pli` | 端末の台本を流して画面を出す（MFS）。隣の `*.mfs` を書式定義として読む |
 | `--stdin <ファイル>` | `pli` | SYSIN に流し込む |
 | `--max-steps N` / `--max-output N` | `pli` | 実行の上限（1 以上の整数。不正な値は終了コード 2） |
 | `-I <ディレクトリ>` | `pli` | `%INCLUDE` とファイルの探索先を足す |
@@ -286,6 +294,7 @@ Windows でも同じコマンドが動きます（`npm run` 経由なのでパ�
 | [`docs/test.md`](docs/test.md) | テストフレームワークの設計と書き方 |
 | [`docs/lint.md`](docs/lint.md) | Linter の規則一覧と、各規則の理由 |
 | [`docs/dli.md`](docs/dli.md) | **IMS/DB（DL/I）の使い方**。DBD / PSB / データの書き方、SSA、ステータスコード |
+| [`docs/mfs.md`](docs/mfs.md) | **画面入出力（MFS）の使い方**。書式定義、入出力 PCB、台本、会話型 |
 | [`engine/README.md`](engine/README.md) | 処理系の内部。字句・構文・評価・書式の作り |
 
 ## リポジトリの構成

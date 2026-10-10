@@ -30,8 +30,12 @@ end stuprt;
 | 階層構造・階層順（hierarchic sequence） | 物理の配置（HDAM の RAP、ポインタ、OSAM のデータセット） |
 | 順序キーと連結キー | アクセス方式の違い（HDAM / HIDAM / HISAM / HSAM / DEDB） |
 | 現在位置と親の確立（parentage） | 二次索引（`LCHILD` / `XDFLD`）、論理関係 |
-| ステータスコード | IMS TM / DC（メッセージキュー）、`EXEC DLI`、AIB インタフェース |
+| ステータスコード | `EXEC DLI`、AIB インタフェース |
 | `PROCOPT` の強制、ロードモード | ロック（`Q` コマンドコード）、`CHKP` / `ROLB` などの同期点 |
+
+**IMS TM（メッセージキュー）と画面（MFS）は別の層で扱う。**
+入出力 PCB への `GU` / `GN` / `ISRT` / `PURG` と 3270 の画面は
+[`mfs.md`](mfs.md) にある。この文書は DB の話だけを扱う。
 
 `ACCESS=HDAM` でも `ACCESS=HIDAM` でも振る舞いは同じになる。
 業務プログラムから見える違いは階層順と順序キーだけで決まるので、
@@ -43,6 +47,7 @@ end stuprt;
 > z/OS 専用で、手元のリファレンス実装に DL/I は無い）。そこで DL/I は
 > IBM の仕様文書を正とし、各コードの意味を
 > `engine/test/dli-engine.test.ts` のコメントに引用して担保している。
+> MFS も同じ事情で同じ方針を取っている（[`mfs.md`](mfs.md)）。
 
 ## 3 つのファイル
 

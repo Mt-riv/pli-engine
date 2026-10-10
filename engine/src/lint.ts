@@ -49,6 +49,17 @@ export const RULES: readonly LintRule[] = [
       "気付けないまま誤った値で動き続ける。",
   },
   {
+    id: "unqualified-member",
+    category: "correctness",
+    default: "error",
+    summary: "構造体の項目を名前だけで指している",
+    rationale:
+      "この処理系は構造体の項目を「親.項目」の名前で持つ。項目だけを書くと、" +
+      "宣言の無い名前として**別の変数が暗黙に宣言される**。止まらず、" +
+      "代入も読み出しも意図と違う変数に対して行われるので、" +
+      "気付かないまま誤った値で動き続ける。「親.項目」と書けば解決する。",
+  },
+  {
     id: "undefined-procedure",
     category: "correctness",
     default: "error",
@@ -309,6 +320,24 @@ class LintScope {
   }
 }
 
+/**
+ * その名前を項目として持つ構造体の名前。
+ *
+ * 宣言は `qualifyDeclareItems` が「親.項目」の形に直して覚えるので、
+ * 末尾が `.名前` の宣言を探せば見つかる。
+ */
+function memberOwners(name: string, scope: LintScope): string[] {
+  const suffix = `.${name}`;
+  const out: string[] = [];
+  for (let sc: LintScope | undefined = scope; sc; sc = sc.parent) {
+    for (const key of sc.vars.keys()) {
+      if (key.endsWith(suffix)) out.push(key.slice(0, -suffix.length));
+    }
+    if (out.length > 0) break;
+  }
+  return out;
+}
+
 /** 基数（FIXED の 10 進 / 2 進）。混在の判定に使う。 */
 function fixedBase(attr: DataAttr | undefined): "dec" | "bin" | undefined {
   // PICTURE は 10 進。FIXED BIN と混ぜると同じ落とし穴になる
@@ -537,7 +566,7 @@ class Linter {
       // 関数としての呼び出し
       scope.lookupProc(key)!.calls++;
     } else if (!BUILTIN_NAMES.has(key) && !this.injected.has(key) && !scope.hasName(key)) {
-      this.implicit(ref.name, line, ref.subscripts.length > 0);
+      this.implicit(ref.name, line, scope, ref.subscripts.length > 0);
     }
     if (ref.locator) this.read(ref.locator, scope, line);
     if (SHAPE_BUILTINS.has(key) && !scope.lookupVar(key)) {
@@ -567,7 +596,7 @@ class Linter {
       v.writes++;
       if (ref.locator === undefined) this.readBasedLocator(v, scope);
     } else if (!scope.hasName(key) && !this.injected.has(key)) {
-      this.implicit(ref.name, line);
+      this.implicit(ref.name, line, scope);
     }
     for (const sub of ref.subscripts) this.expr(sub, scope, line);
   }
@@ -581,8 +610,21 @@ class Linter {
    * 揃えないと、Linter が「暗黙に宣言されます」と言ったものが
    * 実行時に止まることになる。
    */
-  private implicit(name: string, line: number, asCall = false): void {
+  private implicit(name: string, line: number, scope: LintScope, asCall = false): void {
     const upperName = name.toUpperCase();
+    // 構造体の項目を名前だけで指している場合は、そう言う。
+    // 「暗黙に宣言されます」だけでは、どう直せばよいか分からない
+    const owners = memberOwners(upperName, scope);
+    if (owners.length > 0) {
+      this.report(
+        "unqualified-member",
+        line,
+        `${name} は構造体 ${owners.join(" / ")} の項目です。` +
+          `${owners.length === 1 ? `${owners[0]}.${name}` : "親.項目"} と書いてください` +
+          "（名前だけでは別の変数として暗黙に宣言されます）。",
+      );
+      return;
+    }
     // 知っている組込関数で未実装のものは、そう言う。
     // 「暗黙に宣言されます」と言うと、実行すると止まるので嘘になる
     if (UNIMPLEMENTED_BUILTINS.has(upperName)) {

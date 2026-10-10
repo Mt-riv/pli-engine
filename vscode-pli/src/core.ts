@@ -4,6 +4,8 @@
  */
 
 import {
+  checkMfs,
+  formatWarning,
   lint,
   loadMfs,
   parseKeys,
@@ -292,10 +294,14 @@ export function runScreenForEditor(
     };
   }
   let steps;
+  const notes: string[] = [];
   try {
+    const library = loadMfs(opts.mfs);
+    // 止めるほどではないが、たぶん間違いというもの
+    for (const w of checkMfs(library)) notes.push(`[書式] ${formatWarning(w)}`);
     const played = playKeys({
       source,
-      library: loadMfs(opts.mfs),
+      library,
       host: opts.host!,
       psb: opts.psb,
       script: parseKeys(opts.keys, opts.keysName),
@@ -317,7 +323,7 @@ export function runScreenForEditor(
   const flags = [failed ? "失敗" : "成功", `往復 ${steps.length - 1} 回`];
   if (notices > 0) flags.push(`通知 ${notices} 件`);
   return {
-    text: [head, transcript(steps).replace(/\n$/, ""), "", flags.join(" / ")].join("\n"),
+    text: [head, ...notes, transcript(steps).replace(/\n$/, ""), "", flags.join(" / ")].join("\n"),
     ok: !failed,
     diagnostics,
   };
