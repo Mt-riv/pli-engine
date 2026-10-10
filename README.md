@@ -148,13 +148,15 @@ if db_pcb.stat_code = '  ' then put list(seg_io);
 外しました**（止まらないプログラムを作らないため。理由は
 [`engine/README.md`](engine/README.md) の「ON 条件の扱いを規定からずらした」）。
 書式や精度を推測で埋めた箇所はありません。保留していた 3 点（基数混在の端数、
-`F` 書式の丸めと桁あふれ、レコードの切り方）も実機で確かめ、**2 つは実装を
+`F(w,d)` の丸め、`F` 書式の桁あふれ）も実機で確かめ、**2 つは実装を
 直しました**（詳細は [`engine/README.md`](engine/README.md) の
 「実機と突き合わせて決めたこと」）。
 
-実機と**意図的に違えている**ところは 2 つだけで、理由を同じ README の
+実機と**意図的に違えている**ところは 4 つで、理由を同じ README の
 「実機と違えている点」に書いてあります（10 進の最大精度を IBM PL/I for
-MVS and VM 1.1 の 15 桁に合わせていること、レコードの区切りを行にしていること）。
+MVS and VM 1.1 の 15 桁に合わせていること、レコードの区切りを行にしていること、
+`GET LIST` がレコード境界を区切りと見ること、`%INCLUDE 'ファイル名'` を
+受け付けること）。
 
 ただし **IMS 関連（DL/I と MFS）だけは突き合わせる相手がありません**（IMS は
 z/OS 専用で、手元で動かせる実装も入手できません）。この 2 つは IBM の仕様文書を
@@ -305,9 +307,14 @@ Windows でも同じコマンドが動きます（`npm run` 経由なのでパ�
 ```
 engine/        処理系（TypeScript、Node 非依存）
   src/           字句・構文・評価・Linter・テストフレームワーク・PICTURE・入出力
+  src/dli/       IMS/DB（DL/I）
+  src/mfs/       画面入出力（MFS）
+  src/tm/        IMS TM（メッセージキュー・画面との往復）
   web/           ブラウザ版（HTML 1 枚にビルドされる）
   examples/      PL/I で書いたテストの例（tests/）と IMS/DB の動く例（dli/）
   scripts/       CLI（pli / plitest / plilint / Snippet 生成）と実ファイル用のホスト
+  test/golden/   実機の出力を固定した期待値
+  test/screen/   画面像の期待値（出処は IBM 仕様）
 vscode-pli/    VSCode Extension（処理系を同梱）
 docs/          文書
   browser-manual.md  ブラウザ版の使い方
@@ -315,6 +322,7 @@ docs/          文書
   test.md            テストフレームワークの設計と書き方
   lint.md            Linter の規則一覧と理由
   dli.md             IMS/DB（DL/I）の使い方
+  mfs.md             画面入出力（MFS）の使い方
 ```
 
 ## 処理系の限界

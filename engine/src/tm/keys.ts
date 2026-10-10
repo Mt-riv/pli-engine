@@ -79,7 +79,14 @@ export function parseKeys(text: string, file: string): KeyScript {
           }
           script.spa = n;
         } else {
-          const d = new Date(operand);
+          // 日付だけの形（`2026-10-10`）は、JS の規則で **UTC 0 時**として
+          // 読まれる。負のオフセットの地域では前日になり、`DATE2` が
+          // 1 日ずれるので、年月日を地方時として組み立てる
+          const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(operand);
+          const d =
+            ymd === null
+              ? new Date(operand)
+              : new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
           if (Number.isNaN(d.getTime())) {
             throw new KeyScriptError(`NOW ${operand} は日時として読めません`, file, at);
           }

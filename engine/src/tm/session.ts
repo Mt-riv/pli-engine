@@ -15,10 +15,10 @@
 
 import type { PliHost } from "../host.js";
 import { runProgram, type Diagnostic, type ProgramOptions, type ProgramResult } from "../run.js";
-import { MfsBlockError, type MfsLibrary } from "../mfs/blocks.js";
+import { MfsBlockError, type MessageDesc, type MfsLibrary } from "../mfs/blocks.js";
 import { cloneScreen, fieldNamed, type Screen } from "../mfs/device.js";
 import { formatInput, type Aid, type DeviceInput } from "../mfs/input.js";
-import { formatOutput, type OutputOptions } from "../mfs/output.js";
+import { formatOutput, modNameFor, type OutputOptions } from "../mfs/output.js";
 import { TmRuntime, type InputMessage, type OutputMessage } from "./tm.js";
 
 export interface SessionOptions {
@@ -129,6 +129,19 @@ export class Session {
         notice: "入力の書式が決まっていません（画面を出してから打ち込んでください）",
       });
     }
+    // PA キーは IMS が物理ページングに使う。`docs/mfs.md` で
+    // 「再現しない」と名指ししている機能なので、ENTER と同じに
+    // 扱って黙って別のことをするより断る
+    if (input.aid.kind === "pa") {
+      return this.step({
+        notice: `PA${input.aid.n}（物理ページング）は未実装です`,
+      });
+    }
+    // CLEAR は装置の緩衝を消して、**データを伴わない AID だけ**を送る。
+    // どの項目も返らないので、打ち込んだ値は届かない（3270 の規則）
+    if (input.aid.kind === "clear") {
+      return this.clear(input.aid);
+    }
     const typed = this.type(input);
     if (typed !== undefined) return typed;
     let segments: string[];
@@ -143,6 +156,37 @@ export class Session {
     if (word.startsWith("/")) return this.command(word, first);
     if (word === "") {
       return this.step({ notice: "トランザクションコードがありません" });
+    }
+    return this.runTransaction(word, segments);
+  }
+
+  /**
+   * CLEAR キー。
+   *
+   * 装置の緩衝が消え、データを伴わない AID だけが送られる。
+   * 打ち込んだ値も、書式が書いた固定文字も残らないので、
+   * 画面は空にして**項目を 1 つも返さずに**メッセージを組む
+   * （`FILL=` と MFLD の固定文字だけが効く）。
+   */
+  private clear(aid: Aid): SessionStep {
+    const screen = this.current;
+    if (screen !== undefined) {
+      for (const f of screen.fields) {
+        f.text = " ".repeat(f.length);
+        f.modified = false;
+      }
+    }
+    let segments: string[];
+    try {
+      segments = formatInput(this.opts.library, this.mid!, { aid, fields: new Map() });
+    } catch (e) {
+      if (e instanceof MfsBlockError) return this.step({ notice: e.message });
+      throw e;
+    }
+    const word = firstWord(segments[0] ?? "");
+    if (word.startsWith("/")) return this.command(word, segments[0] ?? "");
+    if (word === "") {
+      return this.step({ notice: "CLEAR で画面を消しました（送るものがありません）" });
     }
     return this.runTransaction(word, segments);
   }
@@ -230,17 +274,46 @@ export class Session {
     });
     tm.finish();
 
+    // プログラムが異常終了したら出力メッセージを捨てる。
+    // 実機の MPP が落ちると IMS は直前の同期点まで戻して端末には
+    // DFS555I を出す。画面を更新すると「IMS なら決して送らない画面」
+    // を見せることになる（データベースの更新はファイルと同じ約束で
+    // 残る。MPP の同期点は再現しない。`docs/mfs.md` に明記）
+    if (!result.ok) {
+      return {
+        ...this.step({ notice: "プログラムが異常終了したので出力を捨てました" }),
+        stdout: result.stdout,
+        diagnostics: result.diagnostics,
+        ok: false,
+      };
+    }
+
     const messages = [...tm.outputs];
     if (this.opts.spa !== undefined) {
       // 会話型では最初の ISRT が SPA。トランザクションコードを
       // 空白にして返すと会話が終わる（実機と同じ約束）
       const head = messages[0];
-      const spa = head?.segments.shift();
-      if (spa !== undefined) {
-        // トランザクションコードは前置きの末尾 8 桁
-        this.spa = firstWord(spa.slice(SPA_HEAD - 8, SPA_HEAD)) === "" ? undefined : spa;
+      const spa = head?.segments[0];
+      const expected = this.opts.spa - 4;
+      if (spa === undefined || spa.length !== expected) {
+        // 形が違うものを SPA と見なすと、画面用のセグメントが SPA に
+        // 化けて次の入力として戻る。実機は会話を異常終了させる
+        return {
+          ...this.step({
+            notice:
+              `会話型なのに SPA が ISRT されていません` +
+              `（最初の ISRT は ${expected} 桁の SPA。` +
+              `${spa === undefined ? "1 つも ISRT されていません" : `${spa.length} 桁でした`}）`,
+          }),
+          stdout: result.stdout,
+          diagnostics: result.diagnostics,
+          ok: false,
+        };
       }
-      if (head !== undefined && head.segments.length === 0) messages.shift();
+      head!.segments.shift();
+      // トランザクションコードは前置きの末尾 8 桁
+      this.spa = firstWord(spa.slice(SPA_HEAD - 8, SPA_HEAD)) === "" ? undefined : spa;
+      if (head!.segments.length === 0) messages.shift();
     }
     this.pending = messages.slice(1);
     const head = messages[0];
@@ -258,13 +331,32 @@ export class Session {
     };
   }
 
-  /** 出力メッセージを画面にする。 */
+  /**
+   * 出力メッセージを画面にする。
+   *
+   * MOD 名の決め方（`ISRT` の指定、無ければ MID の `NXT=`）は
+   * `mfs/output.ts` の `modNameFor` に 1 つだけ置く。ここに同じ判断を
+   * 書くと、大小変換や文面がいずれ食い違う。
+   */
   private display(msg: OutputMessage): SessionStep {
-    const name = msg.modName ?? this.nextMod();
-    if (name === undefined) {
-      return this.step({ notice: "出力の書式が決まりません（ISRT に MOD 名を渡してください）" });
+    let name: string;
+    try {
+      name = modNameFor(msg.modName, this.currentMid());
+    } catch (e) {
+      if (e instanceof MfsBlockError) return this.step({ notice: e.message });
+      throw e;
     }
     return this.show(name, msg.segments);
+  }
+
+  /** いまの MID の記述。無ければ undefined。 */
+  private currentMid(): MessageDesc | undefined {
+    if (this.mid === undefined) return undefined;
+    try {
+      return this.opts.library.mid(this.mid);
+    } catch {
+      return undefined;
+    }
   }
 
   /** MOD で画面を組み、次に読む MID を決める。 */
@@ -278,6 +370,8 @@ export class Session {
         this.current,
       );
       this.current = screen;
+      // 前の通知を残さない。新しい MOD を送ったら系のメッセージ欄は消える
+      this.writeSysmsg("");
       this.mid = this.opts.library.mod(modName).next;
       // 画面は step() が写しにして渡す（ここで screen を渡すと生のまま出る）
       return this.step({});
@@ -289,15 +383,28 @@ export class Session {
 
   /** いまの MID が指す出力の書式。 */
   private nextMod(): string | undefined {
-    if (this.mid === undefined) return undefined;
-    try {
-      return this.opts.library.mid(this.mid).next;
-    } catch {
-      return undefined;
-    }
+    return this.currentMid()?.next;
+  }
+
+  /**
+   * `DEV SYSMSG=` で指した項目へ通知を書く。
+   *
+   * 実機ではここに IMS からの DFS メッセージが出る。指定が無ければ
+   * 何もしない（通知は `SessionStep.notice` だけで伝わる）。
+   */
+  private writeSysmsg(text: string): void {
+    const screen = this.current;
+    if (screen === undefined) return;
+    const fmt = this.opts.library.formats.get(screen.format);
+    if (fmt?.sysmsg === undefined) return;
+    const f = fieldNamed(screen, fmt.sysmsg);
+    if (f === undefined) return;
+    f.text = text.padEnd(f.length).slice(0, f.length);
   }
 
   private step(part: Partial<SessionStep>): SessionStep {
+    // 通知は画面の系メッセージ欄にも出す（指定があれば）
+    if (part.notice !== undefined) this.writeSysmsg(part.notice);
     return {
       // 写しを渡す。参照のままだと、後の打ち込みが前の画面を書き換える
       ...(this.current === undefined ? {} : { screen: cloneScreen(this.current) }),

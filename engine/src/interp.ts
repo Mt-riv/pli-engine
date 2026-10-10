@@ -935,6 +935,13 @@ export class Interpreter {
         throw new RuntimeError("ISRT には I/O 領域が必要です", s.line);
       }
       segment = this.readMessageArea(area, scope, s.line);
+    } else if (["GU", "GHU", "GN", "GHN"].includes(code) && area === undefined) {
+      // 領域が無いと取ったメッセージを誰も受け取れない。
+      // 以前は成功を返してキューを 1 件進めていたので、入力が消えていた
+      throw new RuntimeError(`${code} には I/O 領域が必要です`, s.line);
+    } else if (code === "PURG" && area !== undefined) {
+      // PURG に I/O 領域を渡す形は tm 側が断る。読んで渡す
+      segment = this.readMessageArea(area, scope, s.line);
     }
     const modName =
       modRef === undefined
@@ -975,6 +982,16 @@ export class Interpreter {
     if (ll <= 4) {
       throw new RuntimeError(
         `ISRT のセグメント長 LL が ${ll} です。LL には LL ZZ の 4 バイトを含めた長さを入れてください`,
+        line,
+      );
+    }
+    // 宣言した領域より長い LL は、黙って空白で伸ばすと「送ったつもりの
+    // 桁」と届く桁が食い違う。下限（LL <= 4）を診断しているのだから
+    // 上限も診断する
+    if (ll - 4 > text.length) {
+      throw new RuntimeError(
+        `ISRT のセグメント長 LL が ${ll} ですが、${ref.name} の項目は` +
+          `${text.length + 4} 桁ぶんしかありません`,
         line,
       );
     }
@@ -2448,7 +2465,19 @@ export class Interpreter {
     line: number,
     purpose: string,
   ): number {
-    if (attr.type === "char") return attr.length;
+    if (attr.type === "char") {
+      // VARYING は実機では 2 バイトの長さ前置きを持つ。この処理系は
+      // それを持たないので、固定長として扱うと桁がずれる。
+      // 黙ってずらすより断る
+      if (attr.varying === true) {
+        throw new RuntimeError(
+          `${key} は VARYING なので${purpose}で扱えません` +
+            "（長さ前置きを持たないため桁がずれます。CHAR(n) で宣言してください）",
+          line,
+        );
+      }
+      return attr.length;
+    }
     if (attr.type === "picture") return parsePicture(attr.picture).width;
     throw new RuntimeError(
       `${key} は${purpose}で扱えません（文字か PICTURE の項目にしてください）`,

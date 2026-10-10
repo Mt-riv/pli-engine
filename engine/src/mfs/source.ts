@@ -77,7 +77,24 @@ interface Context {
   seg: MsgSeg | undefined;
   lpage: Lpage | undefined;
   /** `DO` の中にいる間、ここに命令をためる。 */
-  loop: { count: number; lineInc: number; colInc: number; suffix: number; stmts: MacroStmt[] } | undefined;
+  loop:
+    | {
+        count: number;
+        lineInc: number;
+        colInc: number;
+        suffix: number;
+        stmts: MacroStmt[];
+        /** `DO` を書いた行。閉じ忘れの診断に使う。 */
+        srcLine: number;
+      }
+    | undefined;
+  /**
+   * いまの FMT で `DEV` を読んだか。
+   *
+   * `deviceType` は既定値（`3270-A2`）が入っているので、
+   * 「書かれたか」はこちらで持つ。
+   */
+  devSeen: boolean;
 }
 
 function fail(c: Context, s: MacroStmt, message: string): never {
@@ -98,10 +115,18 @@ function name(c: Context, s: MacroStmt, key: string, value: string): string {
   return up;
 }
 
-/** 正の整数として取る。 */
+/**
+ * 正の整数として取る。
+ *
+ * `Number()` に任せると `0x10` が 16、`1e1` が 10 として通る。
+ * MFS の定義文に 16 進や指数表記の 10 進数は無いので、
+ * 綴り間違いを黙って別の値として受けないよう 10 進の数字だけに限る。
+ */
 function int(c: Context, s: MacroStmt, what: string, value: string): number {
-  const n = Number(value.trim());
-  if (!Number.isInteger(n) || n <= 0) fail(c, s, `${what} の ${value} は正の整数ではありません`);
+  const t = value.trim();
+  if (!/^\d+$/.test(t)) fail(c, s, `${what} の ${value} は正の整数ではありません`);
+  const n = Number(t);
+  if (n <= 0) fail(c, s, `${what} の ${value} は正の整数ではありません`);
   return n;
 }
 
@@ -126,9 +151,20 @@ function fillOf(c: Context, s: MacroStmt, value: string): Fill {
   if (up.startsWith("X'") && t.endsWith("'")) {
     const hex = t.slice(2, -1);
     if (!/^[0-9A-Fa-f]{2}$/.test(hex)) fail(c, s, `FILL=${t} は 2 桁の 16 進ではありません`);
-    // EBCDIC の X'40' は空白。この処理系の内部は文字なので、空白に読み替える
+    // この処理系の画面は文字の面しか持たないので、EBCDIC の符号を
+    // そのまま文字コードとして使うと別の字になる（X'5C' は EBCDIC の
+    // `*` だが Unicode では `\`）。X'00' は生の NUL が画面像と
+    // セグメントに入ってしまう。半分だけ翻訳すると結果が予測できないので、
+    // 意味が確かな 2 つだけを受けて、残りは名指しで断る
     const code = parseInt(hex, 16);
-    return { kind: "char", c: code === 0x40 ? " " : String.fromCharCode(code) };
+    if (code === 0x40) return { kind: "char", c: " " };
+    if (code === 0x00) return { kind: "null" };
+    fail(
+      c,
+      s,
+      `FILL=${t} は未実装です（EBCDIC と文字の対応表を持たないため、` +
+        `X'40'（空白）と X'00'（埋めない）だけを扱う。文字で書くなら C'c'）`,
+    );
   }
   if (up.startsWith("C'") && t.endsWith("'")) {
     const ch = t.slice(2, -1).replace(/''/g, "'");
@@ -252,6 +288,18 @@ function pfkOf(c: Context, s: MacroStmt, value: string): { field?: string; keys:
     keys.set(keyNo, { ...(field === undefined ? {} : { dfld: field }), literal: text });
     next = keyNo + 1;
   }
+  // 固定文字を入れる先の項目名が無いと、`formatInput` が何も入れず
+  // **PF キーが ENTER と同じ動きになる**（誤りも出ない）。
+  // PF キーでトランザクションコードやコマンドを入れるのは定石なので、
+  // 書き方を 1 つ間違えただけで別のトランザクションが走ってしまう
+  if (keys.size > 0 && field === undefined) {
+    fail(
+      c,
+      s,
+      "PFK= に固定文字を入れる項目名がありません" +
+        "（PFK=(項目名,3='/FOR MENU.') の形で書いてください）",
+    );
+  }
   return { ...(field === undefined ? {} : { field }), keys };
 }
 
@@ -272,10 +320,19 @@ function startFormat(c: Context, s: MacroStmt): void {
     srcLine: s.line,
   };
   c.dpage = undefined;
+  c.devSeen = false;
 }
 
 function applyDev(c: Context, s: MacroStmt): void {
   const fmt = c.fmt ?? fail(c, s, "DEV 文が FMT の外にあります");
+  // 実機の FMT は装置ごとに DEV を並べられるが、ここは後の DEV が
+  // 行数・桁数・PFK を上書きし、DFLD は全部同じ DPAGE に積まれる。
+  // DPAGE が無いと「最後の装置の大きさを持つ 1 つの書式」に
+  // 黙って混ざるので断る
+  if (c.devSeen) {
+    fail(c, s, "複数装置の書式（DEV を並べる形）は未実装です（DEV は 1 つだけ）");
+  }
+  c.devSeen = true;
   const typeText = opt(s, "TYPE") ?? fail(c, s, "DEV 文に TYPE= がありません");
   const key = listOf(typeText).join(",").toUpperCase();
   const size = SCREEN_SIZE.get(key);
@@ -594,6 +651,7 @@ function startDo(c: Context, s: MacroStmt): void {
     colInc: at(2) === undefined ? 0 : Number(at(2)),
     suffix,
     stmts: [],
+    srcLine: s.line,
   };
   if (!Number.isInteger(c.loop.lineInc) || !Number.isInteger(c.loop.colInc)) {
     fail(c, s, "DO の増分は整数で書いてください");
@@ -638,6 +696,7 @@ export function parseMfs(
     seg: undefined,
     lpage: undefined,
     loop: undefined,
+    devSeen: false,
   };
   for (const s of readMacros(text, file)) {
     if (LISTING_OPS.has(s.op)) continue;
@@ -697,7 +756,11 @@ export function parseMfs(
         fail(c, s, `${s.op} は MFS の定義文ではありません`);
     }
   }
-  if (c.loop !== undefined) throw new MfsDefError("DO が ENDDO で閉じていません", file, 1);
+  if (c.loop !== undefined) {
+    // 開始行を持たせないと行番号が常に 1 になる。
+    // FMT / MSG の閉じ忘れは正しい行を出しているので、ここだけ揃えていなかった
+    throw new MfsDefError("DO が ENDDO で閉じていません", file, c.loop.srcLine);
+  }
   if (c.fmt !== undefined) throw new MfsDefError("FMT が FMTEND で閉じていません", file, c.fmt.srcLine);
   if (c.msg !== undefined) throw new MfsDefError("MSG が MSGEND で閉じていません", file, c.msg.srcLine);
   return { formats: c.formats, messages: c.messages };
@@ -749,6 +812,20 @@ export function loadMfs(files: Record<string, string>): MfsLibrary {
     }
     // 項目の重なりは画面を組めないので、読んだ時点で断る
     validateLayout(f);
+    // ラベルが重なると `fieldNamed` が先頭にしか届かず、2 つめは
+    // 画面に出るのに永久に空のまま（MFLD も打ち込みも先頭へ行く）
+    const seen = new Set<string>();
+    for (const d of f.dpages.flatMap((p2) => p2.dflds)) {
+      if (d.name === undefined) continue;
+      if (seen.has(d.name)) {
+        throw new MfsDefError(
+          `書式 ${f.name} に DFLD ${d.name} が 2 つあります（ラベルは書式の中で一意）`,
+          f.file,
+          d.srcLine,
+        );
+      }
+      seen.add(d.name);
+    }
   }
   // 参照の食い違いは、使うときではなく読んだ時点で断る
   for (const m of messages.values()) {

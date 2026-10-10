@@ -8,31 +8,33 @@
 
 ## 現状
 
-| 層 | 状態 | テスト |
-|----|------|--------|
-| 字句解析 `src/lexer.ts` | 完了 | 46 |
-| プリプロセッサ `src/preprocess.ts` | `%REPLACE` / 一覧制御 | 8 |
-| 出力書式 `src/format.ts` | 完了 | 30 |
-| 構文解析 `src/parser.ts` | 完了 | 118 |
-| 値・算術 `src/value.ts` | 完了 | 22 |
-| 評価器 `src/interp.ts` | 完了 | 57 |
-| 実行 API `src/run.ts` | 構造化された診断 | 12 |
-| Linter `src/lint.ts` | 15 規則。CLI 付き | 50 |
-| ストリーム入出力 `src/streamio.ts` | ファイル表と入力カーソル | 28 |
-| `PICTURE` `src/picture.ts` | 数値編集 | 32 |
-| `BASED` 記憶域 | `interp.ts` / `value.ts` | 16 |
-| レコード入出力 | `streamio.ts` / `interp.ts` | 11 |
-| `%INCLUDE` とホスト | `src/host.ts` / `preprocess.ts` | 16 + 11 |
-| **IMS/DB（DL/I）** `src/dli/` | 論理層のみ。CLI 付き | 19 + 13 + 16 + 46 + 3 + 19 |
-| **画面入出力（MFS）** `src/mfs/` | MID / MOD / DIF / DOF と 3270 の画面 | 32 + 26 + 7 |
-| **IMS TM** `src/tm/` | メッセージキュー・セッション・端末の台本 | 21 + 15 + 6 |
-| 画面のゴールデン `test/screen/` | 画面像をバイト一致で固定（出処は仕様） | 8 |
-| Snippet `src/snippets.ts` | 43本（単一の定義源） | 52 |
-| テストフレームワーク `src/testing.ts` | CLI 付き | 33 + 6 |
-| ブラウザ版 `web/` | HTML 1 枚で動作 | 22 + 12 |
+| 層 | 状態 |
+|----|------|
+| 字句解析 `src/lexer.ts` | 完了 |
+| プリプロセッサ `src/preprocess.ts` | `%REPLACE` / 一覧制御 |
+| 出力書式 `src/format.ts` | 完了 |
+| 構文解析 `src/parser.ts` | 完了 |
+| 値・算術 `src/value.ts` | 完了 |
+| 評価器 `src/interp.ts` | 完了 |
+| 実行 API `src/run.ts` | 構造化された診断 |
+| Linter `src/lint.ts` | 15 規則。CLI 付き |
+| ストリーム入出力 `src/streamio.ts` | ファイル表と入力カーソル |
+| `PICTURE` `src/picture.ts` | 数値編集 |
+| `BASED` 記憶域 | `interp.ts` / `value.ts` |
+| レコード入出力 | `streamio.ts` / `interp.ts` |
+| `%INCLUDE` とホスト | `src/host.ts` / `preprocess.ts` |
+| **IMS/DB（DL/I）** `src/dli/` | 論理層のみ。CLI 付き |
+| **画面入出力（MFS）** `src/mfs/` | MID / MOD / DIF / DOF と 3270 の画面 |
+| **IMS TM** `src/tm/` | メッセージキュー・セッション・端末の台本 |
+| 画面のゴールデン `test/screen/` | 画面像をバイト一致で固定（出処は仕様） |
+| Snippet `src/snippets.ts` | 43 本（単一の定義源） |
+| テストフレームワーク `src/testing.ts` | CLI 付き |
+| ブラウザ版 `web/` | HTML 1 枚で動作 |
 
-合計 **1032 件**（`npm test`）。PL/I で書いたテストが別に 39 件
-（`npm run plitest -- examples/tests --psb STUPSB`）。
+件数は `npm test` が出す（層ごとの内訳も出る）。PL/I で書いたテストが別に
+`npm run plitest -- examples/tests --psb STUPSB` で走る。
+**ここに件数を書かないのは、以前は層ごとの数を並べていて、
+変更のたびに狂い、総和が合計と 219 件ずれていたため。**
 
 実在の PL/I 処理系の出力と突き合わせながら作っており、
 出力書式と精度規則はその結果を反映している（条件の扱いは
@@ -757,6 +759,20 @@ byte 単位で固めると、間違った値を固めても気づけない。業
 - 書き出しのたびに変更の印（MDT）は落ちる。打ち直さなければ次は返らない
 - 読むのは変更の印が立った項目だけで、末尾の空白は落とす。
   落とさないと `JUST=R` と `FILL=` が効かない
+- **ENTER / PF 以外のキーを ENTER と同じに扱わない。** `CLEAR` は装置の
+  緩衝を消してデータを伴わない AID だけを送る（項目は 1 つも返らない）。
+  `PA1`〜`PA3` は IMS が物理ページングに使うもので、再現しないので断る。
+  `Aid` に型があり台本も受け付けるのに `formatInput` が `pf` しか見て
+  いなかったので、**どちらも ENTER と同じ動き**になっていた
+- **異常終了したら出力メッセージを捨てる。** 実機の MPP が落ちると IMS は
+  直前の同期点まで戻して端末に DFS555I を出す。`result.ok` を見ずに
+  画面を更新すると「IMS なら決して送らない画面」を見せることになる。
+  データベースの更新はファイルと同じ約束で残す（MPP の同期点は再現しない）
+- **会話型では最初の `ISRT` の形を確かめる。** 無条件に先頭のセグメントを
+  SPA と見なすと、画面用のセグメントが SPA に化けて次の入力として戻る
+- **通日の式は 1 箇所に置く**（`src/datetime.ts`）。経過ミリ秒の床で
+  求めると夏時間のある地域で 1 日ずれ、同じ画面の `DATE1` と `DATE2` が
+  食い違う
 
 ### 期待値の出どころ
 
@@ -780,7 +796,7 @@ npm run plilint -- --list-rules         # 規則と、その理由
 黙って別の変数になり、誤った値のまま動き続ける。予約語が無い言語なので、
 この種の誤りを機械が拾う価値が特に高い。
 
-誤検出が出た時点で Linter は切られる。ブラウザ版のサンプル 13 本と
+誤検出が出た時点で Linter は切られる。ブラウザ版のサンプル 14 本と
 `examples/tests` に対して**指摘 0** であることをテストで固定している。
 
 ## Snippet

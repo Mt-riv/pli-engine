@@ -181,7 +181,7 @@ VSCode は名前と中身の両方（どちらかが真なら振り替える）�
 ## プログラムから使う
 
 ```ts
-import { runTestSource, formatReport, toXmlReport } from "pli-engine";
+import { runTestSource, formatReport, toXmlReport } from "../engine/src/index.js";
 
 const report = runTestSource(source);
 // failedOutput で、失敗したテストが PUT で出した内容を末尾に添える

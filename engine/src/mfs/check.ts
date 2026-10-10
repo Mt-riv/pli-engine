@@ -78,7 +78,20 @@ export function checkMfs(lib: MfsLibrary): MfsWarning[] {
       }
 
       for (const f of fields) {
+        // 拡張属性（色・下線など）は読むが、この処理系の画面像は
+        // 位置・長さ・基本属性しか持たないので絵に出ない。
+        // 黙って無視すると「書いたのに効かない」ので知らせる
+        if (f.eattr !== undefined) {
+          out.push({
+            file: fmt.file,
+            line: f.srcLine,
+            message:
+              `項目 ${f.name ?? "（固定文字）"} の EATTR= は画面像に出ません` +
+              "（色・下線などの拡張属性は再現しません）",
+          });
+        }
         if (f.name === undefined) continue;
+        if (fmt.sysmsg !== undefined && f.name === fmt.sysmsg) continue;
         if (used.has(`${fmt.name}.${f.name}`)) continue;
         out.push({
           file: fmt.file,

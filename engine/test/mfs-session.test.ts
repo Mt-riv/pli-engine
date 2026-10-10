@@ -297,6 +297,92 @@ end conv;
     expect(step.ok).toBe(false);
     expect(step.notice).toMatch(/1 個ですが、2 個 ISRT/);
   });
+
+  /**
+   * SPA を返さないプログラムを SPA 付きで動かしたとき。
+   *
+   * 以前は最初の出力セグメントを**無条件に** SPA と見なして外していた。
+   * 画面用のセグメントが SPA として保存され、通知は原因と無関係な
+   * 「プログラムは画面を返しませんでした」になり、しかも化けた SPA が
+   * 次の実行の入力として渡って画面の中身が `in_tran` に入っていた。
+   * 実機は会話型が SPA を返さなければ会話を異常終了させる。
+   */
+  it("SPA を ISRT しないプログラムは断る（画面用のセグメントを SPA にしない）", () => {
+    const s = session(ECHO, { spa: 20 });
+    s.start();
+    const step = s.send(enter({ ITEMIN: "42" }));
+    expect(step.ok).toBe(false);
+    expect(step.notice).toMatch(/会話型なのに SPA が ISRT されていません/);
+  });
+});
+
+/**
+ * 異常終了したときの画面。
+ *
+ * 実機の MPP が落ちると IMS は直前の同期点まで戻して出力メッセージを
+ * 捨て、端末には DFS555I を出す。出力をそのまま画面にすると
+ * 「IMS なら決して送らない画面」を見せることになる。
+ */
+describe("異常終了したときは出力を捨てる", () => {
+  const ABEND = ECHO.replace(
+    "    call plitdli(four, func_isrt, io_pcb, msg_out, modname);",
+    "    call plitdli(four, func_isrt, io_pcb, msg_out, modname);\n    signal error;",
+  );
+
+  it("ISRT した後に落ちても画面を更新しない", () => {
+    const s = session(ABEND);
+    const first = s.start();
+    const before = fieldNamed(first.screen!, "NAMEOUT")?.text;
+    const step = s.send(enter({ ITEMIN: "42" }));
+    expect(step.ok).toBe(false);
+    expect(step.notice).toMatch(/異常終了したので出力を捨てました/);
+    expect(step.diagnostics.length).toBeGreaterThan(0);
+    // 画面は据え置き（ITEM=000042 が出ていない）
+    expect(fieldNamed(step.screen!, "NAMEOUT")?.text).toBe(before);
+  });
+});
+
+/**
+ * ENTER 以外のキー。
+ *
+ * `Aid` には `clear` と `pa` があり台本も受け付けるのに、`formatInput` は
+ * `pf` しか見ていなかったので **CLEAR も PA1 も ENTER と同じ**だった。
+ * CLEAR は装置の緩衝を消してデータを伴わない AID だけを送る（3270 の規則）。
+ * PA1 は IMS が物理ページングに使うもので、`docs/mfs.md` が
+ * 「再現しない」と名指ししている。
+ */
+describe("ENTER 以外のキー", () => {
+  const key = (aid: { kind: "clear" } | { kind: "pa"; n: number }, fields: Record<string, string> = {}) => ({
+    aid,
+    fields: new Map(Object.entries(fields)),
+  });
+
+  it("PA キーは名指しで断る（ENTER と同じにしない）", () => {
+    const s = session();
+    s.start();
+    const step = s.send(key({ kind: "pa", n: 1 }, { ITEMIN: "42" }));
+    expect(step.ok).toBe(false);
+    expect(step.notice).toMatch(/PA1（物理ページング）は未実装/);
+  });
+
+  it("CLEAR は画面を消し、打ち込んだ値を送らない", () => {
+    const s = session();
+    s.start();
+    const step = s.send(key({ kind: "clear" }, { ITEMIN: "42" }));
+    // 項目が 1 つも返らないので、MFLD の固定文字だけが残る。
+    // この MID はトランザクションコードを固定文字で持つので実行まで進む
+    expect(step.notice).toBeUndefined();
+    // 画面の項目は空になっている
+    expect(fieldNamed(step.screen!, "ITEMIN")?.text.trim()).toBe("");
+  });
+
+  it("CLEAR のあとは打ち込んだ値が届かない", () => {
+    const s = session();
+    s.start();
+    const after = s.send(key({ kind: "clear" }, { ITEMIN: "42" }));
+    // 42 が入っていれば ITEM=000042、入っていなければ ITEM=000000
+    expect(fieldNamed(after.screen!, "NAMEOUT")?.text).toContain("ITEM=000000");
+  });
 });
 
 describe("小道具", () => {

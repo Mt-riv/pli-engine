@@ -15,7 +15,6 @@
 import {
   MfsBlockError,
   type Fill,
-  type MessageDesc,
   type Mfld,
   type MfsLibrary,
 } from "./blocks.js";
@@ -120,7 +119,3 @@ export function formatInput(
   return segments;
 }
 
-/** 入力に続けて使う MOD の名前（`MSG NXT=`）。 */
-export function nextModOf(mid: MessageDesc): string | undefined {
-  return mid.next;
-}

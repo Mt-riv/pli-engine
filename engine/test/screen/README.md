@@ -46,6 +46,7 @@ npx tsx scripts/gen-screen.ts <名前>
 | 名前 | 何を固定しているか |
 |------|------------------|
 | `inquiry` | 位置と属性、属性バイトの 1 桁、`JUST` / `FILL`、`PFK` の固定文字、`DATE2`、`/FORMAT` |
+| `dbinq` | 画面（MFS）とデータベース（DL/I）を 1 本で使う形。PSB の先頭が入出力 PCB、2 つめが DB PCB。`JUST=R` / `FILL=C'0'` で揃えた品番をそのまま順序キーの SSA に使う |
 | `conv` | 会話型の SPA（`LL` + `ZZZZ` + コード + 作業域）と、コードを空白にして終わる約束 |
 | `table` | `DO` / `ENDDO` の繰り返しと通し番号（FMT 側と MSG 側で名前が噛み合う） |
 | `attrs` | `ATTR=YES` の 2 バイト（置き換え・論理和・カーソル要求）と `DSCA` |

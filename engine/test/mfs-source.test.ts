@@ -354,6 +354,56 @@ describe("カンマの後に空白を入れた指定", () => {
   });
 });
 
+/**
+ * 読んだのに効かない指定を断る。
+ *
+ * 「書式としては通るが、実行時に黙って無視される」のが一番たちが悪い。
+ */
+describe("読んでも効かない形は断る", () => {
+  const head = `F        FMT\n         DEV   TYPE=3270-A2\n         DIV   TYPE=INOUT\n         DPAGE\n`;
+
+  it("PFK= に項目名が無ければ断る（PF キーが ENTER と同じになる）", () => {
+    expect(() =>
+      parseMfs(
+        `F        FMT\n         DEV   TYPE=3270-A2,PFK=(3='/FOR MENU.')\n` +
+          `         DIV   TYPE=INOUT\n         DPAGE\nA        DFLD  POS=(1,2),LTH=4\n` +
+          `         FMTEND\n`,
+        "f.mfs",
+      ),
+    ).toThrow(/PFK= に固定文字を入れる項目名がありません/);
+  });
+
+  it("項目名を書けば通る", () => {
+    const fmt = parseMfs(
+      `F        FMT\n         DEV   TYPE=3270-A2,PFK=(A,3='/FOR MENU.')\n` +
+        `         DIV   TYPE=INOUT\n         DPAGE\nA        DFLD  POS=(1,2),LTH=10\n` +
+        `         FMTEND\n`,
+      "f.mfs",
+    ).formats[0]!;
+    expect(fmt.pfk.get(3)?.dfld).toBe("A");
+  });
+
+  it("DFLD のラベルが重なれば断る（2 つめに永久に届かない）", () => {
+    expect(() =>
+      loadMfs({
+        "f.mfs":
+          head + `SAME     DFLD  POS=(1,2),LTH=4\nSAME     DFLD  POS=(3,2),LTH=4\n         FMTEND\n`,
+      }),
+    ).toThrow(/DFLD SAME が 2 つあります/);
+  });
+
+  it("DEV を 2 つ書けば断る（最後の装置の大きさに黙って混ざる）", () => {
+    expect(() =>
+      parseMfs(
+        `F        FMT\n         DEV   TYPE=3270-A2\n         DIV   TYPE=INOUT\n` +
+          `A        DFLD  POS=(1,2),LTH=4\n         DEV   TYPE=3270-A1\n` +
+          `B        DFLD  POS=(2,2),LTH=4\n         FMTEND\n`,
+        "f.mfs",
+      ),
+    ).toThrow(/複数装置の書式/);
+  });
+});
+
 describe("マクロの書式", () => {
   it("固定文字の中の = は区切りにしない", () => {
     const d = parseMfs(

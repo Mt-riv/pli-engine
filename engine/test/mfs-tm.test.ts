@@ -19,7 +19,8 @@ import { runProgram } from "../src/run.js";
 import { julianDate, timeOfDay, TmRuntime, TmUnsupported } from "../src/tm/tm.js";
 import { formatInput } from "../src/mfs/input.js";
 import { loadMfs } from "../src/mfs/source.js";
-import { formatOutput } from "../src/mfs/output.js";
+import { formatOutput, systemLiteral } from "../src/mfs/output.js";
+import { dayOfYear } from "../src/datetime.js";
 import { fieldNamed, rowText } from "../src/mfs/device.js";
 
 const PSB = `         PCB  TYPE=TP
@@ -279,6 +280,41 @@ describe("入力の経路（DIF + MID → セグメント）", () => {
     expect(() =>
       formatInput(lib(), "INVOUT", { aid: { kind: "enter" }, fields: new Map() }),
     ).toThrow(/MOD/);
+  });
+});
+
+/**
+ * 通日（`yyddd` と `DATE1`）。
+ *
+ * 経過ミリ秒の床で求めていたので、夏時間のある地域では 1 時間ぶん
+ * 足りず、0 時台の時刻で前日になっていた。`DATE2`（`getMonth()` 由来）
+ * とは食い違うので、どちらが正しいかに関係なく**内部矛盾**だった。
+ * 式は `src/datetime.ts` に 1 つだけ置いて両方が使う。
+ */
+describe("通日は時間帯と時刻に依らない", () => {
+  const cases: [number, number, number, number][] = [
+    [2026, 0, 1, 1],
+    [2026, 9, 10, 283],
+    [2026, 11, 31, 365],
+    // 閏年
+    [2024, 11, 31, 366],
+    [2024, 2, 1, 61],
+  ];
+
+  it("暦の日付から求める", () => {
+    for (const [y, m, d, want] of cases) {
+      expect(dayOfYear(new Date(y, m, d)), `${y}-${m + 1}-${d}`).toBe(want);
+      // 時刻を変えても同じ
+      expect(dayOfYear(new Date(y, m, d, 0, 30)), `${y}-${m + 1}-${d} 00:30`).toBe(want);
+      expect(dayOfYear(new Date(y, m, d, 23, 59)), `${y}-${m + 1}-${d} 23:59`).toBe(want);
+    }
+  });
+
+  it("入出力 PCB の日付と DATE1 が食い違わない", () => {
+    const d = new Date(2026, 9, 10, 0, 30);
+    expect(julianDate(d)).toBe(26283);
+    expect(systemLiteral("DATE1", { now: d, lterm: "T" })).toBe("26.283");
+    expect(systemLiteral("DATE2", { now: d, lterm: "T" })).toBe("10/10/26");
   });
 });
 

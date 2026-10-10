@@ -475,9 +475,15 @@ export class DliRuntime {
     if (target.seg.parent !== expected) return this.done(pcb, "AC");
 
     // 改行などの制御文字を入れると、unload が行を分割して
-    // データファイルが壊れる（次回の読み込みで「DBD にありません」になる）
+    // データファイルが壊れる（次回の読み込みで「DBD にありません」になる）。
+    // これは**この処理系の記憶形式の制約**で、IMS の状態コードではない。
+    // `AJ` を返すとプログラムの状態コード分岐が嘘の解釈をするので、
+    // 名指しの実行時誤りにする
     if (/[\r\n\t\0]/.test(ioArea.slice(0, target.seg.bytes))) {
-      return this.done(pcb, "AJ");
+      throw new DliUnsupported(
+        "セグメントに改行・タブ・NUL を入れることはできません" +
+          "（この処理系はデータベースを 1 行 1 セグメントのテキストで持つため）",
+      );
     }
     const data = ioArea.padEnd(target.seg.bytes).slice(0, target.seg.bytes);
     const siblings = parent === undefined ? db.roots : parent.children;
@@ -562,8 +568,12 @@ export class DliRuntime {
     if (held === undefined) return this.done(pcb, "DJ");
     const seg = dbd.segments.get(held.type)!;
     // ISRT と同じく、制御文字はデータファイルを壊すので断る
+    // （IMS の状態コードではなく、この処理系の記憶形式の制約）
     if (/[\r\n\t\0]/.test(ioArea.slice(0, seg.bytes))) {
-      return this.done(pcb, "AJ");
+      throw new DliUnsupported(
+        "セグメントに改行・タブ・NUL を入れることはできません" +
+          "（この処理系はデータベースを 1 行 1 セグメントのテキストで持つため）",
+      );
     }
     const data = ioArea.padEnd(seg.bytes).slice(0, seg.bytes);
     // DA — キー項目を変更した

@@ -82,9 +82,9 @@ ON 単位からの脱出には GOTO が要るので、ON 単位の中は対象�
 Linter は誤検出が出た時点で切られるので、既知の正しいコードに
 指摘が出ないことをテストで固定している。
 
-- ブラウザ版のサンプル 13 本 → 指摘 0
+- ブラウザ版のサンプル 14 本 → 指摘 0
 - `examples/tests` のテストファイル 5 本 → 指摘 0
-- `examples/dli` の例 → 指摘 0（`npm run plilint -- examples` で確認。テストには載せていない）
+- `examples/dli` の例 → 指摘 0（vitest には載せていないが、CI が `npm run plilint -- examples --strict` で見ている）
 
 判定で気を遣っている点:
 
@@ -102,7 +102,7 @@ Linter は誤検出が出た時点で切られるので、既知の正しいコ�
 ## プログラムから使う
 
 ```ts
-import { lint, formatLint, RULES } from "pli-engine";
+import { lint, formatLint, RULES } from "../engine/src/index.js";
 
 const messages = lint(source, {
   rules: { "goto-outside-on-unit": "off", "implicit-declaration": "error" },

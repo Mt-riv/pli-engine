@@ -1,3 +1,4 @@
+import { dayOfYear } from "../datetime.js";
 /**
  * IMS TM（メッセージキュー）の層。
  *
@@ -52,8 +53,27 @@ export interface TmOptions {
   queue?: InputMessage[];
 }
 
-/** 引き受けない、しかし名前は知っている呼び出し。 */
+/**
+ * 引き受けない、しかし名前は知っている呼び出し。
+ *
+ * 黙って `AD`（機能コードが正しくない）を返すと「書き間違い」と
+ * 区別が付かない。会話型の MPP は入出力 PCB に対して `CHKP` を出すのが
+ * 定石なので、実務の形をそのまま持ってきたときに「書き間違い」と
+ * 言われないよう、`dli/dli.ts` の表と同じ語をそろえる。
+ */
 const KNOWN_UNSUPPORTED = new Map<string, string>([
+  ["CHKP", "チェックポイント（同期点）"],
+  ["XRST", "再起動"],
+  ["ROLB", "ロールバック"],
+  ["ROLL", "ロールバック"],
+  ["ROLS", "ロールバック"],
+  ["SETS", "セーブポイント"],
+  ["LOG", "ログ書き出し"],
+  ["STAT", "統計取得"],
+  ["SNAP", "スナップ出力"],
+  ["GSCD", "システム領域の取得"],
+  ["APSB", "PSB の割り当て"],
+  ["DPSB", "PSB の解放"],
   ["CHNG", "送り先の変更（代替 PCB）"],
   ["SETO", "出力オプション"],
   ["CMD", "IMS コマンド"],
@@ -128,15 +148,24 @@ export class TmRuntime {
     }
     switch (code) {
       case "GU":
-      case "GHU":
         return this.get(true);
       case "GN":
-      case "GHN":
         return this.get(false);
+      case "GHU":
+      case "GHN":
+        // ホールド付きの検索はデータベース PCB だけの機能。
+        // 入出力 PCB に出せば AD（機能コードが正しくない）
+        return this.status("AD");
       case "ISRT":
         return this.insert(segment ?? "", modName);
       case "PURG":
-        // 組み立て中のものを送り出す。次の ISRT は新しいメッセージになる
+        // 組み立て中のものを送り出す。次の ISRT は新しいメッセージになる。
+        // I/O 領域を渡す形（次のメッセージの第 1 セグメントにする）は未実装
+        if (segment !== undefined) {
+          throw new TmUnsupported(
+            "PURG に I/O 領域を渡す形（次のメッセージの第 1 セグメントにする）は未実装です",
+          );
+        }
         this.finish();
         return this.status(OK);
       default:
@@ -199,9 +228,7 @@ export class TmRuntime {
 
 /** `yyddd`。入出力 PCB の日付の形。 */
 export function julianDate(d: Date): number {
-  const start = new Date(d.getFullYear(), 0, 1);
-  const day = Math.floor((d.getTime() - start.getTime()) / 86400000) + 1;
-  return (d.getFullYear() % 100) * 1000 + day;
+  return (d.getFullYear() % 100) * 1000 + dayOfYear(d);
 }
 
 /** `hhmmss.t`。入出力 PCB の時刻の形。 */

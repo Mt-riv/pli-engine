@@ -169,15 +169,21 @@ describe("ISRT の親", () => {
     ).toBe("AJ");
   });
 
-  it("制御文字を含むデータは断る（データファイルが壊れる）", () => {
+  /**
+   * 制御文字を含むデータ。
+   *
+   * これは**この処理系の記憶形式の制約**（1 行 1 セグメントのテキスト）で、
+   * IMS の状態コードではない。`AJ` を返すとプログラムの状態コード分岐が
+   * 嘘の解釈をするので、名指しの実行時誤りにする。
+   */
+  it("制御文字を含むデータは名指しで断る（状態コードに化けさせない）", () => {
     expect(
-      dli(`  func = 'GU  ';
+      defError(`  func = 'GU  ';
   call plitdli(4, func, db_pcb, io, 'STUDENT (STUDNO   =S0001)');
   func = 'ISRT';
   io = 'C00' || '0A'x || 'NEW ';
-  call plitdli(4, func, db_pcb, io, 'COURSE  ');
-  put list(db_pcb.stat_code);`),
-    ).toBe("AJ");
+  call plitdli(4, func, db_pcb, io, 'COURSE  ');`),
+    ).toContain("改行・タブ・NUL");
   });
 });
 

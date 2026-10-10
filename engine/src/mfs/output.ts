@@ -21,6 +21,7 @@ import {
   type SystemLiteral,
 } from "./blocks.js";
 import { blankScreen, fieldNamed, type Screen, type ScreenField } from "./device.js";
+import { dayOfYear } from "../datetime.js";
 
 export interface OutputOptions {
   /** システム定数が使う時刻。 */
@@ -71,11 +72,8 @@ export function systemLiteral(which: SystemLiteral, opts: OutputOptions): string
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   switch (which) {
-    case "DATE1": {
-      const start = new Date(d.getFullYear(), 0, 1);
-      const day = Math.floor((d.getTime() - start.getTime()) / 86400000) + 1;
-      return `${yy}.${String(day).padStart(3, "0")}`;
-    }
+    case "DATE1":
+      return `${yy}.${String(dayOfYear(d)).padStart(3, "0")}`;
     case "DATE2":
       return `${mm}/${dd}/${yy}`;
     case "DATE3":
