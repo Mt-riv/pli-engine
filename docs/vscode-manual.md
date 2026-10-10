@@ -10,10 +10,10 @@ PL/I の構文強調・診断・実行・テスト・検査・Snippet を VSCode
 ### リリースから入手する（手軽）
 
 [Releases](https://github.com/Mt-riv/pli-engine/releases) から
-`pli-lang-0.1.0.vsix`（約 62KB）をダウンロードします。ビルドは要りません。
+`pli-lang-0.2.0.vsix`（約 79KB）をダウンロードします。ビルドは要りません。
 
 ```bash
-gh release download vscode-v0.1.0 --repo Mt-riv/pli-engine
+gh release download vscode-v0.2.0 --repo Mt-riv/pli-engine
 ```
 
 ### 自分で `.vsix` を作る
@@ -22,17 +22,17 @@ gh release download vscode-v0.1.0 --repo Mt-riv/pli-engine
 cd pli-engine/vscode-pli
 npm ci
 npm run build
-npx @vscode/vsce package      # pli-lang-0.1.0.vsix ができる
+npx @vscode/vsce package      # pli-lang-0.2.0.vsix ができる
 ```
 
 VSCode の拡張ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）→ 右上の `…` →
-**「VSIX からのインストール」** → `pli-lang-0.1.0.vsix` を選択。
+**「VSIX からのインストール」** → `pli-lang-0.2.0.vsix` を選択。
 `Developer: Reload Window` で読み込み直します。
 
 `code` コマンドを PATH に通している場合は次でも入ります。
 
 ```bash
-code --install-extension pli-lang-0.1.0.vsix
+code --install-extension pli-lang-0.2.0.vsix
 ```
 
 ### 開発しながら使う
