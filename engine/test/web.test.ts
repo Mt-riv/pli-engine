@@ -96,6 +96,29 @@ describe("ビルド成果物（単一ファイル）", () => {
       expect(html).not.toMatch(/<script[^>]*type="module"/i);
     });
 
+    /**
+     * 埋め込みで HTML が増えていないこと。
+     *
+     * `String.replace` に**文字列**を渡すと `$&` `$'` `` $` `` が
+     * 置換パターンとして解釈される。圧縮したコードには
+     * `` new Set([`$`,…]) ``（PICTURE の通貨記号）のように `` $` `` が
+     * 容易に現れるので、そのとき `` $` `` が「一致より前の文字列全部」に
+     * 置き換わり、**HTML 全体がもう一度差し込まれてスクリプトが壊れる**。
+     * 0.3.0 のブラウザ版はこれで動かなくなっていた。
+     */
+    it("HTML が二重に入っていない", () => {
+      expect(html.match(/<html/g) ?? []).toHaveLength(1);
+      expect(html.match(/<\/body>/g) ?? []).toHaveLength(1);
+    });
+
+    it("埋め込んだスクリプトが構文として正しい", () => {
+      const m = /<script>\n([\s\S]*?)\n<\/script>/.exec(html);
+      expect(m).not.toBeNull();
+      // new Function は構文解析だけを行う（実行はしない）。
+      // 壊れた埋め込みはここで SyntaxError になる
+      expect(() => new Function(m![1]!)).not.toThrow();
+    });
+
     it("エンジンが埋め込まれている", () => {
       // 圧縮で識別子名は変わるので、文字列リテラルとして残るもので確かめる
       expect(html).toContain("FIXEDOVERFLOW");

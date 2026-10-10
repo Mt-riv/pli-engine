@@ -39,8 +39,11 @@ function singleFile(): Plugin {
       }
       if (scripts.length > 0) {
         const block = scripts.map((c) => `<script>\n${c}\n</script>`).join("\n");
+        // 置換は**関数で**渡す。文字列で渡すと `$&` `$'` `` $` `` が
+        // 置換パターンとして解釈され、埋め込むコードの中にそれが
+        // 現れた瞬間に HTML が壊れる（圧縮後のコードには容易に現れる）
         source = source.includes("</body>")
-          ? source.replace("</body>", `${block}\n</body>`)
+          ? source.replace("</body>", () => `${block}\n</body>`)
           : source + block;
       }
 
@@ -50,7 +53,8 @@ function singleFile(): Plugin {
         const tag = new RegExp(
           `<link[^>]*href="[^"]*${asset.fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"[^>]*>`,
         );
-        source = source.replace(tag, `<style>\n${String(asset.source)}\n</style>`);
+        const css = String(asset.source);
+        source = source.replace(tag, () => `<style>\n${css}\n</style>`);
         delete bundle[name];
       }
 
