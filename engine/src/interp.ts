@@ -136,11 +136,18 @@ export class FinishSignal extends Error {
     readonly line?: number,
     /** 入出力の条件なら対象のファイル名。診断に添えて原因を分かりやすくする。 */
     readonly file?: string,
+    /**
+     * 原因が分かっているときの説明。属性の食い違いなど、
+     * 「ファイル名と TITLE を確認」が的を外す場合に差し替える。
+     */
+    readonly detail?: string,
   ) {
     super(
       file === undefined
         ? condition
-        : `${condition}（ファイル ${file}）。ON ${condition}(${file}) を置くか、` +
+        : detail !== undefined
+          ? `${condition}（ファイル ${file}）。${detail}`
+          : `${condition}（ファイル ${file}）。ON ${condition}(${file}) を置くか、` +
             "ファイル名と TITLE を確認してください",
     );
     this.name = "FinishSignal";
@@ -1244,10 +1251,16 @@ export class Interpreter {
    * 判定に使う書き方がこれに依存する。
    * ON 単位が無ければ ERROR へ連鎖して終わる。
    */
-  private raiseIo(condition: string, scope: Scope, line: number, file: string): void {
+  private raiseIo(
+    condition: string,
+    scope: Scope,
+    line: number,
+    file: string,
+    detail?: string,
+  ): void {
     const unit =
       scope.lookupOn(`${condition}(${file.toUpperCase()})`) ?? scope.lookupOn(condition);
-    if (unit === undefined) this.raise(condition, scope, line, file);
+    if (unit === undefined) this.raise(condition, scope, line, file, detail);
     const prev = this.inCondition;
     this.inCondition = true;
     try {
@@ -1273,9 +1286,10 @@ export class Interpreter {
     scope: Scope,
     line: number,
     file?: string,
+    detail?: string,
   ): never {
     // ON 単位の中でさらに条件が起きたときに再入しないようにする
-    if (this.inCondition) throw new FinishSignal(condition, line, file);
+    if (this.inCondition) throw new FinishSignal(condition, line, file, detail);
     this.inCondition = true;
     try {
       const chain = condition === "ERROR" ? ["ERROR"] : [condition, "ERROR"];
@@ -1297,7 +1311,7 @@ export class Interpreter {
     } finally {
       this.inCondition = false;
     }
-    throw new FinishSignal(condition, line, file);
+    throw new FinishSignal(condition, line, file, detail);
   }
 
   /**
@@ -2017,9 +2031,10 @@ export class Interpreter {
       return this.files.openFile(name, want);
     } catch (e) {
       if (e instanceof UndefinedFileError) {
-        this.raiseIo("UNDEFINEDFILE", this.currentScope, line, name);
-        // ON 単位から戻っても開けていないので、ここで止めるしかない
-        throw new RuntimeError(`ファイル ${name} を開けません`, line);
+        this.raiseIo("UNDEFINEDFILE", this.currentScope, line, name, e.reason);
+        // ON 単位から戻っても開けていないので、ここで止めるしかない。
+        // 理由（属性の食い違いなど）を落とすと原因が分からなくなる
+        throw new RuntimeError(e.message, line);
       }
       throw e;
     }
@@ -2555,7 +2570,12 @@ export class Interpreter {
   }
 
   private indexOf(v: Variable, ref: Ref, scope: Scope, line: number): number {
-    if (!v.dims || ref.subscripts.length === 0) return 0;
+    if (ref.subscripts.length === 0) return 0;
+    if (!v.dims) {
+      // 添字を黙って捨てると、`x(7)` と `x(99)` が同じ 1 個の箱を指して
+      // 嘘の値を返す。配列でないものへの添字は断る
+      throw new RuntimeError(`${ref.name} は配列ではありません`, line);
+    }
     return this.flatIndex(
       v,
       ref.subscripts.map((e) =>

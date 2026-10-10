@@ -302,6 +302,42 @@ end m;`;
     const r = run("m: proc options(main); dcl a(3) fixed bin(31); a(5)=1; end m;");
     expect(r.error).toContain("範囲外");
   });
+
+  /**
+   * 配列でないものへの添字。
+   *
+   * 黙って添字を捨てると `x(7)` と `x(99)` が同じ 1 個の箱を指し、
+   * 書いた値がそのまま読めてしまう（= 嘘の値を返す）。
+   * 読み・書き・暗黙宣言の 3 経路すべてで断る。
+   */
+  describe("配列でないものへの添字は断る", () => {
+    it("代入でも断る", () => {
+      const r = run("m: proc options(main); dcl x fixed bin(31); x(7)=42; end m;");
+      expect(r.error).toContain("x は配列ではありません");
+    });
+
+    it("参照でも断る", () => {
+      const r = run(
+        "m: proc options(main); dcl x fixed bin(31); x=1; put list(x(1)); end m;",
+      );
+      expect(r.error).toContain("x は配列ではありません");
+    });
+
+    it("宣言していない名前でも断る（暗黙宣言はスカラ）", () => {
+      const r = run("m: proc options(main); q(3)=9; end m;");
+      expect(r.error).toContain("q は配列ではありません");
+    });
+
+    it("構造体の葉に付けた次元は配列として通る", () => {
+      const src = `m: proc options(main);
+  dcl 1 rec, 2 nm char(4), 2 a(3) fixed bin(15);
+  rec.a(1) = 11;
+  rec.a(3) = 33;
+  put edit(rec.a(1), rec.a(3))((2)f(4));
+end m;`;
+      expect(out(src)).toBe("  11  33\n");
+    });
+  });
 });
 
 describe("主手続きの引数", () => {

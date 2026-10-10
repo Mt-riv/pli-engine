@@ -291,6 +291,7 @@ file:///.../index.html#s=aGVsbG86IHByb2Mgb3B0aW9ucyhtYWluKTsK...
 | 症状 | 原因と対処 |
 |------|-----------|
 | `UNDEFINEDFILE（ファイル xxx）` | PL/I のファイル名と付随ファイルの名前が違う。`OPEN ... TITLE('data.txt')` で結び付ける |
+| `UNDEFINEDFILE …… INPUT と宣言したファイルを OUTPUT として使っています` | 宣言と使い方が逆。`dcl f file stream input;` なら `GET`、`output` なら `PUT` |
 | 入力を読むと途中で終わる | `ON ENDFILE` が無い。置くと続行できる |
 | 最後の 1 件が処理されない | ENDFILE の時機による。入力の末尾に空行を足す |
 | `%INCLUDE の xxx が見つかりません` | 付随ファイルの名前を確認する。`::: ` の後ろの綴りがそのまま名前 |

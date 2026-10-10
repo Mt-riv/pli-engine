@@ -329,6 +329,8 @@ PL/I のサブセットです。学習と検証には充分ですが、次は実
   `PASSWORD`、代替 PCB（`CHNG`）、MFS の EXIT ルーチン
   （詳細は [`docs/mfs.md`](docs/mfs.md) の「何を再現し、何を再現しないか」）
 - `AREA` / `OFFSET`、自己定義構造体（`REFER`）、`UNION`、`LABEL` 変数
+- 構造体の配列（`dcl 1 tbl(3), 2 nm char(4);`）。次元は葉に付けてください
+  （`dcl 1 rec, 2 nm(3) char(4);`）
 - 多重処理（`TASK` / `WAIT` / `EVENT`）
 - 浮動小数点は JavaScript の数値（表示は `FLOAT DEC(6)` 相当の桁）
 - ポインタは**アドレス値を持ちません**。確保した記憶域への参照なので、

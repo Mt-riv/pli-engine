@@ -540,11 +540,46 @@ class Parser {
   private parseDeclare(): Stmt {
     const line = this.next().line; // DECLARE / DCL
     const items: DeclItem[] = [];
+    /** 各項目の先頭の位置。構造体の次元を断るときの診断に使う。 */
+    const where: { line: number; col: number; file?: string }[] = [];
     do {
+      const t = this.peek(0);
+      where.push({ line: t.line, col: t.col, ...(t.file === undefined ? {} : { file: t.file }) });
       items.push(this.parseDeclItem());
     } while (this.eat("comma"));
     this.expect("semi", "セミコロン");
+    this.rejectGroupDimension(items, where);
     return { kind: "declare", items, line };
+  }
+
+  /**
+   * 構造体そのものに付けた次元（構造体の配列）を断る。
+   *
+   *   dcl 1 tbl(3), 2 nm char(4);   ← これ
+   *
+   * 平坦化（`declare.ts`）が中間レベルの次元を葉へ渡さないので、
+   * 受けてしまうと葉が次元を持たない 1 個の箱になり、
+   * `tbl.nm(1)` から `tbl.nm(3)` までが全部同じ箱を指す。
+   * **黙って嘘の値を返す**のが一番たちが悪いため、宣言の時点で断る。
+   */
+  private rejectGroupDimension(
+    items: DeclItem[],
+    where: { line: number; col: number; file?: string }[],
+  ): void {
+    for (const [i, item] of items.entries()) {
+      if (item.level === undefined || item.dims === undefined) continue;
+      const next = items[i + 1];
+      // 次がより深いレベルなら、この項目は子を持つ（= 構造体そのもの）
+      if (next?.level === undefined || next.level <= item.level) continue;
+      const w = where[i] ?? { line: 0, col: 0 };
+      throw new ParseError(
+        `構造体そのものに付けた次元は未実装です（構造体の配列）。` +
+          `${item.names[0] ?? ""} の次元を葉の項目へ移してください`,
+        w.line,
+        w.col,
+        w.file,
+      );
+    }
   }
 
   private parseDeclItem(): DeclItem {

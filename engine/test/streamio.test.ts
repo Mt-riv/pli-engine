@@ -332,6 +332,101 @@ end p;
     const r = runProgram(src, { host });
     expect(r.diagnostics[0]?.message).toContain("既に開かれています");
   });
+
+  /**
+   * 宣言した用途と食い違う使い方。
+   *
+   * 暗黙 OPEN が渡すのは「今の使い方」（PUT なら output）なので、
+   * それを宣言より強く効かせると `INPUT` と宣言したファイルへの `PUT` が
+   * 「出力で開く」になり、**中身を黙って破壊する**。
+   * PL/I では属性の食い違いは UNDEFINEDFILE。
+   */
+  describe("宣言した用途と食い違えば UNDEFINEDFILE", () => {
+    it("INPUT のファイルへ PUT すると断り、中身を壊さない", () => {
+      const host = new MemoryHost({ INP: "important data\n" });
+      const src = `p: proc options(main);
+  dcl inp file stream input;
+  put file(inp) list('CLOBBER');
+end p;
+`;
+      const r = runProgram(src, { host });
+      expect(r.ok).toBe(false);
+      expect(r.diagnostics[0]?.message).toContain("UNDEFINEDFILE");
+      expect(r.diagnostics[0]?.message).toContain(
+        "INPUT と宣言したファイルを OUTPUT として使っています",
+      );
+      expect(host.get("INP")).toBe("important data\n");
+    });
+
+    it("明示 OPEN でも断る", () => {
+      const host = new MemoryHost({ INP: "important data\n" });
+      const src = `p: proc options(main);
+  dcl inp file stream input;
+  open file(inp) output;
+end p;
+`;
+      const r = runProgram(src, { host });
+      expect(r.ok).toBe(false);
+      expect(r.diagnostics[0]?.message).toContain("UNDEFINEDFILE");
+      expect(host.get("INP")).toBe("important data\n");
+    });
+
+    it("ON UNDEFINEDFILE を置けばそこへ回る", () => {
+      const host = new MemoryHost({ INP: "x\n" });
+      const src = `p: proc options(main);
+  dcl inp file stream input;
+  on undefinedfile(inp) put list('CAUGHT');
+  put file(inp) list('CLOBBER');
+end p;
+`;
+      const r = runProgram(src, { host });
+      expect(r.stdout).toContain("CAUGHT");
+      expect(host.get("INP")).toBe("x\n");
+    });
+
+    it("UPDATE と宣言したファイルは読みにも書きにも使える", () => {
+      // RECORD UPDATE は READ（input）と REWRITE（update）の両方を通る。
+      // どちらも食い違いにしてはいけない
+      const host = new MemoryHost({ "U.TXT": "aaa\nbbb\n" });
+      const src = `p: proc options(main);
+  dcl f file record update env(f recsize(3));
+  dcl rec char(3);
+  open file(f) update title('U.TXT');
+  read file(f) into(rec);
+  rec = 'xxx';
+  rewrite file(f) from(rec);
+  close file(f);
+end p;
+`;
+      const r = runProgram(src, { host });
+      expect(r.diagnostics).toEqual([]);
+      expect(host.get("U.TXT")).toBe("xxx\nbbb\n");
+    });
+
+    it("用途を宣言していなければ、使い方で決まる（従来どおり）", () => {
+      const host = new MemoryHost();
+      const src = `p: proc options(main);
+  dcl f file stream;
+  put file(f) list('OK');
+  close file(f);
+end p;
+`;
+      const r = runProgram(src, { host });
+      expect(r.ok).toBe(true);
+      expect(host.get("F")).toContain("OK");
+    });
+
+    it("存在しないファイルのときは TITLE を確かめる案内のまま", () => {
+      const src = `p: proc options(main);
+  dcl r file stream input;
+  dcl c char(8);
+  get file(r) list(c);
+end p;
+`;
+      const r = runProgram(src, { host: new MemoryHost() });
+      expect(r.diagnostics[0]?.message).toContain("ファイル名と TITLE");
+    });
+  });
 });
 
 describe("LINESIZE / PAGE / LINE", () => {
