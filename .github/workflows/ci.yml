@@ -70,7 +70,9 @@ jobs:
       - name: 拡張のバンドル
         run: npm run build
       - name: vsix を作る
-        run: npx @vscode/vsce package --out pli-lang.vsix
+        # 出力名を指定しない。`pli-lang-<版>.vsix` になるので、
+        # リリースへそのまま添付できる（手元でビルドしたものを配らないため）
+        run: npx @vscode/vsce package
       - name: 出荷物に runtime 依存の脆弱性が無いこと
         run: npm audit --omit=dev --audit-level=low
       # リリースに添付する資産を、作者のローカルではなく CI で作れるようにする。
@@ -78,5 +80,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: vsix
-          path: vscode-pli/pli-lang.vsix
+          path: vscode-pli/*.vsix
           if-no-files-found: error
