@@ -160,7 +160,7 @@ npm run build   # esbuild で dist/extension.js にバンドル（エンジン�
 npx @vscode/vsce package
 ```
 
-生成された `.vsix` は `code --install-extension pli-lang-0.2.0.vsix` で導入できる。
+生成された `.vsix` は `code --install-extension pli-lang-0.3.0.vsix` で導入できる。
 
 ## ライセンス
 
