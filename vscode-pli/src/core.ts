@@ -5,7 +5,11 @@
 
 import {
   lint,
+  loadMfs,
+  parseKeys,
+  playKeys,
   runProgram,
+  transcript,
   isTestFileName,
   isTestSource,
   runTestSource,
@@ -251,6 +255,71 @@ export function runForEditor(
     result,
     report: parts.join("\n"),
     diagnostics: toEditorDiagnostics(source, result.diagnostics),
+  };
+}
+
+export interface ScreenOutcome {
+  /** 出力パネルに出す本文（画面像と通知と診断）。 */
+  text: string;
+  ok: boolean;
+  diagnostics: EditorDiagnostic[];
+}
+
+/**
+ * 画面入出力（MFS）を台本どおりに動かす。
+ *
+ * VSCode には端末が無いので、**画面像をテキストで出す**。
+ * 台本の書き方はエンジン側（`src/tm/keys.ts`）と同じで、
+ * CLI の `pli --keys` ともゴールデンテストとも同じものを使う。
+ */
+export function runScreenForEditor(
+  source: string,
+  fileName: string,
+  opts: CheckOptions & {
+    /** 書式定義（ファイル名 → 中身）。 */
+    mfs: Record<string, string>;
+    /** 台本の中身と、その名前（誤りの報告に使う）。 */
+    keys: string;
+    keysName: string;
+  },
+): ScreenOutcome {
+  const head = `--- ${fileName} ---`;
+  if (opts.psb === undefined || opts.psb === "") {
+    return {
+      text: `${head}\n画面入出力には PSB が要ります（設定 pli.dli.psb に入出力 PCB を含む PSB を書いてください）`,
+      ok: false,
+      diagnostics: [],
+    };
+  }
+  let steps;
+  try {
+    const played = playKeys({
+      source,
+      library: loadMfs(opts.mfs),
+      host: opts.host!,
+      psb: opts.psb,
+      script: parseKeys(opts.keys, opts.keysName),
+      limits: {
+        maxSteps: opts.maxSteps ?? 5_000_000,
+        maxOutputBytes: opts.maxOutputBytes ?? 1_000_000,
+      },
+    });
+    steps = played.steps;
+  } catch (e) {
+    // 書式定義と台本の誤りは、どのファイルの何行目かを持っている
+    return { text: `${head}\n${(e as Error).message}`, ok: false, diagnostics: [] };
+  }
+  const diagnostics = steps.flatMap((s) =>
+    toEditorDiagnostics(source, s.step.diagnostics),
+  );
+  const failed = steps.some((s) => s.step.diagnostics.length > 0);
+  const notices = steps.filter((s) => s.step.notice !== undefined).length;
+  const flags = [failed ? "失敗" : "成功", `往復 ${steps.length - 1} 回`];
+  if (notices > 0) flags.push(`通知 ${notices} 件`);
+  return {
+    text: [head, transcript(steps).replace(/\n$/, ""), "", flags.join(" / ")].join("\n"),
+    ok: !failed,
+    diagnostics,
   };
 }
 

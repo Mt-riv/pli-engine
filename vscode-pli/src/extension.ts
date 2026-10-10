@@ -9,6 +9,7 @@ import * as vscode from "vscode";
 import {
   checkSyntax,
   runForEditor,
+  runScreenForEditor,
   runTestsForEditor,
   looksLikeTestFile,
   snippetCompletions,
@@ -16,8 +17,8 @@ import {
 } from "./core.js";
 import { isFragmentFileName, RULES } from "../../engine/src/index.js";
 import type { FileMode, PliFile, PliHost, RuleSetting } from "../../engine/src/index.js";
-import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import {
   contain,
   isPlainName,
@@ -366,6 +367,72 @@ export function activate(context: vscode.ExtensionContext): void {
     ]);
   };
 
+  /**
+   * 画面入出力（MFS）を台本どおりに動かす。
+   *
+   * VSCode には端末が無いので、画面像をテキストで出力パネルに出す。
+   * 書式定義（`*.mfs`）と台本（`*.keys`）はソースと同じ場所から読む。
+   * 編集中で未保存のものはその内容を使う（保存しないと古い定義で
+   * 動いてしまい、直したはずの画面が変わらない）。
+   */
+  const runScreen = async (): Promise<void> => {
+    const doc = activeDocument();
+    if (!doc) return;
+    if (doc.isUntitled) {
+      void vscode.window.showWarningMessage(
+        "画面入出力には保存したファイルが要ります（書式定義と台本を同じ場所から読みます）",
+      );
+      return;
+    }
+    const dir = dirname(doc.fileName);
+    const read = (path: string): string => {
+      for (const open of vscode.workspace.textDocuments) {
+        if (!open.isUntitled && open.uri.fsPath === path) return open.getText();
+      }
+      return readFileSync(path, "utf8");
+    };
+
+    const mfs: Record<string, string> = {};
+    for (const f of readdirSync(dir)) {
+      if (f.toLowerCase().endsWith(".mfs")) mfs[f] = read(join(dir, f));
+    }
+    if (Object.keys(mfs).length === 0) {
+      void vscode.window.showWarningMessage(`書式定義（*.mfs）が ${dir} にありません`);
+      return;
+    }
+
+    let keysPath = doc.fileName.replace(/\.[^.]+$/, ".keys");
+    if (!existsSync(keysPath)) {
+      const found = readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".keys"));
+      if (found.length === 0) {
+        void vscode.window.showWarningMessage(
+          `端末の台本（*.keys）が ${dir} にありません`,
+        );
+        return;
+      }
+      const pick =
+        found.length === 1
+          ? found[0]
+          : await vscode.window.showQuickPick(found, { title: "PL/I: 端末の台本" });
+      if (pick === undefined) return;
+      keysPath = join(dir, pick);
+    }
+
+    const outcome = runScreenForEditor(doc.getText(), doc.fileName, {
+      ...limits(doc),
+      mfs,
+      keys: read(keysPath),
+      keysName: basename(keysPath),
+    });
+    output.clear();
+    output.appendLine(outcome.text);
+    output.show(true);
+    diagnostics.set(doc.uri, [
+      ...staticDiagnostics(doc),
+      ...outcome.diagnostics.map(toVsDiagnostic),
+    ]);
+  };
+
   const execute = async (args: string[]): Promise<void> => {
     const doc = activeDocument();
     if (!doc) return;
@@ -417,6 +484,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("pli.run", () => execute([])),
     vscode.commands.registerCommand("pli.runTests", () => runTests()),
+    vscode.commands.registerCommand("pli.runScreen", () => runScreen()),
     vscode.commands.registerCommand("pli.runWithArgs", async () => {
       const input = await vscode.window.showInputBox({
         title: "PL/I: 引数",

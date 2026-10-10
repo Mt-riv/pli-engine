@@ -68,6 +68,11 @@
         "command": "pli.runTests",
         "title": "PL/I: テストを実行",
         "icon": "$(beaker)"
+      },
+      {
+        "command": "pli.runScreen",
+        "title": "PL/I: 画面を動かす（MFS）",
+        "icon": "$(device-desktop)"
       }
     ],
     "menus": {

@@ -101,3 +101,5 @@ export { julianDate, timeOfDay, TmRuntime, TmUnsupported } from "./tm/tm.js";
 export type { InputMessage, IoPcbState, OutputMessage, TmOptions } from "./tm/tm.js";
 export { Session, firstWord } from "./tm/session.js";
 export type { SessionOptions, SessionStep } from "./tm/session.js";
+export { KeyScriptError, parseKeys, playKeys, transcript } from "./tm/keys.js";
+export type { KeyScript, KeyStep, Playback } from "./tm/keys.js";
