@@ -52,6 +52,16 @@ export interface MacroStmt {
    * 両方を持つ。
    */
   positional: string[];
+  /**
+   * 同じものを、**書かなかった位置を空文字で残して**並べたもの。
+   *
+   * アセンブラのマクロ命令はカンマを続けて位置オペランドを省ける。
+   * `DO 3,,5` は「回数 3、行の増分は既定、桁の増分 5」で、
+   * 空を落とすと 5 が**行の増分**に入って項目が縦に並んでしまう。
+   * いっぽう `MFLD ,LTH=2`（場所取り）は空を落とす方が扱いやすいので、
+   * 両方を持って使う側が選ぶ。
+   */
+  positionalWithHoles: string[];
 }
 
 /** 継続行の印が入る桁（1 始まり）。 */
@@ -88,7 +98,7 @@ function takeWord(text: string, from: number): { word: string; next: number } {
  * 括弧の外のカンマで区切る。
  * `NAME=(A,SEQ,U),BYTES=5` を 2 つのオペランドに分けるのに使う。
  */
-export function splitTop(text: string): string[] {
+export function splitTop(text: string, keepEmpty = false): string[] {
   const out: string[] = [];
   let depth = 0;
   let quoted = false;
@@ -108,7 +118,7 @@ export function splitTop(text: string): string[] {
     }
   }
   out.push(text.slice(start));
-  return out.filter((s) => s.length > 0);
+  return keepEmpty ? out : out.filter((s) => s.length > 0);
 }
 
 /**
@@ -184,12 +194,31 @@ export function readMacros(text: string, file: string): MacroStmt[] {
     const operandWord = takeWord(body, opWord.next);
     // operandWord の後ろは注釈なので読まない
 
+    // オペランド欄がカンマで終わっているのに、空白を挟んで続きがある。
+    // `takeWord` は最初の空白で切って残りを注釈として捨てるので、
+    // `DFLD POS=(1,2),LTH=5, ATTR=(ALPHA,PROT)` の ATTR= が
+    // **黙って消えて既定（打ち込める項目）になっていた**
+    if (operandWord.word.endsWith(",") && body.slice(operandWord.next).trim() !== "") {
+      throw new DefError(
+        `オペランドがカンマで終わっていますが、空白を挟んで続きがあります` +
+          `（${body.slice(operandWord.next).trim()}）。` +
+          `カンマの後に空白を入れず続けるか、72 桁目に継続の印を付けてください`,
+        file,
+        line,
+      );
+    }
+
     const operands = new Map<string, string>();
     const positional: string[] = [];
-    for (const part of splitTop(operandWord.word)) {
+    const positionalWithHoles: string[] = [];
+    for (const part of splitTop(operandWord.word, true)) {
       const eq = keyValueSplit(part);
-      if (eq < 0) positional.push(part.trim());
-      else operands.set(part.slice(0, eq).trim().toUpperCase(), part.slice(eq + 1).trim());
+      if (eq < 0) {
+        positionalWithHoles.push(part.trim());
+        if (part.length > 0) positional.push(part.trim());
+      } else {
+        operands.set(part.slice(0, eq).trim().toUpperCase(), part.slice(eq + 1).trim());
+      }
     }
     out.push({
       line,
@@ -198,6 +227,7 @@ export function readMacros(text: string, file: string): MacroStmt[] {
       operands,
       flags: positional.map((p) => p.toUpperCase()),
       positional,
+      positionalWithHoles,
     });
   }
   return out;

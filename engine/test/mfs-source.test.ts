@@ -194,6 +194,54 @@ ITEM     DFLD  POS=(5,10),LTH=6
       ),
     ).toThrow(/DO の入れ子は未実装/);
   });
+
+  /**
+   * 位置オペランドを**カンマを続けて**省く書き方。
+   *
+   * アセンブラのマクロ命令の常識的な書き方で、`DO 3,,5` は
+   * 「回数 3 / 行の増分は既定 / 桁の増分 5」。空を落として詰めると
+   * 5 が行の増分に入り、**横に並べたい項目が縦に並ぶ**。
+   * 誤りも出ないので気づけない。
+   */
+  it("DO 3,,5 は桁の増分（カンマを続けて位置を省ける）", () => {
+    const fields = (doLine: string) =>
+      parseMfs(
+        `F        FMT
+         DEV   TYPE=3270-A2
+         DIV   TYPE=INOUT
+         DPAGE
+         DO    ${doLine}
+A        DFLD  POS=(4,10),LTH=4
+         ENDDO
+         FMTEND
+`,
+        "f.mfs",
+      ).formats[0]!.dpages[0]!.dflds.map((d) => [d.name, d.line, d.col]);
+
+    expect(fields("3,,5")).toEqual([
+      ["A01", 4, 10],
+      ["A02", 4, 15],
+      ["A03", 4, 20],
+    ]);
+    // 0 を明示したときと同じ
+    expect(fields("3,0,5")).toEqual(fields("3,,5"));
+    // 行の増分だけを書いた形は従来どおり
+    expect(fields("2,1")).toEqual([
+      ["A01", 4, 10],
+      ["A02", 5, 10],
+    ]);
+  });
+
+  it("位置オペランドが 4 つ以上あれば断る", () => {
+    expect(() =>
+      parseMfs(
+        `F        FMT\n         DEV   TYPE=3270-A2\n         DIV   TYPE=INOUT\n` +
+          `         DPAGE\n         DO    3,1,0,9\nA        DFLD  POS=(4,10),LTH=4\n` +
+          `         ENDDO\n         FMTEND\n`,
+        "f.mfs",
+      ),
+    ).toThrow(/位置オペランドは 3 つまで/);
+  });
 });
 
 describe("断るもの", () => {
@@ -262,6 +310,47 @@ describe("断るもの", () => {
       expect((e as MfsDefError).file).toBe("x.mfs");
       expect((e as MfsDefError).line).toBe(2);
     }
+  });
+});
+
+/**
+ * オペランド欄の切れ目。
+ *
+ * アセンブラのオペランド欄は空白で終わり、その後ろは注釈。
+ * カンマで終わっているのに空白を挟んで続きがあるのは不完全な文で、
+ * 黙って捨てると**書いた指定が効かない**。
+ * `ATTR=` が消えると見出しのつもりの固定文字が打ち込める項目になる。
+ */
+describe("カンマの後に空白を入れた指定", () => {
+  it("黙って捨てずに断る", () => {
+    expect(() =>
+      parseMfs(
+        `G        FMT\n         DEV   TYPE=3270-A2\n         DIV   TYPE=INOUT\n` +
+          `         DPAGE\nB        DFLD  POS=(1,2),LTH=5, ATTR=(ALPHA,PROT)\n` +
+          `         FMTEND\n`,
+        "g.mfs",
+      ),
+    ).toThrow(/カンマで終わっていますが/);
+  });
+
+  it("空白を入れなければ従来どおり効く", () => {
+    const d = parseMfs(
+      `G        FMT\n         DEV   TYPE=3270-A2\n         DIV   TYPE=INOUT\n` +
+        `         DPAGE\nB        DFLD  POS=(1,2),LTH=5,ATTR=(ALPHA,PROT)\n` +
+        `         FMTEND\n`,
+      "g.mfs",
+    ).formats[0]!.dpages[0]!.dflds[0]!;
+    expect(d.attr.protect).toBe(true);
+  });
+
+  it("オペランドの後ろの注釈は従来どおり読み飛ばす", () => {
+    const d = parseMfs(
+      `G        FMT\n         DEV   TYPE=3270-A2\n         DIV   TYPE=INOUT\n` +
+        `         DPAGE\nB        DFLD  POS=(1,2),LTH=5   ここは注釈\n` +
+        `         FMTEND\n`,
+      "g.mfs",
+    ).formats[0]!.dpages[0]!.dflds[0]!;
+    expect(d.length).toBe(5);
   });
 });
 

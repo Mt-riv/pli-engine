@@ -515,7 +515,16 @@ function applyMfld(c: Context, s: MacroStmt, suffix: string): void {
   for (const key of ["EXIT", "HDRCTL", "SCA", "DFLD"]) {
     if (s.operands.has(key)) fail(c, s, `MFLD ${key}= は未実装です`);
   }
-  if (c.seg === undefined) applySeg(c, { ...s, op: "SEG", operands: new Map(), flags: [], positional: [] });
+  if (c.seg === undefined) {
+    applySeg(c, {
+      ...s,
+      op: "SEG",
+      operands: new Map(),
+      flags: [],
+      positional: [],
+      positionalWithHoles: [],
+    });
+  }
   const seg = c.seg!;
   const source = mfldSource(c, s, suffix);
 
@@ -562,16 +571,27 @@ function startDo(c: Context, s: MacroStmt): void {
   if (bound !== undefined && bound.toUpperCase() !== "LINE") {
     fail(c, s, `DO BOUND=${bound} は未実装です（BOUND=LINE だけを扱う）`);
   }
-  const countText = s.positional[0] ?? opt(s, "COUNT");
+  // 位置オペランドは**穴を残した並び**から取る。`DO 3,,5` は
+  // 「回数 3 / 行の増分は既定 / 桁の増分 5」。空を落とすと 5 が
+  // 行の増分に入り、横に並べたい項目が縦に並ぶ（しかも誤りは出ない）
+  const ops = s.positionalWithHoles;
+  const at = (i: number): string | undefined => {
+    const v = ops[i];
+    return v === undefined || v === "" ? undefined : v;
+  };
+  const countText = at(0) ?? opt(s, "COUNT");
   if (countText === undefined) fail(c, s, "DO 文に繰り返し回数がありません");
   const count = int(c, s, "DO の回数", countText);
   if (count > 99) fail(c, s, `DO の回数 ${count} は 99 を超えます`);
+  if (ops.length > 3) {
+    fail(c, s, `DO の位置オペランドは 3 つまでです（回数, 行の増分, 桁の増分）`);
+  }
   const suffixText = opt(s, "SUF") ?? "01";
   const suffix = int(c, s, "DO の SUF", suffixText);
   c.loop = {
     count,
-    lineInc: s.positional[1] === undefined ? 0 : Number(s.positional[1]),
-    colInc: s.positional[2] === undefined ? 0 : Number(s.positional[2]),
+    lineInc: at(1) === undefined ? 0 : Number(at(1)),
+    colInc: at(2) === undefined ? 0 : Number(at(2)),
     suffix,
     stmts: [],
   };
