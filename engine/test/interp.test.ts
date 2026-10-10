@@ -389,6 +389,33 @@ describe("PUT EDIT", () => {
       "  1    2\n",
     );
   });
+
+  /**
+   * データを使い切った後の後処理は、書式リストの**残り**だけを見る。
+   *
+   * `fi % fmt.length` から始めると、最後のデータ項目が書式リストの
+   * 末尾だったときに 0 へ巻き戻り、先頭の制御項目を二重に適用する。
+   * `(skip, a)` で余分な改行が入っていた。
+   */
+  it("データを使い切った後、書式の先頭へ巻き戻らない", () => {
+    const src = `m: proc options(main);
+  put edit('A')(skip, a(1));
+  put edit('B')(skip, a(1));
+  put edit('C')(a(1), skip);
+  put edit('D')(a(1));
+end m;`;
+    // SKIP が行を送るので 1 行目は空。C は B と同じ行の続きに置かれる
+    // （PL/I のストリーム出力は PUT をまたいで位置が続く）
+    expect(out(src)).toBe("\nA\nBC\nD\n");
+  });
+
+  it("後処理で COLUMN が二重に効かない", () => {
+    const src = `m: proc options(main);
+  put edit('A')(column(5), a(1));
+  put edit('B')(a(1));
+end m;`;
+    expect(out(src)).toBe("    AB\n");
+  });
 });
 
 describe("データリスト中の配列", () => {

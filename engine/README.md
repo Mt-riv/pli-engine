@@ -862,9 +862,22 @@ const r = runProgram(source, {
 // r.ok / r.stdout / r.diagnostics[] / r.truncated / r.durationMs
 ```
 
-診断は `{ severity, phase, line, col?, message }` の配列で返る。
-`phase` は `preprocess` / `lex` / `parse` / `runtime` のいずれか。
+診断は `{ severity, phase, line, col?, file?, callerLines?, message }` の
+配列で返る。`phase` は `preprocess` / `lex` / `parse` / `runtime` のいずれか。
+`file` は `%INCLUDE` した先で起きた誤りにだけ、`callerLines` は手続きの中で
+起きた実行時の誤りにだけ入る。
+
+**`runProgram` は例外を投げない。** 必ず結果オブジェクトを返す
+（ブラウザでは UI 側の未処理例外になってしまうため）。
 
 ブラウザには別プロセスが無いため、**無限ループはエンジン側で止める**。
 文の数を数えるだけでなく、本体が空のループ（`do while('1'b); end;`）でも
 止まるようループの周回でも数えている。
+
+**1 文の中の回数にも上限を効かせる。** `maxSteps` は文の数しか数えないので、
+`put skip(1000000000)` や `put edit(x)(x(200000000),f(1))` には効かない。
+`maxOutputBytes` は確保した後の出力段でしか効かない。そのため
+`SKIP` / `LINE` の行数、`X` / `COLUMN` / `E` の幅、書式の反復係数と
+展開後の項目数を、**確保する前に** `maxStringLength` と突き合わせている
+（`checkSpan`）。`RECSIZE(0)` は `splitRecord` が 1 歩も進まず
+無限ループになるので、構文解析の時点で断る。

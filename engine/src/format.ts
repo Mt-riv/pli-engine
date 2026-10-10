@@ -247,6 +247,10 @@ export class ListWriter {
   /** 組み立てた全文。 */
   text(): string {
     if (this.lines.length === 0 && this.cur === "") return "";
-    return [...this.lines, this.cur].join("\n");
+    // spread を使うと、行数が多いときに `RangeError: Invalid array length`
+    // が出る。`runProgram` は「例外を投げず必ず結果オブジェクトを返す」と
+    // 約束しているので、ここで落ちてはいけない
+    if (this.lines.length === 0) return this.cur;
+    return `${this.lines.join("\n")}\n${this.cur}`;
   }
 }

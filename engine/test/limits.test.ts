@@ -135,6 +135,79 @@ describe("CHAR VARYING の最大長", () => {
   });
 });
 
+/**
+ * 1 文の中の回数。
+ *
+ * `maxSteps` は**文の数**しか数えないので、1 文の中で何千万回も繰り返す
+ * 書式には効かない。`maxOutputBytes` も確保した後の出力段でしか効かない。
+ * 確保する前に止めないと、数百 MB を一度に取ったり、
+ * `runProgram` が生の `RangeError` を投げたりする。
+ */
+describe("1 文の中の回数と幅", () => {
+  const limit = { maxStringLength: 10_000 };
+
+  it("runProgram は例外を投げない（必ず結果オブジェクトを返す）", () => {
+    // 直す前は ListWriter.text() の spread が
+    // `RangeError: Invalid array length` を投げ、run.ts の約束を破っていた
+    let r;
+    expect(() => {
+      r = runProgram(MAIN("  put skip(1000000000) list('x');"), limit);
+    }).not.toThrow();
+    expect(r!.ok).toBe(false);
+  });
+
+  it("SKIP の行数", () => {
+    const r = runProgram(MAIN("  put skip(1000000) list('x');"), limit);
+    expect(r.ok).toBe(false);
+    expect(r.diagnostics[0]?.message).toMatch(/文字列の長さ/);
+  });
+
+  it("LINE の行", () => {
+    const r = runProgram(MAIN("  put line(1000000) list('x');"), limit);
+    expect(r.ok).toBe(false);
+  });
+
+  it("X 書式の幅", () => {
+    const r = runProgram(MAIN("  put edit('a')(a, x(2000000000));"), limit);
+    expect(r.ok).toBe(false);
+  });
+
+  it("COLUMN 書式の桁", () => {
+    const r = runProgram(MAIN("  put edit('a')(a, column(2000000000));"), limit);
+    expect(r.ok).toBe(false);
+  });
+
+  it("書式の反復係数", () => {
+    const r = runProgram(MAIN("  put edit('x')((30000000)a(1));"), limit);
+    expect(r.ok).toBe(false);
+  });
+
+  it("E 書式の小数桁は名指しで断る（生の RangeError にしない）", () => {
+    const r = runProgram(MAIN("  put edit(1)(e(200,150));"));
+    expect(r.ok).toBe(false);
+    expect(r.diagnostics[0]?.message).toMatch(/E 書式の小数桁/);
+  });
+
+  it("BIT の宣言長も上限で見る", () => {
+    const r = runProgram(MAIN("  dcl b bit(600000000);"));
+    expect(r.ok).toBe(false);
+    expect(r.diagnostics[0]?.message).toMatch(/文字列の長さ/);
+  });
+
+  it("RECSIZE(0) は構文の誤りにする（無限ループになる）", () => {
+    const r = runProgram(
+      MAIN("  dcl f file record input env(f recsize(0));\n  dcl c char(4);\n  read file(f) into(c);"),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.diagnostics[0]?.message).toMatch(/RECSIZE は 1 以上/);
+  });
+
+  it("ふつうの幅は通る", () => {
+    const r = runProgram(MAIN("  put edit('a')(a, x(5), column(20), a(1));"), limit);
+    expect(r.ok).toBe(true);
+  });
+});
+
 describe("長い値を診断に載せるとき", () => {
   it("メッセージを切る（全文を載せるとログが埋まる）", () => {
     const r = runProgram(

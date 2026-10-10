@@ -731,7 +731,19 @@ class Parser {
                   this.expect("lparen", "開き括弧");
                   const n = this.expect("number", "数値");
                   this.expect("rparen", "閉じ括弧");
-                  if (e.upper === "RECSIZE") fileRecordSize = Number(n.text);
+                  if (e.upper === "RECSIZE") {
+                    const size = Number(n.text);
+                    // 0 以下だと `splitRecord` が 1 歩も進まず無限ループになる
+                    if (!Number.isInteger(size) || size < 1) {
+                      throw new ParseError(
+                        `RECSIZE は 1 以上の整数でなければなりません（${n.text}）`,
+                        n.line,
+                        n.col,
+                        n.file,
+                      );
+                    }
+                    fileRecordSize = size;
+                  }
                 } else if (e.upper === "V" || e.upper === "VB") {
                   fileVariable = true;
                 } else if (e.upper === "F" || e.upper === "FB") {

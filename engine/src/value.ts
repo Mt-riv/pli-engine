@@ -474,8 +474,10 @@ export function render(x: Value): string {
     case "bit":
       return x.v;
     case "float": {
-      // FLOAT DEC(p) は仮数 p 桁 + 4桁指数（' 3.50000E+0000' の形）
-      const digits = Math.max(1, x.p - 1);
+      // FLOAT DEC(p) は仮数 p 桁 + 4桁指数（' 3.50000E+0000' の形）。
+      // `toExponential` は 0..100 しか受けないので、ここで収める
+      // （超えると生の RangeError が診断になる）
+      const digits = Math.min(100, Math.max(1, x.p - 1));
       const s = x.v.toExponential(digits);
       const m = /^(-?[\d.]+)e([+-])(\d+)$/.exec(s);
       if (!m) return s;

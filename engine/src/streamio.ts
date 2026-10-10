@@ -270,6 +270,9 @@ export class StreamFile {
  * こうすると、改行の無いファイルでは実機と同じ結果になる。
  */
 function splitRecord(line: string, size: number): string[] {
+  // 0 以下では 1 歩も進まない。構文解析で断っているが、
+  // ここを通る経路が増えたときに無限ループへ落ちないようにする
+  if (size < 1) return [line];
   if (line.length <= size) return [line];
   const out: string[] = [];
   for (let i = 0; i < line.length; i += size) out.push(line.slice(i, i + size));

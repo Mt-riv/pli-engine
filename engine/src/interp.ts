@@ -547,6 +547,21 @@ export class Interpreter {
     }
   }
 
+  /**
+   * 書式の幅・桁・行数を確かめる。
+   *
+   * `maxSteps` は**文の数**しか数えないので、1 文の中の回数には効かない。
+   * `put edit(x)(x(200000000),f(1))` は 200MB の文字列を一度に確保し、
+   * `put skip(1000000000)` は配列の上限を超えて生の `RangeError` を漏らす。
+   * 確保する前に止める。
+   */
+  private checkSpan(n: number, what: string, line: number): void {
+    if (!Number.isFinite(n)) {
+      throw new RuntimeError(`${what}が数になりません`, line);
+    }
+    this.checkLength(Math.max(0, Math.trunc(n)), line);
+  }
+
   /** 文字列の長さを確かめる。VARYING は宣言の長さを超えて伸びるため。 */
   private checkLength(n: number, line: number): void {
     const limit = this.opts.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH;
@@ -1679,7 +1694,12 @@ export class Interpreter {
       }
       return;
     }
-    if (item.attr.type === "char" && item.attr.length !== undefined) {
+    // 宣言した長さ。BIT も同じ上限で見る（CHAR だけを見ていたので
+    // `dcl b bit(600000000);` が生の `Invalid string length` を漏らしていた）
+    if (
+      (item.attr.type === "char" || item.attr.type === "bit") &&
+      item.attr.length !== undefined
+    ) {
       this.checkLength(item.attr.length, line);
     }
     for (const name of item.names) {
@@ -1819,6 +1839,7 @@ export class Interpreter {
           const n = opt.count === undefined
             ? 1
             : Number(render(asFixed(this.eval(opt.count, scope, s.line), s.line)));
+          this.checkSpan(n, "SKIP の行数", s.line);
           w.skip(n);
           break;
         }
@@ -1828,6 +1849,7 @@ export class Interpreter {
         case "line": {
           // LINE(n): その行まで送る。既に過ぎていれば改ページする
           const at = Number(render(asFixed(this.eval(opt.at, scope, s.line), s.line)));
+          this.checkSpan(at, "LINE の行", s.line);
           if (w.lineNumber() > at) w.page();
           while (w.lineNumber() < at) w.skip();
           break;
@@ -1908,8 +1930,13 @@ export class Interpreter {
     for (const f of items) {
       if (f.kind === "repeat") {
         const n = Number(render(asFixed(this.eval(f.count, scope, line), line)));
+        this.checkSpan(n, "書式の反復係数", line);
+        const inner = this.flattenFormat(f.items, scope, line);
         for (let k = 0; k < n; k++) {
-          out.push(...this.flattenFormat(f.items, scope, line));
+          // 展開後の個数も数える。`((5000000) x(1), f(1))` は
+          // 反復係数 1 つでも 1000 万項目の配列になる
+          this.checkSpan(out.length + inner.length, "展開後の書式項目の数", line);
+          out.push(...inner);
         }
         continue;
       }
@@ -1949,16 +1976,20 @@ export class Interpreter {
         const v = values[vi++]!;
         this.emitEdit(v, f, scope, line, w);
       } else {
-        this.applyControl(f, num, w);
+        this.applyControl(f, num, w, line);
       }
       if (fi > fmt.length * (values.length + 1) + fmt.length) break;
     }
-    // データを使い切った後も、残りの書式のうち制御項目だけは適用する
-    // （PL/I は次のデータ項目を要求する書式に当たった時点で止める）
-    for (let k = fi % fmt.length; k < fmt.length; k++) {
+    // データを使い切った後も、**残り**の書式のうち制御項目だけは適用する
+    // （PL/I は次のデータ項目を要求する書式に当たった時点で止める）。
+    //
+    // `fi % fmt.length` から始めてはいけない。最後のデータ項目が書式リストの
+    // 末尾だったときに 0 へ巻き戻り、「残り」ではなく**先頭から**適用して
+    // しまう。`(skip, a)` で余分な改行が入っていた
+    for (let k = fi; k < fmt.length; k++) {
       const f = fmt[k]!;
       if (Interpreter.consumesData(f)) break;
-      this.applyControl(f, num, w);
+      this.applyControl(f, num, w, line);
     }
   }
 
@@ -1966,17 +1997,27 @@ export class Interpreter {
     f: Exclude<FlatFormat, DataFormat>,
     num: (e: Expr) => number,
     w: ListWriter,
+    line: number,
   ): void {
     switch (f.kind) {
-      case "x":
-        w.editX(num(f.width));
+      case "x": {
+        const n = num(f.width);
+        this.checkSpan(n, "X 書式の幅", line);
+        w.editX(n);
         return;
-      case "column":
-        w.column(num(f.at));
+      }
+      case "column": {
+        const at = num(f.at);
+        this.checkSpan(at, "COLUMN 書式の桁", line);
+        w.column(at);
         return;
-      case "fskip":
-        w.skip(f.count === undefined ? 1 : num(f.count));
+      }
+      case "fskip": {
+        const n = f.count === undefined ? 1 : num(f.count);
+        this.checkSpan(n, "SKIP 書式の行数", line);
+        w.skip(n);
         return;
+      }
       case "fpage":
         w.page();
         return;
@@ -2017,7 +2058,16 @@ export class Interpreter {
       }
       case "e": {
         const width = num(f.width);
+        this.checkSpan(width, "E 書式の幅", line);
         const p = f.decimals === undefined ? 6 : num(f.decimals) + 1;
+        // 仮数の桁は 10 進の最大精度までにする。これを超えると
+        // `toExponential` の生の RangeError が診断になっていた
+        if (p < 1 || p > MAX_DEC + 1) {
+          throw new RuntimeError(
+            `E 書式の小数桁は 0 から ${MAX_DEC} までです（${p - 1}）`,
+            line,
+          );
+        }
         const n = Number(render(asFixed(v, line)));
         w.editNumber(render({ t: "float", base: "dec", p, v: n }), width);
         return;
