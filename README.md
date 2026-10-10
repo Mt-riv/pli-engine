@@ -350,7 +350,7 @@ cd ../vscode-pli && npm ci && npm test  # VSCode を起動せずに動く
 ```
 
 出力書式と精度規則は `engine/test/golden/` に**バイト単位で**固定しています。
-期待値を取り直す道具は別リポジトリ（`pli-oracle`）にあり、
+期待値を取り直す道具は別リポジトリ（`pli-oracle`。非公開）にあり、
 このリポジトリのテストはそれが無くても動きます
 （詳細は [`engine/test/golden/README.md`](engine/test/golden/README.md)）。
 
