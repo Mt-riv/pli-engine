@@ -123,13 +123,10 @@ export function parsePicture(source: string): PictureSpec {
     }
 
     if (c === "Z" || c === "*") {
-      if (seenV) {
-        // 小数部のゼロ抑制は値全体がゼロのときだけ効く。
-        // 桁としては通常の数字と同じに扱う
-        positions.push({ kind: "digit", suppress: c === "Z" ? "blank" : "star" });
-      } else {
-        positions.push({ kind: "digit", suppress: c === "Z" ? "blank" : "star" });
-      }
+      // 小数部（`V` の後ろ）のゼロ抑制も、桁としては整数部と同じに扱う。
+      // 抑制が効くかどうかは下の `suppressUntil` が位置で決めるので、
+      // ここで `V` の前後を分ける必要はない
+      positions.push({ kind: "digit", suppress: c === "Z" ? "blank" : "star" });
       if (c === "*") fill = "*";
       countDigit();
       i++;
@@ -258,12 +255,10 @@ export function editPicture(spec: PictureSpec, value: FixedVal): string {
   let di = 0;
   let firstSignificant = -1; // 有効数字が現れた最初の位置
   let lastIntegerDigitPos = -1;
-  let digitIndexAt: number[] = [];
 
   spec.positions.forEach((pos, idx) => {
     if (pos.kind !== "digit") {
       out.push(null);
-      digitIndexAt.push(-1);
       return;
     }
     const d = digits[di]!;
@@ -271,7 +266,6 @@ export function editPicture(spec: PictureSpec, value: FixedVal): string {
     if (isInteger) lastIntegerDigitPos = idx;
     if (firstSignificant < 0 && d !== "0" && isInteger) firstSignificant = idx;
     out.push(d);
-    digitIndexAt.push(di);
     di++;
   });
 

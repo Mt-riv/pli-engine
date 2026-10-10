@@ -56,7 +56,7 @@ Extension を直しながら試す場合は、**`vscode-pli/` フォルダを VS
 | 引数付き実行 | `PL/I: 引数を指定して実行` |
 | テスト | `PL/I: テストを実行`（`Ctrl+Alt+T` / `Cmd+Alt+T`） |
 | 画面（MFS） | `PL/I: 画面を動かす（MFS）`。台本どおりに動かして画面像を出す |
-| Linter | 入力中に自動。15 規則 |
+| Linter | 入力中に自動。16 規則 |
 | Snippet | 43 本。`main` `dowhile` `getlist` などを入力して `Tab` |
 
 コマンドはすべてコマンドパレット（`Ctrl+Shift+P` / `Cmd+Shift+P`）から

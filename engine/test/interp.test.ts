@@ -679,6 +679,23 @@ describe("CEIL / FLOOR の結果精度", () => {
     expect(out("m: proc options(main); put list(ceil(-2.1)); end m;")).toContain("-2");
     expect(out("m: proc options(main); put list(floor(-2.1)); end m;")).toContain("-3");
   });
+
+  /**
+   * `TRUNC` も同じ規則。
+   *
+   * 整数化する 3 つが違う精度を返すと、同じ値を同じ向きに丸めているのに
+   * 出力幅が変わる。以前は `TRUNC` だけが元の精度を保っていて、
+   * `trunc(1.23456)` の幅が 9、`floor(1.23456)` が 5 だった。
+   */
+  it("trunc も ceil / floor と同じ幅になる", () => {
+    const w = (expr: string) =>
+      out(`m: proc options(main); put list(${expr}); end m;`).replace(/\n/g, "").length;
+    expect(w("trunc(1.23456)")).toBe(w("floor(1.23456)"));
+    expect(w("trunc(1.23456)")).toBe(w("ceil(1.23456)"));
+    // 値は変わらない（0 方向への切り捨て）
+    expect(out("m: proc options(main); put list(trunc(3.9)); end m;")).toContain("3");
+    expect(out("m: proc options(main); put list(trunc(-3.9)); end m;")).toContain("-3");
+  });
 });
 
 describe("計算条件が ON 単位を通ること", () => {

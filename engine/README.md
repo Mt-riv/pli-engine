@@ -17,7 +17,7 @@
 | 値・算術 `src/value.ts` | 完了 |
 | 評価器 `src/interp.ts` | 完了 |
 | 実行 API `src/run.ts` | 構造化された診断 |
-| Linter `src/lint.ts` | 15 規則。CLI 付き |
+| Linter `src/lint.ts` | 16 規則。CLI 付き |
 | ストリーム入出力 `src/streamio.ts` | ファイル表と入力カーソル |
 | `PICTURE` `src/picture.ts` | 数値編集 |
 | `BASED` 記憶域 | `interp.ts` / `value.ts` |
@@ -294,7 +294,9 @@ p が広がり、出力幅が合わなくなる。結果精度を直接構成す
 
 これ以外の条件名（`OVERFLOW` / `UNDERFLOW` / `STRINGRANGE` / `ENDPAGE`）に
 `ON` 単位を置いても構文は通るが、処理系がその条件を起こさないので
-**実行されない**。ここは未実装である。
+**実行されない**。ここは未実装である。README に書いてあるだけでは
+ソースを見て分からないので、Linter の `on-never-raised` が指摘する
+（`SIGNAL` で明示的に起こしているなら指摘しない）。
 
 `ON ... SYSTEM;` は既定動作へ戻す（それまでに置いた ON 単位の解除）。
 空の ON 単位を置くのとは違い、**復帰して続行しない**。

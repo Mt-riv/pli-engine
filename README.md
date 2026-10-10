@@ -114,7 +114,7 @@ if db_pcb.stat_code = '  ' then put list(seg_io);
 | 書いたコードを**テスト**する（PL/I で書くテストフレームワーク） | 両方 + CLI `npm run plitest` |
 | **階層型データベース（IMS/DB）**を読み書きする | 両方 + CLI `npm run pli -- x.pli --psb NAME` |
 | **3270 の画面（MFS）**を読み書きする | ブラウザ版の「端末」 + CLI `npm run pli -- x.pli --psb NAME --keys x.keys` + VSCode |
-| 怪しい書き方を**検査**する（Linter 15 規則） | 両方 + CLI `npm run plilint` |
+| 怪しい書き方を**検査**する（Linter 16 規則） | 両方 + CLI `npm run plilint` |
 | よく書く形を **Snippet** から入れる（43 本） | 両方 |
 
 対応している PL/I の範囲（内部の作りは [`engine/README.md`](engine/README.md)）:

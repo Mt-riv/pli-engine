@@ -10,7 +10,7 @@
 npm run plilint -- examples/tests          # ディレクトリを再帰的に
 npm run plilint -- a.pli --strict          # 警告も失敗として扱う
 npm run plilint -- a.pli --rule goto-outside-on-unit=off
-npm run plilint -- --list-rules            # 規則の一覧（全 15 件）と理由
+npm run plilint -- --list-rules            # 規則の一覧（全 16 件）と理由
 ```
 
 既定では **error が 1 件でもあれば終了コード 1**、警告だけなら 0。
@@ -25,7 +25,7 @@ npm run plilint -- --list-rules            # 規則の一覧（全 15 件）と�
 
 ## 規則
 
-重さは `error` / `warning` / `info` の 3 段階。`off` で止められる。全 15 件。
+重さは `error` / `warning` / `info` の 3 段階。`off` で止められる。全 16 件。
 
 ### correctness — 誤りか、誤りの元になる
 
@@ -45,6 +45,7 @@ npm run plilint -- --list-rules            # 規則の一覧（全 15 件）と�
 | `endfile-without-on` | warning | `ON ENDFILE` を置かずにファイルから読んでいる |
 | `free-then-use` | warning | `FREE` したポインタをそのまま使っている |
 | `dli-status-unchecked` | warning | DL/I を呼んだのにステータスコードを見ていない |
+| `on-never-raised` | warning | この処理系が起こさない条件に `ON` 単位を置いている |
 
 **`implicit-declaration` がこの Linter の主目的**である。PL/I は宣言の無い名前を
 暗黙に宣言する（`I`〜`N` で始まる名前は `FIXED BIN(15,0)`、それ以外は `FLOAT DEC(6)`）。
@@ -60,6 +61,19 @@ npm run plilint -- --list-rules            # 規則の一覧（全 15 件）と�
 `mixed-base-arithmetic` は実際に踏んだ落とし穴に対応する。基数が混ざると
 PL/I は BINARY に変換して計算するため、10 進で持っていた桁が落ちる。
 13 の階乗が FIXEDOVERFLOW になるのがその例。
+
+見るのは**小数が絡む混在**だけ。
+
+```pli
+dcl i fixed bin(15);
+i = 1;
+put list(i * 0.1);     /* 指摘する。0.1 を 2 進の尺度へ直すと端数が出る */
+if i = 10.5 then ...;  /* 指摘する。比較も基数を揃えてから行う */
+put list(i - 1);       /* 指摘しない。整数なら 2 進へ直しても桁は落ちない */
+```
+
+対象の演算子は `+` `-` `*` `/` `**` と比較 8 種。どれも `unifyBase` を
+通るので同じ端数が出る。
 
 `dli-status-unchecked` は IMS のプログラムで最も多い誤りに対応する。
 DL/I は失敗しても例外を出さず、PCB のステータスコードで知らせる。

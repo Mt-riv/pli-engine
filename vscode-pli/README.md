@@ -18,7 +18,7 @@ PL/I の構文強調・診断・実行・テスト・Snippet・Linter を VSCode
 | テスト | `PL/I: テストを実行`（`Cmd/Ctrl+Alt+T`） |
 | 画面（MFS） | `PL/I: 画面を動かす（MFS）` で 3270 の画面を台本どおりに動かし、画面像を出力パネルに出す。書式定義 `*.mfs` と台本 `*.keys` はソースと同じ場所から読む |
 | Snippet | 43 本。`main` `proc` `dowhile` `sel` `onerr` などを入力して展開 |
-| Linter | 入力中に 15 規則で検査。問題タブに規則 id 付きで出る |
+| Linter | 入力中に 16 規則で検査。問題タブに規則 id 付きで出る |
 | IMS/DB（DL/I） | `CALL PLITDLI` で階層型データベースを読み書きする。設定 `pli.dli.psb` に PSB の名前を入れると有効になる |
 
 対応する拡張子: `.pli` `.pl1` `.plinc` `.inc` `.cpy`

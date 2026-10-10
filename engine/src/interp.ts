@@ -1302,7 +1302,8 @@ export class Interpreter {
   }
 
   /**
-   * 入出力の条件（ENDFILE / UNDEFINEDFILE / ENDPAGE）を起こす。
+   * 入出力の条件（ENDFILE / UNDEFINEDFILE）を起こす。
+   * （`ENDPAGE` は構文として受けるが、この処理系は起こさない）
    *
    * 計算条件と違い、**ON 単位から正常に復帰したら実行を続ける**のが
    * PL/I の規定。`on endfile(sysin) done = '1'b;` と書いてループの
@@ -1622,9 +1623,8 @@ export class Interpreter {
       }
       case "close":
         for (const name of s.files) {
-          if (!this.files.close(name)) {
-            // 開いていないファイルを閉じても何もしない
-          }
+          // 開いていないファイルを閉じても何もしない
+          this.files.close(name);
         }
         return;
       case "signal": {
@@ -2885,8 +2885,6 @@ export class Interpreter {
   }
 
   private applyBinary(op: string, a: Value, b: Value, line: number): Value {
-    const e = { op } as { op: string };
-    void e;
 
     // 連結は文字列として扱う（数値は暗黙変換される）
     if (op === "||") {
@@ -3172,8 +3170,12 @@ export class Interpreter {
         return makeFixed("bin", 15, 0, BigInt(hay.indexOf(needle) + 1));
       }
       case "TRUNC": {
+        // 結果の精度は CEIL / FLOOR と同じ規則。整数化する 3 つが
+        // 違う精度を返すと、同じ値でも出力幅が変わる
+        // （以前は元の p を保っていたので `trunc(1.23456)` の幅が 9、
+        // `floor(1.23456)` が 5 になっていた）
         const a = fx(0);
-        return assignTo(a, a.base, a.p, 0);
+        return assignTo(a, a.base, integerPrecision(a), 0);
       }
       case "CEIL":
       case "FLOOR": {
@@ -3181,8 +3183,7 @@ export class Interpreter {
         // 1 を足し引きして実装すると加算の精度規則で p が広がり、
         // 出力幅（ceil(2.1) で 5）と合わなくなる。
         const a = fx(0);
-        const N = a.base === "bin" ? MAX_BIN : MAX_DEC;
-        const p = Math.min(N, Math.max(a.p - a.q, 1) + 1);
+        const p = integerPrecision(a);
         const truncated = assignTo(a, a.base, a.p, 0);
         let v = truncated.v;
         const isUp = name === "CEIL";
@@ -3325,6 +3326,19 @@ export function floatWidth(p: number): number {
  *   dcl x fixed dec(5,1) に round(x,3) → 幅 11（p=8, q=3）
  *   round(1.005, 2) → 幅 7（p=4, q=2）
  */
+/**
+ * 整数化する組込関数（`CEIL` / `FLOOR` / `TRUNC`）の結果の精度。
+ *
+ * PL/I の規定は 3 つとも同じ `min(N, max(p-q,1)+1)`。
+ * 1 箇所に置かないと、同じ値を同じ向きに丸めているのに
+ * 出力幅が違う、という食い違いが出る（実際に `TRUNC` だけが
+ * 元の精度を保っていた）。
+ */
+function integerPrecision(a: FixedVal): number {
+  const N = a.base === "bin" ? MAX_BIN : MAX_DEC;
+  return Math.min(N, Math.max(a.p - a.q, 1) + 1);
+}
+
 function roundPrecision(a: FixedVal, n: number): number {
   return Math.min(
     a.base === "bin" ? MAX_BIN : MAX_DEC,

@@ -260,6 +260,73 @@ describe("mixed-base-arithmetic", () => {
     );
     expect(only(lint(src), "mixed-base-arithmetic")).toEqual([]);
   });
+
+  /**
+   * 規則の説明が挙げている形を実際に拾えること。
+   *
+   * `value.ts` の注意書きは「`i * 1.5` が 10 を返していた」
+   * 「比較も狂って `i = 10.5` が真になっていた」を挙げ、
+   * 「Linter の mixed-base-arithmetic が警告する理由でもある」と
+   * 書いているのに、**どちらも警告されていなかった**。
+   * 宣言した変数どうしだけを見て、定数を数えていなかったため。
+   */
+  it("小数の定数との混在を拾う", () => {
+    const src = MAIN("  dcl i fixed bin(15);\n  i = 1;\n  put list(i * 0.1);");
+    expect(only(lint(src), "mixed-base-arithmetic")).toHaveLength(1);
+  });
+
+  it("比較とべき乗も拾う（どちらも基数を揃えてから計算する）", () => {
+    const cmp = MAIN(
+      "  dcl i fixed bin(15);\n  i = 1;\n  if i = 10.5 then put list('eq');",
+    );
+    expect(only(lint(cmp), "mixed-base-arithmetic")).toHaveLength(1);
+    const pow = MAIN("  dcl i fixed bin(15);\n  i = 2;\n  put list(i ** 1.5);");
+    expect(only(lint(pow), "mixed-base-arithmetic")).toHaveLength(1);
+  });
+
+  it("整数の定数との混在は拾わない（桁が落ちない）", () => {
+    // `n - 1` は 2 進へ直しても桁が落ちないので、警告は誤検出になる。
+    // 同梱サンプルのハノイの塔がこの形
+    const src = MAIN("  dcl n fixed bin(31);\n  n = 3;\n  put list(n - 1, n * 2);");
+    expect(only(lint(src), "mixed-base-arithmetic")).toEqual([]);
+  });
+});
+
+/**
+ * 起こさない条件に置いた ON 単位。
+ *
+ * `ON` はどんな条件名でも構文として受けるので、処理系が起こさない
+ * 条件に置くと、構文も通り誤りも出ないまま**一度も実行されない**。
+ * `engine/README.md` には書いてあるが、ソースを見て分かる形ではない。
+ */
+describe("on-never-raised", () => {
+  it("起こさない条件を指摘する", () => {
+    for (const c of ["endpage(sysprint)", "overflow", "underflow", "stringrange"]) {
+      const src = MAIN(`  on ${c} put skip list('x');`);
+      expect(only(lint(src), "on-never-raised"), c).toHaveLength(1);
+    }
+  });
+
+  it("起こす 8 つは指摘しない", () => {
+    for (const c of [
+      "error",
+      "zerodivide",
+      "fixedoverflow",
+      "size",
+      "subscriptrange",
+      "conversion",
+      "endfile(sysin)",
+      "undefinedfile(sysin)",
+    ]) {
+      const src = MAIN(`  on ${c} put skip list('x');`);
+      expect(only(lint(src), "on-never-raised"), c).toEqual([]);
+    }
+  });
+
+  it("SIGNAL で起こしているなら指摘しない", () => {
+    const src = MAIN("  on stringrange put skip list('sr');\n  signal stringrange;");
+    expect(only(lint(src), "on-never-raised")).toEqual([]);
+  });
 });
 
 describe("free-then-use", () => {
