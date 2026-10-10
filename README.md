@@ -384,7 +384,7 @@ cd ../vscode-pli && npm ci && npm test  # VSCode を起動せずに動く
 このリポジトリのテストはそれが無くても動きます
 （詳細は [`engine/test/golden/README.md`](engine/test/golden/README.md)）。
 
-push と Pull Request ごとに GitHub Actions が同じものを走らせます
+main への push と Pull Request ごとに GitHub Actions が同じものを走らせます
 （[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）。
 型検査・テスト・PL/I で書いたテスト・Linter・ブラウザ版のビルド・
 vsix のパッケージまでを通し、出荷物に入る依存の脆弱性も見ています。
