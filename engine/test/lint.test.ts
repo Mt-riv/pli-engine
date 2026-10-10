@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { lint, formatLint, RULES, type LintMessage } from "../src/index.js";
-import { BUILTIN_NAMES } from "../src/interp.js";
+import { BUILTIN_NAMES, UNIMPLEMENTED_BUILTINS } from "../src/interp.js";
 import { SAMPLES } from "../web/samples.js";
 
 /** その規則の指摘だけを取り出す。 */
@@ -35,6 +35,47 @@ describe("BUILTIN_NAMES", () => {
     const body = rest.slice(0, next ? next.index : undefined);
     const cases = new Set([...body.matchAll(/case "([A-Z0-9_]+)":/g)].map((m) => m[1]!));
     expect([...cases].sort()).toEqual([...BUILTIN_NAMES].sort());
+  });
+
+  /**
+   * 名前を知っていること。
+   *
+   * root README は「知らない語は『解釈できない』と答えるので、
+   * 綴り間違いと未実装は見分けられます」と約束している。表から漏れると
+   * `CHAR(x)` と書いた利用者に「未知の関数です」と答えることになり、
+   * この約束が破れる。**実務でよく使う組込関数**を並べて、
+   * 実装済みか名指しの未実装かのどちらかであることを要求する。
+   *
+   * 以前は `CHARACTER` と `CHARVAL` が表にあるのに、実際に使われる
+   * 省略形の `CHAR` が落ちている、という取りこぼし方をしていた。
+   */
+  it("実務で使う組込関数は、実装済みか名指しの未実装のどちらか", () => {
+    const expected = [
+      // 明示変換（省略形も含む）
+      "CHAR", "CHARACTER", "BIN", "BINARY", "DEC", "DECIMAL",
+      "FIXED", "FLOAT", "BIT", "PRECISION", "PREC",
+      // 文字・ビット
+      "LENGTH", "SUBSTR", "INDEX", "TRANSLATE", "VERIFY", "REPEAT",
+      "TRIM", "UPPERCASE", "LOWERCASE", "SEARCH", "SEARCHR",
+      // 算術・配列
+      "ABS", "MAX", "MIN", "MOD", "SIGN", "ROUND", "TRUNC", "CEIL", "FLOOR",
+      "DIVIDE", "MULTIPLY", "ADD", "SUM", "PROD", "POLY",
+      "ALL", "ANY", "SQRT", "EXP", "LOG",
+      // 日付・時刻
+      "DATE", "TIME", "DATETIME", "DAYS", "DAYSTODATE",
+      // 条件・記憶域
+      "ONCODE", "ONSOURCE", "ONCHAR", "ONKEY", "ONFILE", "ONCOUNT",
+      "ADDR", "NULL", "ALLOCATION", "STORAGE", "UNSPEC",
+      // 配列の境界
+      "DIM", "LBOUND", "HBOUND",
+      // ビット演算（IBM 拡張）
+      "IAND", "IOR", "IEOR", "INOT",
+      // その他
+      "LINENO", "PAGENO", "SIGNED", "UNSIGNED", "DATAFIELD",
+    ];
+    const known = new Set([...BUILTIN_NAMES, ...UNIMPLEMENTED_BUILTINS]);
+    const missing = expected.filter((n) => !known.has(n));
+    expect(missing, "どちらの表にも無い（綴り間違いと区別が付かない）").toEqual([]);
   });
 });
 

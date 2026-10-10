@@ -132,7 +132,7 @@
     "unimplemented": {
       "_comment": "PL/I の組込関数のうち、この処理系が実装していないもの。別スコープにしてテーマで色を分けられるようにする（呼ぶと実行時に「未知の関数です」で止まる）。",
       "name": "support.function.unimplemented.pli",
-      "match": "(?i)\\b(currentstorage|binaryvalue|allocation|daystodate|character|dimension|maxlength|precision|datetime|heximage|multiply|oncondid|onsource|charval|collate|complex|decimal|omitted|pointer|reverse|storage|lineno|offset|onchar|oncode|onfile|pageno|random|string|unspec|atand|atanh|conjg|count|decat|empty|fixed|float|log10|onkey|onloc|valid|acos|asin|atan|bool|byte|copy|cosd|cosh|date|days|erfc|high|imag|log2|prec|rank|real|sind|sinh|sqrt|tand|tanh|time|trim|add|bit|cos|erf|exp|hex|log|low|sin|sum|tan)\\b(?=\\s*\\()"
+      "match": "(?i)\\b(currentstorage|binaryvalue|allocation|daystodate|character|datafield|dimension|lowercase|maxlength|precision|uppercase|datetime|heximage|multiply|oncondid|onsource|unsigned|charval|collate|complex|decimal|omitted|oncount|pointer|reverse|searchr|storage|binary|lineno|offset|onchar|oncode|onfile|pageno|random|search|signed|string|unspec|acosd|asind|atand|atanh|conjg|count|decat|empty|fixed|float|log10|onkey|onloc|valid|acos|asin|atan|bool|byte|char|copy|cosd|cosh|date|days|erfc|high|iand|ieor|imag|inot|log2|poly|prec|prod|rank|real|sind|sinh|sqrt|tand|tanh|time|trim|add|all|any|bin|bit|cos|dec|erf|exp|hex|ior|log|low|sin|sum|tan)\\b(?=\\s*\\()"
     }
   }
 }

@@ -223,7 +223,7 @@ dcl d(3)   bin fixed def (b(1sub,1sub));
 | 宣言の既定 | `dcl x;` のように型を 1 語も書かなければ、**暗黙宣言と同じ規則**（名前の先頭文字。I〜N は FIXED BIN(15,0)、それ以外は FLOAT DEC(6)）。`FIXED` や基数・精度を書けば FIXED の既定 |
 | 引数 | **参照渡し**。宣言した属性が渡した値と違うときだけ一時変数（ダミー引数） |
 | `RETURNS` | `RETURN` の値を宣言した型へ合わせる |
-| 組込関数（21 種） | 算術 `ABS` `CEIL` `FLOOR` `ROUND` `TRUNC` `SIGN` `MOD` `DIVIDE` `MAX` `MIN` ／ 文字列 `LENGTH` `INDEX` `SUBSTR` `REPEAT` `TRANSLATE` `VERIFY` ／ 配列 `LBOUND` `HBOUND` `DIM` ／ ポインタ `ADDR` `NULL`。これ以外の PL/I の組込関数は**名指しで断る**（`UNIMPLEMENTED_BUILTINS`） |
+| 組込関数（21 種） | 算術 `ABS` `CEIL` `FLOOR` `ROUND` `TRUNC` `SIGN` `MOD` `DIVIDE` `MAX` `MIN` ／ 文字列 `LENGTH` `INDEX` `SUBSTR` `REPEAT` `TRANSLATE` `VERIFY` ／ 配列 `LBOUND` `HBOUND` `DIM` ／ ポインタ `ADDR` `NULL`。これ以外は**名指しで断る**（`UNIMPLEMENTED_BUILTINS` の 99 語）。表から漏れると「未知の関数です」になり、綴り間違いと区別が付かなくなるので、実務で使う名前が両方の表のどこかにあることをテストで縛っている |
 
 ### 戻り値型と精度
 
