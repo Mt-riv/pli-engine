@@ -342,4 +342,20 @@ end p;`;
     const found = lint(src).filter((d) => d.rule === "undefined-procedure");
     expect(found).toEqual([]);
   });
+
+  /**
+   * 幅の検査の文面。
+   *
+   * レコード入出力・セグメント I/O 領域・メッセージ I/O 領域が
+   * 同じ検査を使うので、文面はどの用途かを言い当てる必要がある。
+   * セグメント領域を書いた人に「RECORD 入出力で扱えません」と
+   * 答えると、指す先が違って原因が分からなくなる。
+   */
+  it("セグメント I/O 領域に扱えない項目があれば、その用途を言う", () => {
+    const { result } = run(`  dcl three fixed bin(31) init(3);
+  dcl func_gn char(4) init('GN  ');
+  dcl 1 seg_io, 2 n fixed bin(31);
+  call plitdli(three, func_gn, db_pcb, seg_io);`);
+    expect(result.diagnostics[0]?.message).toContain("セグメント I/O 領域で扱えません");
+  });
 });

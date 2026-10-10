@@ -847,14 +847,14 @@ export class Interpreter {
     const ioArea =
       ioRef === undefined || ioRef.kind !== "ref"
         ? ""
-        : this.readIoArea(ioRef, scope, s.line);
+        : this.gatherLeaves(ioRef, scope, s.line, "セグメント I/O 領域");
     // SSA は構造体で組み立てるのが PL/I の IMS プログラムの典型形
     // （SSA_NAME / '(' / FIELD / OP / VALUE / ')' を並べた構造体）。
     // 値として評価すると構造体はスカラにならないので、
     // I/O 領域と同じく**葉を宣言順に連結**する。
     const ssas = args.slice(4).map((a) =>
       a.kind === "ref" && a.subscripts.length === 0
-        ? this.readIoArea(a, scope, s.line)
+        ? this.gatherLeaves(a, scope, s.line, "SSA")
         : this.asText(this.eval(a, scope, s.line)),
     );
 
@@ -866,7 +866,7 @@ export class Interpreter {
       throw e;
     }
     if (result.ioArea !== undefined && ioRef !== undefined && ioRef.kind === "ref") {
-      this.writeIoArea(ioRef, result.ioArea, scope, s.line);
+      this.scatterLeaves(ioRef, result.ioArea, scope, s.line, "セグメント I/O 領域");
     }
     this.writePcb(pcbRef, scope, dli.pcb(index), s.line);
   }
@@ -876,7 +876,7 @@ export class Interpreter {
    *
    * データベースの呼び出しと違い、I/O 領域の先頭 4 バイトが
    * `LL ZZ`（長さと予約）になる。`LL` はプログラムが入れる数値なので、
-   * 文字として扱う `readIoArea` では読めない。
+   * 文字として扱う `gatherLeaves` では読めない。
    */
   private messageCall(
     s: Extract<Stmt, { kind: "call" }>,
@@ -937,7 +937,7 @@ export class Interpreter {
     const ll = this.messageLength(leaves, ref, line);
     let text = "";
     for (const l of leaves.slice(2)) {
-      const w = this.widthOfAttr(l.attr, l.key, line);
+      const w = this.widthOfAttr(l.attr, l.key, line, "メッセージ I/O 領域");
       const cell = l.cells[l.index];
       text += (cell === undefined ? "" : this.asText(cell)).padEnd(w).slice(0, w);
     }
@@ -960,7 +960,7 @@ export class Interpreter {
     zz.cells[zz.index] = this.coerce(makeFixed("bin", MAX_BIN, 0, 0n), zz.attr, line);
     let pos = 0;
     for (const l of leaves.slice(2)) {
-      const w = this.widthOfAttr(l.attr, l.key, line);
+      const w = this.widthOfAttr(l.attr, l.key, line, "メッセージ I/O 領域");
       const piece = segment.slice(pos, pos + w).padEnd(w);
       pos += w;
       l.cells[l.index] = this.coerce(makeChar(piece, piece.length, true), l.attr, line);
@@ -1124,15 +1124,19 @@ export class Interpreter {
   }
 
   /**
-   * セグメント I/O 領域を読む。
-   * 項目の幅の規則はレコード入出力と同じ（文字と PICTURE だけ）。
+   * 構造体の葉を宣言順に連結して 1 本の文字列にする。
+   *
+   * レコード入出力（`WRITE ... FROM`）と DL/I のセグメント I/O 領域が
+   * **同じ規則**（文字と PICTURE の宣言幅で詰める）なので 1 つにする。
+   * 2 つ持っていたときは、片方だけが `leafCells` を使っていて
+   * BASED の構造体で黙って空白を書き出していた。
    */
-  private readIoArea(ref: Ref, scope: Scope, line: number): string {
+  private gatherLeaves(ref: Ref, scope: Scope, line: number, purpose: string): string {
     const leaves = this.leafCells(ref, scope, line);
     if (leaves.length === 0) return this.asText(this.evalRef(ref, scope, line));
     let text = "";
     for (const l of leaves) {
-      const w = this.widthOfAttr(l.attr, l.key, line);
+      const w = this.widthOfAttr(l.attr, l.key, line, purpose);
       const cell = l.cells[l.index];
       text += (cell === undefined ? "" : this.asText(cell)).padEnd(w).slice(0, w);
     }
@@ -1140,7 +1144,13 @@ export class Interpreter {
   }
 
   /** セグメント I/O 領域へ書く。 */
-  private writeIoArea(ref: Ref, record: string, scope: Scope, line: number): void {
+  private scatterLeaves(
+    ref: Ref,
+    record: string,
+    scope: Scope,
+    line: number,
+    purpose: string,
+  ): void {
     const leaves = this.leafCells(ref, scope, line);
     if (leaves.length === 0) {
       this.assign(ref, makeChar(record, record.length, true), scope, line);
@@ -1148,7 +1158,7 @@ export class Interpreter {
     }
     let pos = 0;
     for (const l of leaves) {
-      const w = this.widthOfAttr(l.attr, l.key, line);
+      const w = this.widthOfAttr(l.attr, l.key, line, purpose);
       const piece = record.slice(pos, pos + w).padEnd(w);
       pos += w;
       l.cells[l.index] = this.coerce(makeChar(piece, piece.length, true), l.attr, line);
@@ -2262,14 +2272,14 @@ export class Interpreter {
       if (!s.into) {
         throw new RuntimeError("READ には INTO か SET が必要です", s.line);
       }
-      this.scatterRecord(rec, s.into, scope, s.line);
+      this.scatterLeaves(s.into, rec, scope, s.line, "RECORD 入出力");
       return;
     }
 
     if (!s.from) {
       throw new RuntimeError(`${s.op.toUpperCase()} には FROM が必要です`, s.line);
     }
-    const text = this.gatherRecord(s.from, scope, s.line);
+    const text = this.gatherLeaves(s.from, scope, s.line, "RECORD 入出力");
     if (s.op === "write") {
       file.writeRecord(text);
       // レコード出力も出力上限で打ち切る。ブラウザには別プロセスが
@@ -2345,54 +2355,25 @@ export class Interpreter {
     return out;
   }
 
-  /** 項目が占める文字数。文字として表現できない型は誤りにする。 */
-  private recordWidth(v: Variable, key: string, line: number): number {
-    return this.widthOfAttr(v.attr, key, line);
-  }
-
   /**
    * 属性から項目の幅を出す。
-   * レコード入出力と DL/I のセグメント I/O 領域が同じ規則を使う。
+   * レコード入出力・DL/I のセグメント I/O 領域・IMS のメッセージ領域が
+   * 同じ規則を使う。`purpose` は診断の文面だけに使う
+   * （メッセージ領域を書いた人に「RECORD 入出力で扱えません」と
+   * 答えると、指す先が違って原因が分からなくなる）。
    */
-  private widthOfAttr(attr: DataAttr, key: string, line: number): number {
+  private widthOfAttr(
+    attr: DataAttr,
+    key: string,
+    line: number,
+    purpose: string,
+  ): number {
     if (attr.type === "char") return attr.length;
     if (attr.type === "picture") return parsePicture(attr.picture).width;
     throw new RuntimeError(
-      `${key} は RECORD 入出力で扱えません（文字か PICTURE の項目にしてください）`,
+      `${key} は${purpose}で扱えません（文字か PICTURE の項目にしてください）`,
       line,
     );
-  }
-
-  /** レコードの内容を変数（または構造体の葉）へ配る。 */
-  private scatterRecord(rec: string, target: Ref, scope: Scope, line: number): void {
-    const leaves = this.leavesOf(target.name, scope);
-    if (leaves.length === 0) {
-      // スカラ（ふつうは char）へそのまま入れる
-      this.assign(target, makeChar(rec, rec.length, true), scope, line);
-      return;
-    }
-    let pos = 0;
-    for (const { key, v } of leaves) {
-      const w = this.recordWidth(v, key, line);
-      const piece = rec.slice(pos, pos + w).padEnd(w);
-      pos += w;
-      v.cells[0] = this.coerce(makeChar(piece, piece.length, true), v.attr, line);
-    }
-  }
-
-  /** 変数（または構造体の葉）からレコードの内容を組み立てる。 */
-  private gatherRecord(source: Ref, scope: Scope, line: number): string {
-    const leaves = this.leavesOf(source.name, scope);
-    if (leaves.length === 0) {
-      return this.asText(this.evalRef(source, scope, line));
-    }
-    let text = "";
-    for (const { key, v } of leaves) {
-      const w = this.recordWidth(v, key, line);
-      const cell = v.cells[0];
-      text += (cell === undefined ? "" : this.asText(cell)).padEnd(w).slice(0, w);
-    }
-    return text;
   }
 
   /**

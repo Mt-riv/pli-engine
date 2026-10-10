@@ -261,3 +261,67 @@ end p;
     expect(out).toContain("[cdef]");
   });
 });
+
+/**
+ * BASED 構造体への READ / WRITE。
+ *
+ * 記憶域をポインタ先に持つ葉は `v.cells` が空なので、葉へ直接書く実装だと
+ * **何も読まず何も書かない**（しかもレコードは消費されるので次が 1 件飛ぶ）。
+ * 葉への読み書きは `leafCells` を通す。
+ */
+describe("BASED 構造体のレコード入出力", () => {
+  it("READ INTO で値が届き、レコードを捨てない", () => {
+    const host = new MemoryHost({ "IN.TXT": "ALICE     042\nBOB       007\n" });
+    const src = `p: proc options(main);
+  dcl inp file record input env(f recsize(13));
+  dcl p pointer;
+  dcl 1 rec based(p), 2 nm char(10), 2 age pic'999';
+  dcl 1 loc,          2 nm2 char(10), 2 age2 pic'999';
+  allocate rec set(p);
+  open file(inp) input title('IN.TXT');
+  read file(inp) into(rec);
+  put skip list('[' || p->rec.nm || '][' || p->rec.age || ']');
+  read file(inp) into(loc);
+  put skip list('[' || loc.nm2 || '][' || loc.age2 || ']');
+end p;
+`;
+    const r = runProgram(src, { host });
+    expect(r.diagnostics).toEqual([]);
+    // 1 件目が BASED に届く（空白と 000 にならない）
+    expect(r.stdout).toContain("[ALICE     ][042]");
+    // 2 件目は 2 レコード目。1 件目を黙って捨てていない
+    expect(r.stdout).toContain("[BOB       ][007]");
+  });
+
+  it("WRITE FROM で中身が書き出される", () => {
+    const host = new MemoryHost();
+    const src = `p: proc options(main);
+  dcl outp file record output env(f recsize(13));
+  dcl p pointer;
+  dcl 1 rec based(p), 2 nm char(10), 2 age pic'999';
+  allocate rec set(p);
+  p->rec.nm = 'CAROL';
+  p->rec.age = 33;
+  open file(outp) output title('OUT.TXT');
+  write file(outp) from(rec);
+  close file(outp);
+end p;
+`;
+    const r = runProgram(src, { host });
+    expect(r.diagnostics).toEqual([]);
+    expect(host.get("OUT.TXT")).toBe("CAROL     033\n");
+  });
+
+  it("扱えない項目は、どの用途で扱えないかを言う", () => {
+    const host = new MemoryHost({ "IN.TXT": "x\n" });
+    const src = `p: proc options(main);
+  dcl inp file record input env(f recsize(4));
+  dcl 1 rec, 2 n fixed bin(31);
+  open file(inp) input title('IN.TXT');
+  read file(inp) into(rec);
+end p;
+`;
+    const r = runProgram(src, { host });
+    expect(r.diagnostics[0]?.message).toContain("RECORD 入出力で扱えません");
+  });
+});
