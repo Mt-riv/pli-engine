@@ -1,0 +1,10 @@
+*  ふつうの値 → 強調だけ。LOCK → 保護されて打ち込めなくなる。
+MOD   ATTOUT
+NOW   2026-10-10T15:04:05
+LTERM TERM0001
+STATEF=open
+ENTER
+STATEF=LOCK
+ENTER
+STATEF=again
+ENTER

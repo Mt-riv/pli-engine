@@ -1,0 +1,4 @@
+::: CNVPSB.psb
+         PCB  TYPE=TP
+         PSBGEN LANG=PLI,PSBNAME=CNVPSB
+         END

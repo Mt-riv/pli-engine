@@ -1,0 +1,50 @@
+### 開始
+書式 INVFMT（24 行 × 80 桁）
+   |----+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8
+ 1 |                             INVENTORY INQUIRY
+ 5 |         ITEM:
+ 7 |         NAME:
+カーソル (5,20)
+警報 なし
+消去 なし
+項目
+  SYSDATE  (1,2)       8 桁  ALPHA PROT NORM  ""
+  (固定)   (1,30)     17 桁  ALPHA PROT HI  "INVENTORY INQUIRY"
+  (固定)   (5,10)      5 桁  ALPHA PROT NORM  "ITEM:"
+  ITEMIN   (5,20)      6 桁  NUM NOPROT HI  ""
+  (固定)   (7,10)      5 桁  ALPHA PROT NORM  "NAME:"
+  NAMEOUT  (7,20)     20 桁  ALPHA PROT NORM  ""
+  MSGOUT   (23,2)     40 桁  ALPHA PROT HI  ""
+  PFKEY    (24,2)     12 桁  ALPHA NOPROT NORM  ""
+### ENTER ITEMIN=42
+書式 INVFMT（24 行 × 80 桁）
+   |----+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8
+ 1 | 10/10/26                    INVENTORY INQUIRY
+ 5 |         ITEM:     42
+ 7 |         NAME:     BOLT 000042
+23 | FOUND 1 ITEM
+カーソル (5,20)
+警報 なし
+消去 なし
+項目
+  SYSDATE  (1,2)       8 桁  ALPHA PROT NORM  "10/10/26"
+  (固定)   (1,30)     17 桁  ALPHA PROT HI  "INVENTORY INQUIRY"
+  (固定)   (5,10)      5 桁  ALPHA PROT NORM  "ITEM:"
+  ITEMIN   (5,20)      6 桁  NUM NOPROT HI  "42"
+  (固定)   (7,10)      5 桁  ALPHA PROT NORM  "NAME:"
+  NAMEOUT  (7,20)     20 桁  ALPHA PROT NORM  "BOLT 000042"
+  MSGOUT   (23,2)     40 桁  ALPHA PROT HI  "FOUND 1 ITEM"
+  PFKEY    (24,2)     12 桁  ALPHA NOPROT NORM  ""
+標準出力
+
+seq=                                 1          stat=                   QC 
+### PF3
+書式 MENUFMT（24 行 × 80 桁）
+   |----+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8
+ 2 | MENU
+カーソル (4,2)
+警報 なし
+消去 なし
+項目
+  (固定)   (2,2)       4 桁  ALPHA PROT NORM  "MENU"
+  CHOICE   (4,2)       4 桁  ALPHA NOPROT NORM  ""

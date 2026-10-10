@@ -148,6 +148,22 @@ function firstInputPosition(fmt: DeviceFormat, dpage: Dpage): { line: number; co
   return f === undefined ? { line: 1, col: 1 } : { line: f.line, col: f.col };
 }
 
+/**
+ * 画面の写しを取る。
+ *
+ * 画面は打ち込みのたびに書き換わるので、結果として渡すものは
+ * 写しでなければならない。参照をそのまま渡すと、後の打ち込みが
+ * 前の画面まで書き換えてしまう（記録も履歴も壊れる）。
+ */
+export function cloneScreen(screen: Screen): Screen {
+  return {
+    ...screen,
+    fields: screen.fields.map((f) => ({ ...f, attr: { ...f.attr } })),
+    cursor: { ...screen.cursor },
+    dsca: { ...screen.dsca },
+  };
+}
+
 /** 名前で項目を探す。 */
 export function fieldNamed(screen: Screen, name: string): ScreenField | undefined {
   return screen.fields.find((f) => f.name === name);

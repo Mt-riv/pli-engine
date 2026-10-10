@@ -1,0 +1,4 @@
+::: ATTPSB.psb
+         PCB  TYPE=TP
+         PSBGEN LANG=PLI,PSBNAME=ATTPSB
+         END

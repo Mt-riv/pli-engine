@@ -110,12 +110,19 @@ function place(field: ScreenField, data: string, mfld: Mfld, fill: Fill): void {
  * MOD と DOF でセグメントを画面にする。
  *
  * `segments` は `ISRT` された順。`LL ZZ` は外してあること。
+ *
+ * `base` に**いま装置に出ている画面**を渡すと、同じ書式が入っている
+ * 場合は書き換えを MOD が触る項目だけにする（実機でいう
+ * メッセージ書き出し）。渡さない場合と、`DSCA` で強制書き出しが
+ * 指定されている場合は、固定文字から組み直す（書式書き出し）。
+ * **打ち込んだまま返ってきた値が消えないのはこのため。**
  */
 export function formatOutput(
   lib: MfsLibrary,
   modName: string,
   segments: string[],
   opts: OutputOptions,
+  base?: Screen,
 ): Screen {
   const mod = lib.mod(modName);
   const dof = lib.dof(mod.sor);
@@ -125,6 +132,20 @@ export function formatOutput(
     throw new MfsBlockError(`${mod.name} / ${dof.name} に項目の定義がありません`);
   }
   const screen = blankScreen(dof, dpage);
+  if (base !== undefined && base.format === dof.name && !dof.dsca.eraseAll) {
+    for (const f of screen.fields) {
+      const prev = base.fields.find((p) => p.line === f.line && p.col === f.col);
+      if (prev === undefined) continue;
+      f.text = prev.text;
+      f.attr = prev.attr;
+      // 書き出しのたびに変更の印は落ちる。打ち直さなければ
+      // 次の入力では返らない（実機の 3270 と同じ）
+      f.modified = false;
+    }
+  }
+  if (dof.dsca.eraseUnprotected) {
+    for (const f of screen.fields) if (!f.attr.protect) f.text = "";
+  }
   if (segments.length > lpage.segs.length) {
     throw new MfsBlockError(
       `${mod.name} のセグメントは ${lpage.segs.length} 個ですが、` +

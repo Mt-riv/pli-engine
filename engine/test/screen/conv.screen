@@ -1,0 +1,56 @@
+### 開始
+書式 CNVFMT（24 行 × 80 桁）
+   |----+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8
+ 4 | ITEM:
+ 6 | PREVIOUS:
+カーソル (4,12)
+警報 なし
+消去 なし
+項目
+  (固定)   (4,2)       5 桁  ALPHA PROT NORM  "ITEM:"
+  ITEMIN   (4,12)      6 桁  NUM NOPROT HI  ""
+  (固定)   (6,2)       9 桁  ALPHA PROT NORM  "PREVIOUS:"
+  PREVOUT  (6,12)     20 桁  ALPHA PROT NORM  ""
+  TRANF    (24,2)     12 桁  ALPHA NOPROT NORM  ""
+### ENTER ITEMIN=11
+書式 CNVFMT（24 行 × 80 桁）
+   |----+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8
+ 4 | ITEM:     11
+ 6 | PREVIOUS: (first time)
+カーソル (4,12)
+警報 なし
+消去 なし
+項目
+  (固定)   (4,2)       5 桁  ALPHA PROT NORM  "ITEM:"
+  ITEMIN   (4,12)      6 桁  NUM NOPROT HI  "11"
+  (固定)   (6,2)       9 桁  ALPHA PROT NORM  "PREVIOUS:"
+  PREVOUT  (6,12)     20 桁  ALPHA PROT NORM  "(first time)"
+  TRANF    (24,2)     12 桁  ALPHA NOPROT NORM  ""
+### ENTER ITEMIN=22
+書式 CNVFMT（24 行 × 80 桁）
+   |----+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8
+ 4 | ITEM:     22
+ 6 | PREVIOUS: 000011
+カーソル (4,12)
+警報 なし
+消去 なし
+項目
+  (固定)   (4,2)       5 桁  ALPHA PROT NORM  "ITEM:"
+  ITEMIN   (4,12)      6 桁  NUM NOPROT HI  "22"
+  (固定)   (6,2)       9 桁  ALPHA PROT NORM  "PREVIOUS:"
+  PREVOUT  (6,12)     20 桁  ALPHA PROT NORM  "000011"
+  TRANF    (24,2)     12 桁  ALPHA NOPROT NORM  ""
+### ENTER ITEMIN=999999
+書式 CNVFMT（24 行 × 80 桁）
+   |----+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8
+ 4 | ITEM:     999999
+ 6 | PREVIOUS: 000022
+カーソル (4,12)
+警報 なし
+消去 なし
+項目
+  (固定)   (4,2)       5 桁  ALPHA PROT NORM  "ITEM:"
+  ITEMIN   (4,12)      6 桁  NUM NOPROT HI  "999999"
+  (固定)   (6,2)       9 桁  ALPHA PROT NORM  "PREVIOUS:"
+  PREVOUT  (6,12)     20 桁  ALPHA PROT NORM  "000022"
+  TRANF    (24,2)     12 桁  ALPHA NOPROT NORM  ""

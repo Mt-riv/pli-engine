@@ -4,21 +4,29 @@
  *   npm run pli -- hello.pli
  *   npm run pli -- stuprt.pli --psb STUPSB
  *   npm run pli -- numwrd.pli -- 123
+ *   npm run pli -- invq.pli --psb INVPSB --keys invq.keys
  *
  * `--psb` を付けると DL/I（IMS/DB）が使える。DBD・PSB・データは
  * ソースと同じディレクトリから `<名前>.dbd` / `<名前>.psb` /
  * `<DBD 名>.dat` として読み、更新はそこへ書き戻す。
  *
+ * `--keys` を付けると画面入出力（MFS）になる。書式定義は同じ
+ * ディレクトリの `*.mfs` を全部読む。台本の書き方は `src/tm/keys.ts`。
+ *
  * 誤りが 1 件でもあれば終了コード 1。
  */
-import { basename } from "node:path";
-import { runProgram } from "../src/index.js";
+import { readdirSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { loadMfs, runProgram } from "../src/index.js";
+import { parseKeys, playKeys, transcript } from "../src/tm/keys.js";
 import { hostForFile } from "./node-host.js";
 import { fail, main, positiveInt, readText, usage, value } from "./cli-util.js";
 
 const USAGE = `使い方: pli <ソース.pli> [オプション] [-- 主手続きの引数...]
 
   --psb <PSB 名>         IMS/DB（DL/I）を使う
+  --keys <ファイル>       端末の操作の台本を流して画面を出す（MFS）
+  --mfs <ファイル>        書式定義を名指しで読む（既定は同じ場所の *.mfs）
   --stdin <ファイル>      SYSIN に流し込む
   --max-steps N          実行する文の数の上限（既定 5000000）
   --max-output N         出力の上限（文字数。既定 1000000）
@@ -29,6 +37,8 @@ const USAGE = `使い方: pli <ソース.pli> [オプション] [-- 主手続き
 interface Args {
   file?: string;
   psb?: string;
+  keys?: string;
+  mfs: string[];
   stdin?: string;
   maxSteps: number;
   maxOutput: number;
@@ -41,8 +51,10 @@ interface Args {
 function parseArgs(argv: string[]): Args {
   const programArgs: string[] = [];
   const includeDirs: string[] = [];
+  const mfs: string[] = [];
   let file: string | undefined;
   let psb: string | undefined;
+  let keys: string | undefined;
   let stdin: string | undefined;
   let maxSteps = 5_000_000;
   let maxOutput = 1_000_000;
@@ -55,6 +67,8 @@ function parseArgs(argv: string[]): Args {
     }
     if (a === "-h" || a === "--help") usage(USAGE);
     else if (a === "--psb") psb = value(argv, ++i, a);
+    else if (a === "--keys") keys = value(argv, ++i, a);
+    else if (a === "--mfs") mfs.push(value(argv, ++i, a));
     else if (a === "--stdin") stdin = readText(value(argv, ++i, a), "標準入力のファイル");
     else if (a === "--max-steps") maxSteps = positiveInt(value(argv, ++i, a), a);
     else if (a === "--max-output") maxOutput = positiveInt(value(argv, ++i, a), a);
@@ -67,6 +81,8 @@ function parseArgs(argv: string[]): Args {
   return {
     ...(file === undefined ? {} : { file }),
     ...(psb === undefined ? {} : { psb }),
+    ...(keys === undefined ? {} : { keys }),
+    mfs,
     ...(stdin === undefined ? {} : { stdin }),
     maxSteps,
     maxOutput,
@@ -76,9 +92,52 @@ function parseArgs(argv: string[]): Args {
   };
 }
 
+/** 書式定義を集める。名指しが無ければソースの隣の `*.mfs` を全部。 */
+function mfsFiles(args: Args & { file: string }): Record<string, string> {
+  const named = args.mfs;
+  const paths =
+    named.length > 0
+      ? named.map((p) => resolve(p))
+      : readdirSync(dirname(resolve(args.file)))
+          .filter((f) => f.endsWith(".mfs"))
+          .map((f) => join(dirname(resolve(args.file)), f));
+  const out: Record<string, string> = {};
+  for (const p of paths) out[basename(p)] = readText(p, "書式定義");
+  if (Object.keys(out).length === 0) {
+    fail(`書式定義（*.mfs）が見つかりません: ${dirname(resolve(args.file))}`);
+  }
+  return out;
+}
+
+/** 画面入出力（MFS）。台本どおりに動かして画面を出す。 */
+function runWithScreen(args: Args & { file: string; keys: string }): void {
+  if (args.psb === undefined) {
+    fail("--keys を使うには --psb も必要です（入出力 PCB を含む PSB）");
+  }
+  const { steps } = playKeys({
+    source: readText(args.file, "ソース"),
+    library: loadMfs(mfsFiles(args)),
+    host: hostForFile(args.file, args.stdin, undefined, {
+      ...(args.includeDirs.length === 0 ? {} : { includeDirs: args.includeDirs }),
+      ...(args.allowOutside ? { allowOutside: true } : {}),
+    }),
+    psb: args.psb,
+    script: parseKeys(readText(args.keys, "台本"), basename(args.keys)),
+    limits: { maxSteps: args.maxSteps, maxOutputBytes: args.maxOutput },
+  });
+  process.stdout.write(transcript(steps));
+  const notices = steps.filter((s) => s.step.notice !== undefined).length;
+  if (notices > 0) console.error(`(IMS からの通知が ${notices} 件ありました)`);
+  process.exitCode = steps.some((s) => s.step.diagnostics.length > 0) ? 1 : 0;
+}
+
 main(() => {
   const args = parseArgs(process.argv.slice(2));
   if (args.file === undefined) usage(USAGE, 2);
+  if (args.keys !== undefined) {
+    runWithScreen({ ...args, file: args.file, keys: args.keys });
+    return;
+  }
 
   const source = readText(args.file, "ソース");
   const result = runProgram(source, {

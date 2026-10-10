@@ -16,8 +16,8 @@
 import type { PliHost } from "../host.js";
 import { runProgram, type Diagnostic, type ProgramOptions, type ProgramResult } from "../run.js";
 import { MfsBlockError, type MfsLibrary } from "../mfs/blocks.js";
-import type { Screen } from "../mfs/device.js";
-import { formatInput, type DeviceInput } from "../mfs/input.js";
+import { cloneScreen, fieldNamed, type Screen } from "../mfs/device.js";
+import { formatInput, type Aid, type DeviceInput } from "../mfs/input.js";
 import { formatOutput, type OutputOptions } from "../mfs/output.js";
 import { TmRuntime, type InputMessage, type OutputMessage } from "./tm.js";
 
@@ -94,7 +94,7 @@ export class Session {
     this.opts = opts;
   }
 
-  /** いま出ている画面。 */
+  /** いま出ている画面。**生のもの**（打ち込むと書き換わる）。 */
   get screen(): Screen | undefined {
     return this.current;
   }
@@ -129,9 +129,11 @@ export class Session {
         notice: "入力の書式が決まっていません（画面を出してから打ち込んでください）",
       });
     }
+    const typed = this.type(input);
+    if (typed !== undefined) return typed;
     let segments: string[];
     try {
-      segments = formatInput(this.opts.library, this.mid, input);
+      segments = formatInput(this.opts.library, this.mid, this.readModified(input.aid));
     } catch (e) {
       if (e instanceof MfsBlockError) return this.step({ notice: e.message });
       throw e;
@@ -143,6 +145,44 @@ export class Session {
       return this.step({ notice: "トランザクションコードがありません" });
     }
     return this.runTransaction(word, segments);
+  }
+
+  /**
+   * 打ち込んだ値を画面に入れる（装置の緩衝に書くのと同じ）。
+   * 打ち込めない項目を指していれば通知を返す。
+   */
+  private type(input: DeviceInput): SessionStep | undefined {
+    const screen = this.current;
+    if (screen === undefined) return undefined;
+    for (const [name, text] of input.fields) {
+      const f = fieldNamed(screen, name);
+      if (f === undefined) {
+        return this.step({ notice: `項目 ${name} は画面にありません` });
+      }
+      if (f.attr.protect) {
+        return this.step({ notice: `項目 ${name} は打ち込めません（PROT）` });
+      }
+      f.text = text.padEnd(f.length).slice(0, f.length);
+      f.modified = true;
+    }
+    return undefined;
+  }
+
+  /**
+   * 変更の印が立っている項目だけを読む（実機の read modified）。
+   *
+   * 末尾の空白は落とす。実機の装置は打ち込んでいない桁を空値（X'00'）
+   * として持ち、空白とは区別するが、この処理系は文字の面しか持たない。
+   * 落とさないと `JUST=R` と `FILL=` が効かなくなる
+   * （6 桁の項目に 42 と打ったら `000042` で届くのが実機の形）。
+   */
+  private readModified(aid: Aid): DeviceInput {
+    const fields = new Map<string, string>();
+    for (const f of this.current?.fields ?? []) {
+      if (f.name === undefined || !f.modified) continue;
+      fields.set(f.name, f.text.replace(/ +$/, ""));
+    }
+    return { aid, fields };
   }
 
   /** 溜まっている次の出力メッセージを出す。 */
@@ -230,10 +270,17 @@ export class Session {
   /** MOD で画面を組み、次に読む MID を決める。 */
   private show(modName: string, segments: string[]): SessionStep {
     try {
-      const screen = formatOutput(this.opts.library, modName, segments, this.outputOptions());
+      const screen = formatOutput(
+        this.opts.library,
+        modName,
+        segments,
+        this.outputOptions(),
+        this.current,
+      );
       this.current = screen;
       this.mid = this.opts.library.mod(modName).next;
-      return this.step({ screen });
+      // 画面は step() が写しにして渡す（ここで screen を渡すと生のまま出る）
+      return this.step({});
     } catch (e) {
       if (e instanceof MfsBlockError) return this.step({ notice: e.message });
       throw e;
@@ -252,7 +299,8 @@ export class Session {
 
   private step(part: Partial<SessionStep>): SessionStep {
     return {
-      ...(this.current === undefined ? {} : { screen: this.current }),
+      // 写しを渡す。参照のままだと、後の打ち込みが前の画面を書き換える
+      ...(this.current === undefined ? {} : { screen: cloneScreen(this.current) }),
       stdout: "",
       diagnostics: [],
       ok: part.notice === undefined,
