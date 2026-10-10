@@ -1142,6 +1142,135 @@ end m;`;
       ).toBe(want);
     }
   });
+
+  /**
+   * n が負のとき（整数位へ丸める）。
+   *
+   * この値モデルは尺度が 0 以上である前提で、`render` も `q <= 0` を
+   * 「整数」として扱う（`radix^(-q)` を掛け戻さない）。負の尺度の
+   * FixedVal を作ると桁が消え、`round(15,-1)` が 2 になっていた。
+   */
+  it("n が負なら整数位へ丸める（負の尺度を作らない）", () => {
+    const cases: [string, string][] = [
+      ["round(15, -1)", "20"],
+      ["round(14, -1)", "10"],
+      ["round(151, -2)", "200"],
+      ["round(149, -2)", "100"],
+      ["round(-15, -1)", "-20"],
+    ];
+    for (const [expr, want] of cases) {
+      expect(
+        out(`m: proc options(main);\n  put list(${expr});\nend m;`).trim(),
+        expr,
+      ).toBe(want);
+    }
+  });
+});
+
+/**
+ * `MOD` と `DIVIDE`。
+ *
+ * どちらも `value.ts` の演算を通さない独自実装になっていて、
+ * 他の演算（`add` / `sub` / `mul` / `div` / `compare`）とだけ食い違っていた。
+ */
+describe("MOD と DIVIDE", () => {
+  it("MOD は基数を揃える", () => {
+    // 以前は DECIMAL の辺を 2 進へ直さず、尺度だけ 2 進として扱っていた
+    const src = `m: proc options(main);
+  dcl i fixed bin(15) init(1);
+  dcl j fixed bin(31) init(7);
+  put skip list(mod(i, 0.5));
+  put skip list(mod(j, 2.5));
+  put skip list(mod(7, 2.5));
+end m;`;
+    const got = out(src).trim().split("\n").map((l) => l.trim());
+    expect(got).toEqual(["0.00", "2.00", "2.0"]);
+  });
+
+  it("MOD は第 2 引数と同じ符号（負でも非負を返す）", () => {
+    const src = "m: proc options(main); put list(mod(-7, 3)); end m;";
+    expect(out(src).trim()).toBe("2");
+  });
+
+  it("MOD(17,5) の出力幅は変わらない（golden が固定している）", () => {
+    expect(out("m: proc options(main); put list(mod(17, 5)); end m;")).toBe("   2 \n");
+  });
+
+  it("DIVIDE は指定した精度で商を作る", () => {
+    // 既定の除算精度を先に通すと、被除数の p が広いとき q=0 の
+    // 整数除算になり、あとで桁を広げても情報は戻らない
+    const src = `m: proc options(main);
+  dcl a fixed dec(15,0) init(2);
+  dcl b fixed dec(15,0) init(4);
+  put skip list(divide(a, b, 5, 4));
+  put skip list(divide(7, 2, 3, 0));
+end m;`;
+    const got = out(src).trim().split("\n").map((l) => l.trim());
+    expect(got).toEqual(["0.5000", "3"]);
+  });
+
+  it("DIVIDE の尺度が精度を超えたら断る", () => {
+    const r = runRaw("m: proc options(main); put list(divide(1, 2, 2, 5)); end m;");
+    expect(r.error).toContain("DIVIDE の尺度");
+  });
+});
+
+/**
+ * `¬<` / `¬>`（`^<` / `^>`）。
+ *
+ * 字句解析（`lexer.ts`）と構文解析（`BINARY_PRECEDENCE`）は受けていたのに
+ * 評価器の比較演算子の一覧に無く、**構文は通るのに実行時に落ちていた**。
+ * 綴り間違いと未実装の区別が付かない一番悪い形。
+ */
+describe("¬< と ¬>", () => {
+  it("否定付きの比較が動く", () => {
+    const src = `m: proc options(main);
+  dcl a fixed bin(15) init(3);
+  if a ^< 2 then put skip list('NL2');
+  if a ^> 5 then put skip list('NG5');
+  if a ^< 4 then put skip list('BAD'); else put skip list('LT4');
+end m;`;
+    const r = out(src);
+    expect(r).toContain("NL2");
+    expect(r).toContain("NG5");
+    expect(r).toContain("LT4");
+    expect(r).not.toContain("BAD");
+  });
+});
+
+/**
+ * `SIGNAL` で起こした入出力条件。
+ *
+ * 入出力条件は ON 単位から**復帰して続行する**のが PL/I の規定。
+ * 計算条件用の経路を使っていたため、`GET` で起きた ENDFILE は復帰するのに
+ * `SIGNAL ENDFILE(f)` だけが終了していた。
+ */
+describe("SIGNAL で起こす入出力条件", () => {
+  it("ON 単位から復帰して続行する", () => {
+    const src = `m: proc options(main);
+  on endfile(sysin) put skip list('RAN');
+  signal endfile(sysin);
+  put skip list('RESUMED');
+end m;`;
+    const r = out(src);
+    expect(r).toContain("RAN");
+    expect(r).toContain("RESUMED");
+  });
+
+  it("ON 単位が無ければ従来どおり終わる", () => {
+    const r = runRaw("m: proc options(main); signal endfile(sysin); end m;");
+    expect(r.error).toContain("ENDFILE");
+  });
+
+  it("計算条件は復帰しない（ERROR へ進めて終える）", () => {
+    const r = runRaw(`m: proc options(main);
+  on zerodivide put skip list('RAN');
+  signal zerodivide;
+  put skip list('NEVER');
+end m;`);
+    expect(r.stdout).toContain("RAN");
+    expect(r.stdout).not.toContain("NEVER");
+  });
 });
 
 describe("べき乗", () => {

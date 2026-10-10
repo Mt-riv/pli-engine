@@ -339,6 +339,59 @@ export function mul(a0: FixedVal, b0: FixedVal): FixedVal {
   return checkOverflow(makeFixed(a.base, p, q, v));
 }
 
+/**
+ * `MOD(a,b)`。
+ *
+ * 両辺の尺度を揃えて BigInt の剰余で計算する。
+ * 結果の精度は PL/I の規定どおり第 2 引数に基づく
+ *   p = min(N, p2 - q2 + max(q1,q2)), q = max(q1,q2)
+ * （剰余は必ず第 2 引数より小さいため）。
+ * `mod(17,5)` はフィールド幅 4（= p+3 で p=1）で出力され、
+ * 第 2 引数 5 の精度 DEC(1,0) に由来することが確認できる。
+ *
+ * **他の演算と同じく `unifyBase` を通す。** 以前は `interp.ts` に
+ * 独自実装があり、DECIMAL の辺を 2 進へ直さないまま尺度だけ 2 進として
+ * 扱っていたので、`mod(i, 0.5)`（i は FIXED BIN）が 1.0、
+ * `mod(j, 2.5)` が 7.0 になっていた（どちらも正解は 0.0 と 2.0）。
+ */
+export function mod(a0: FixedVal, b0: FixedVal): FixedVal {
+  const [a, b] = unifyBase(a0, b0);
+  if (b.v === 0n) throw new ZeroDivide();
+  const q = Math.max(a.q, b.q);
+  const N = maxPrecision(a.base);
+  const p = Math.min(N, Math.max(1, b.p - b.q + q));
+  const va = rescale(a, q);
+  const vb = rescale(b, q);
+  let rem = va % vb;
+  // PL/I の MOD は第 2 引数と同じ符号（数学的な剰余）
+  if (rem !== 0n && (rem < 0n) !== (vb < 0n)) rem += vb;
+  return makeFixed(a.base, p, q, rem);
+}
+
+/**
+ * 商を指定の精度で求める（`DIVIDE(a,b,p,q)`）。
+ *
+ * `div` を通してはいけない。`div` は既定の除算精度
+ * （q = N - ((p1-q1) + q2)）で先に商を作るので、被除数の精度が広いと
+ * q=0 の整数除算になり、あとで桁を広げても情報は戻らない
+ * （`dcl a fixed dec(15,0) init(2); divide(a,4,5,4)` が 0.0000 になっていた）。
+ */
+export function divideTo(a0: FixedVal, b0: FixedVal, p: number, q: number): FixedVal {
+  const [a, b] = unifyBase(a0, b0);
+  if (b.v === 0n) throw new ZeroDivide();
+  const r = radix(a.base);
+  const shift = q + b.q - a.q;
+  let num = a.v;
+  let den = b.v;
+  if (shift >= 0) num *= ipow(r, shift);
+  else den *= ipow(r, -shift);
+  const negative = (num < 0n) !== (den < 0n);
+  const an = num < 0n ? -num : num;
+  const ad = den < 0n ? -den : den;
+  const v = an / ad;
+  return checkOverflow(makeFixed(a.base, p, q, negative ? -v : v));
+}
+
 export function div(a0: FixedVal, b0: FixedVal): FixedVal {
   const [a, b] = unifyBase(a0, b0);
   if (b.v === 0n) throw new ZeroDivide();

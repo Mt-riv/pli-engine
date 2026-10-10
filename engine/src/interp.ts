@@ -56,11 +56,13 @@ import {
   binDigitsToDec,
   compare,
   div,
+  divideTo,
   fixedFromFloat,
   fixedFromLiteral,
   makeBit,
   makeChar,
   makeFixed,
+  mod,
   mul,
   neg,
   pow,
@@ -1608,13 +1610,23 @@ export class Interpreter {
           }
         }
         return;
-      case "signal":
+      case "signal": {
+        // 入出力の条件は ON 単位から**復帰して続行する**のが PL/I の規定。
+        // 計算条件用の `raise` を使うと、`GET` で起きた ENDFILE は復帰するのに
+        // `SIGNAL ENDFILE(f)` だけが終了するという食い違いになり、しかも
+        // 診断が「ON ENDFILE(f) を置くか」と嘘をつく（置いてある）
+        const io = ["ENDFILE", "UNDEFINEDFILE", "ENDPAGE"].includes(s.condition);
+        if (io && s.conditionFile !== undefined) {
+          this.raiseIo(s.condition, scope, s.line, s.conditionFile);
+          return;
+        }
         this.raise(
           s.condition,
           scope,
           s.line,
           ...(s.conditionFile === undefined ? [] : [s.conditionFile]),
         );
+      }
       case "return": {
         if (s.value === undefined) throw new ReturnSignal();
         // 宣言した RETURNS の型へ合わせる。合わせないと
@@ -2878,7 +2890,9 @@ export class Interpreter {
     }
 
     // 比較
-    if (["=", "¬=", "<", "<=", ">", ">="].includes(op)) {
+    // `¬<` / `¬>`（`^<` / `^>`）も比較演算子。字句解析と構文解析は
+    // 受けているので、ここに無いと**構文は通るのに実行時に落ちる**
+    if (["=", "¬=", "<", "<=", ">", ">=", "¬<", "¬>"].includes(op)) {
       const c = this.compareValues(a, b, line);
       const r =
         op === "=" ? c === 0
@@ -2886,6 +2900,8 @@ export class Interpreter {
         : op === "<" ? c < 0
         : op === "<=" ? c <= 0
         : op === ">" ? c > 0
+        : op === "¬<" ? c >= 0
+        : op === "¬>" ? c <= 0
         : c >= 0;
       return makeBit(r ? "1" : "0", 1);
     }
@@ -3091,12 +3107,12 @@ export class Interpreter {
       }
       case "MOD": {
         // 除算の精度規則（結果が FIXED(N, N-...) になる）を使うと
-        // MOD(17,5) が 0 になってしまう。整数剰余として直接計算する。
-        // PL/I の MOD は第2引数と同じ符号の結果を返す。
+        // MOD(17,5) が 0 になってしまう。整数剰余として直接計算する
+        // （`value.ts` の `mod`。他の演算と同じく基数を揃える）。
         const a = fx(0);
         const b = fx(1);
         if (b.v === 0n) this.raise("ZERODIVIDE", scope, line);
-        return modFixed(a, b);
+        return mod(a, b);
       }
       case "ABS": {
         const a = fx(0);
@@ -3175,7 +3191,12 @@ export class Interpreter {
         const abs = neg ? -a.v : a.v;
         // 0 から遠い側へ丸める（half away from zero）
         const rounded = (abs * 2n + scale) / (scale * 2n);
-        return makeFixed(a.base, roundPrecision(a, n), n, neg ? -rounded : rounded);
+        // 負の尺度は作らない。この値モデルは尺度が 0 以上である前提で、
+        // `render` も `q <= 0` を「整数」として扱う（`radix^(-q)` を
+        // 掛け戻さない）。`round(15,-1)` が 2 になっていた
+        const q = Math.max(0, n);
+        const v = n < 0 ? rounded * ipow(r, -n) : rounded;
+        return makeFixed(a.base, roundPrecision(a, n), q, neg ? -v : v);
       }
       case "SIGN": {
         // 出力幅 9 なので FIXED BIN(15,0)
@@ -3184,14 +3205,22 @@ export class Interpreter {
         return makeFixed("bin", 15, 0, r);
       }
       case "DIVIDE": {
-        // DIVIDE(a, b, p, q) は結果の精度を明示する除算
+        // DIVIDE(a, b, p, q) は結果の精度を明示する除算。
+        // `div` を先に通してはいけない（既定の除算精度で q=0 の
+        // 整数除算になり、あとで桁を広げても情報は戻らない）。
+        // 基数は両辺を揃えた結果に従う
         const a = fx(0);
         const b = fx(1);
         if (b.v === 0n) this.raise("ZERODIVIDE", scope, line);
         const p = int(2);
         const q = args.length > 3 ? int(3) : 0;
-        const quotient = div(a, b);
-        return assignTo(quotient, "dec", p, q);
+        if (q > p) {
+          throw new RuntimeError(
+            `DIVIDE の尺度 ${q} が精度 ${p} を超えています`,
+            line,
+          );
+        }
+        return divideTo(a, b, p, q);
       }
       case "TRANSLATE": {
         // TRANSLATE(s, to, from) は from の各文字を to の対応文字に置き換える
@@ -3246,35 +3275,6 @@ export class Interpreter {
         return undefined;
     }
   }
-}
-
-/**
- * PL/I の MOD。第2引数と同じ符号の剰余を返す。
- * 両辺の尺度を揃えて BigInt の剰余で計算する。
- *
- * 結果の精度は PL/I の規定どおり第2引数に基づく
- *   p = min(N, p2 - q2 + max(q1,q2)), q = max(q1,q2)
- * （剰余は必ず第2引数より小さいため）。
- * mod(17,5) はフィールド幅 4（= p+3 で p=1）で出力され、
- * 第2引数 5 の精度 DEC(1,0) に由来することが確認できる。
- */
-function modFixed(a: FixedVal, b: FixedVal): FixedVal {
-  const base = a.base === b.base ? a.base : "bin";
-  const q = Math.max(a.q, b.q);
-  const N = base === "bin" ? MAX_BIN : MAX_DEC;
-  const p = Math.min(N, Math.max(1, b.p - b.q + q));
-  const r = base === "bin" ? 2n : 10n;
-  const scale = (x: FixedVal): bigint => {
-    if (x.q === q) return x.v;
-    let m = 1n;
-    for (let k = 0; k < q - x.q; k++) m *= r;
-    return x.v * m;
-  };
-  const va = scale(a);
-  const vb = scale(b);
-  let rem = va % vb;
-  if (rem !== 0n && (rem < 0n) !== (vb < 0n)) rem += vb;
-  return makeFixed(base, p, q, rem);
 }
 
 /**
