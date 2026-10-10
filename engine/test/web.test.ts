@@ -5,6 +5,7 @@ import { SAMPLES } from "../web/samples.js";
 import { MemoryHost, isTestSource, loadMfs, runProgram, runTestSource } from "../src/index.js";
 import { parseKeys, playKeys } from "../src/tm/keys.js";
 import { parseFiles, psbNames } from "../web/files.js";
+import { escapeHtml } from "../web/terminal.js";
 
 /** サンプルの付随ファイルから、実行に使うホストと PSB を組む。 */
 function optionsFor(aux: string | undefined): { host?: MemoryHost; psb?: string } {
@@ -73,6 +74,35 @@ describe("ブラウザ版のサンプル", () => {
   it("名前が重複していない", () => {
     const names = SAMPLES.map((s) => s.name);
     expect(new Set(names).size).toBe(names.length);
+  });
+});
+
+/**
+ * 状態欄への注入。
+ *
+ * 端末の通知文には、プログラムが決めた文字列がそのまま入る
+ * （`ISRT` の第 4 引数の MOD 名が「メッセージ記述 … がありません」に載る）。
+ * 状態欄は `innerHTML` で組み立てているので、素のまま入れると
+ * 共有 URL を開いた相手の画面でタグが生きる。
+ */
+describe("状態欄に出す文字", () => {
+  it("escapeHtml はタグを作らせない", () => {
+    // 要素の中身として入れる前提なので `& < >` の 3 文字で足りる。
+    // `<` が残らなければ、属性に見える部分は字のままになる
+    expect(escapeHtml('<IMG SRC=x ONERROR="&#97;lert(1)">')).toBe(
+      '&lt;IMG SRC=x ONERROR="&amp;#97;lert(1)"&gt;',
+    );
+    // `&` を先に置き換えないと、作った実体参照が二重に壊れる
+    expect(escapeHtml("&lt;")).toBe("&amp;lt;");
+  });
+
+  it("通知と書式の名前は escapeHtml を通してから innerHTML に入れる", () => {
+    const main = readFileSync(join(import.meta.dirname, "..", "web", "main.ts"), "utf8");
+    // 素の埋め込みに戻したらここで落ちる
+    expect(main).not.toContain("${step.notice}");
+    expect(main).not.toContain("${session.inputFormat}");
+    expect(main).toContain("escapeHtml(step.notice)");
+    expect(main).toContain("escapeHtml(session.inputFormat)");
   });
 });
 

@@ -230,6 +230,9 @@ xdg-open dist-web/index.html
 [Releases](https://github.com/Mt-riv/pli-engine/releases) から
 `pli-lang-0.3.0.vsix` をダウンロードします。ビルドは要りません。
 
+**画面入出力（MFS）は 0.3.0 のリリースには入っていません。**
+`PL/I: 画面を動かす（MFS）` を使うには、下の「自分でビルドする」に進んでください。
+
 `gh` が使えるなら次でも取れます。
 
 ```bash
@@ -320,7 +323,11 @@ PL/I のサブセットです。学習と検証には充分ですが、次は実
 
 - 索引・直接編成ファイル（`KEYED` / `REGIONAL`）
 - IMS の物理層（HDAM / HIDAM などの違い）、二次索引、論理関係、
-  IMS TM（メッセージ処理）、`EXEC DLI`、同期点（`CHKP` / `ROLB`）
+  `EXEC DLI`、AIB インタフェース、同期点（`CHKP` / `ROLB`）
+- 本物の 3270 データストリーム（`SBA` / `SF` / `IC` の並び）、tn3270 との接続、
+  DBCS / EGCS、論理・物理ページング、分割画面、`MSG OPT=2` / `OPT=3`、
+  `PASSWORD`、代替 PCB（`CHNG`）、MFS の EXIT ルーチン
+  （詳細は [`docs/mfs.md`](docs/mfs.md) の「何を再現し、何を再現しないか」）
 - `AREA` / `OFFSET`、自己定義構造体（`REFER`）、`UNION`、`LABEL` 変数
 - 多重処理（`TASK` / `WAIT` / `EVENT`）
 - 浮動小数点は JavaScript の数値（表示は `FLOAT DEC(6)` 相当の桁）

@@ -27,7 +27,7 @@ import { SAMPLES } from "./samples.js";
 import { decodePayload, share } from "./share.js";
 import { insertSnippet } from "./insert.js";
 import { parseFiles, psbNames, serializeFiles, splitAux } from "./files.js";
-import { functionKeys, Terminal } from "./terminal.js";
+import { escapeHtml, functionKeys, Terminal } from "./terminal.js";
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -464,10 +464,14 @@ function showStep(step: SessionStep, host: MemoryHost): void {
   }
   const bits: string[] = [];
   bits.push(step.ok ? '<span class="ok">成功</span>' : '<span class="err">失敗</span>');
-  if (step.notice !== undefined) bits.push(`通知: ${step.notice}`);
+  // 通知と書式の名前はプログラムが決めた文字列なので、そのまま innerHTML に
+  // 入れると注入になる（MOD 名は ISRT の第 4 引数で与えられる）
+  if (step.notice !== undefined) bits.push(`通知: ${escapeHtml(step.notice)}`);
   if (step.queued > 0) bits.push(`未出力 ${step.queued} 件`);
   if (session?.inConversation === true) bits.push("会話中");
-  if (session?.inputFormat !== undefined) bits.push(`次の入力 ${session.inputFormat}`);
+  if (session?.inputFormat !== undefined) {
+    bits.push(`次の入力 ${escapeHtml(session.inputFormat)}`);
+  }
   status.innerHTML = bits.join(" / ");
 }
 

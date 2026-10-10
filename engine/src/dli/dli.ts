@@ -127,8 +127,10 @@ export class DliRuntime {
     const code = func.trim().toUpperCase();
 
     if (pcb.def.kind === "io") {
+      // 評価器は入出力 PCB を TmRuntime へ回すので、ここには来ない。
+      // 残してあるのは DL/I 層を直に呼ぶ場合の守り
       throw new DliUnsupported(
-        "入出力 PCB への呼び出しは未実装です（IMS TM のメッセージ処理は対象外）",
+        "入出力 PCB への呼び出しは DL/I 層では扱いません（IMS TM の層に回します）",
       );
     }
     const unsupported = KNOWN_UNSUPPORTED.get(code);

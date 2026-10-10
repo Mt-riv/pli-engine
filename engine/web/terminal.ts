@@ -18,8 +18,18 @@ import type { Aid } from "../src/index.js";
 /** 1 文字分の高さ（px）。CSS の line-height と合わせる。 */
 const CELL_H = 17;
 
-const esc = (s: string): string =>
+/**
+ * HTML に埋める文字を無害にする。
+ *
+ * 画面の中身・書式の名前・通知の文面には、プログラムが決めた文字列
+ * （`ISRT` に渡した MOD 名など）がそのまま入る。`innerHTML` に渡す値は
+ * 必ずこれを通す。大文字化は防壁にならない（`&#97;` のような数値文字参照は
+ * 大文字化を素通りして `innerHTML` 代入時に復号される）。
+ */
+export const escapeHtml = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+const esc = escapeHtml;
 
 /** その行に重なる項目を、桁ごとの印にする。 */
 function marksOf(screen: Screen, line: number): (ScreenField | undefined)[] {

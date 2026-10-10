@@ -10,7 +10,10 @@ PL/I の構文強調・診断・実行・テスト・検査・Snippet を VSCode
 ### リリースから入手する（手軽）
 
 [Releases](https://github.com/Mt-riv/pli-engine/releases) から
-`pli-lang-0.3.0.vsix`（約 95KB）をダウンロードします。ビルドは要りません。
+`pli-lang-0.3.0.vsix` をダウンロードします。ビルドは要りません。
+
+**画面入出力（MFS）は 0.3.0 のリリースには入っていません。**
+下の「自分で `.vsix` を作る」に進んでください。
 
 ```bash
 gh release download vscode-v0.3.0 --repo Mt-riv/pli-engine

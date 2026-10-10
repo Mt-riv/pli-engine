@@ -1,5 +1,5 @@
 実機: Iron Spring PL/I 1.4.1（Linux / i386）。2026-10-10 に取得。
-取り直す手順は別リポジトリ pli-oracle の README（`./regen.sh <名前>`）。
+取り直す手順は別リポジトリ pli-oracle の README「次に実機が要るとき」。
 固定している規則: ROUND(x, n) の結果の尺度は **n**（元の尺度を保つのではない）。
 dcl x fixed dec(5,1); x = 12.5; のとき round(x,3)=12.500 / round(x,1)=12.5 /
 round(x,0)=13。丸めは 0 から遠い側（round(1.005,2)=1.01）。

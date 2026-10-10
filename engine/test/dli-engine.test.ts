@@ -385,14 +385,17 @@ describe("PROCOPT と呼び出しの誤り", () => {
     expect(build().call(0, "GU", "", ["STUDENT (STUDNO"]).status).toBe("AJ");
   });
 
-  it("入出力 PCB への DB 呼び出しは、メッセージ処理が未実装だと断る", () => {
+  // 評価器は入出力 PCB への呼び出しを TmRuntime へ回すので、この経路は
+  // DL/I 層を直に呼んだときの守り。IMS TM 自体は実装済み（src/tm/）
+  it("入出力 PCB への呼び出しは DL/I 層では扱わないと断る", () => {
     const dli = build(`         PCB  TYPE=TP
          PCB  TYPE=DB,DBDNAME=STUDENT,PROCOPT=A
          SENSEG NAME=STUDENT,PARENT=0
          PSBGEN LANG=PLI,PSBNAME=P
          END
 `);
-    expect(() => dli.call(0, "GU", "", [])).toThrow(/メッセージ/);
+    expect(() => dli.call(0, "GU", "", [])).toThrow(DliUnsupported);
+    expect(() => dli.call(0, "GU", "", [])).toThrow(/DL\/I 層では扱いません/);
   });
 });
 
