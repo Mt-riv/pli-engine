@@ -40,7 +40,7 @@ import { parsePsb } from "./dli/psb.js";
 import { Database } from "./dli/store.js";
 import { DliRuntime, DliUnsupported, type PcbState } from "./dli/dli.js";
 import { DliDefError, type DbdDef } from "./dli/types.js";
-import { IMS_NAME } from "./dli/macro.js";
+import { DefError, IMS_NAME } from "./macro.js";
 import {
   FixedOverflow,
   MAX_BIN,
@@ -870,7 +870,7 @@ export class Interpreter {
     try {
       this.dli = this.loadDli(this.opts.psb);
     } catch (e) {
-      if (e instanceof DliDefError) throw new RuntimeError(e.message, line);
+      if (e instanceof DefError) throw new RuntimeError(e.message, line);
       throw e;
     }
     return this.dli;

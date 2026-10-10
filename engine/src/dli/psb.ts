@@ -14,7 +14,7 @@ import {
   type SensegDef,
 } from "./types.js";
 import { concatenatedKeyLength } from "./dbd.js";
-import { listOf, readMacros, required, requiredName } from "./macro.js";
+import { listOf, readMacros, required, requiredName } from "../macro.js";
 
 /** DBD の名前から定義を引く。読めなければ undefined。 */
 export type DbdResolver = (name: string) => DbdDef | undefined;

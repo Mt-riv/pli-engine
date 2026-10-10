@@ -1,7 +1,8 @@
 /**
- * DBDGEN / PSBGEN への入力を読む。
+ * アセンブラのマクロ命令を読む層。
  *
- * 書式はアセンブラのマクロ命令。実機の規則をそのまま使う。
+ * この書式を使う定義は 3 つある。**DBDGEN / PSBGEN への入力**（`dli/`）と
+ * **MFS の書式定義**（`mfs/`）で、どれも実機の規則をそのまま使う。
  *
  *   1 桁目が `*` なら注釈行
  *   1 桁目が非空白ならラベル、その後に命令、その後にオペランド
@@ -12,7 +13,24 @@
  * ブラウザで手書きするとき 10 桁目に揃えるのは苦しいため。
  */
 
-import { DliDefError } from "./types.js";
+/**
+ * 定義の記述の誤り。**どのファイルの何行目かを必ず持つ。**
+ *
+ * DBD・PSB・MFS で派生させる（`DliDefError` / `MfsDefError`）。
+ * 利用者から見れば「定義ファイルの何行目が悪い」という同じ話なので、
+ * 受け取る側（`interp.ts`）は基底で捕まえられる形にしてある。
+ */
+export class DefError extends Error {
+  constructor(
+    message: string,
+    readonly file: string,
+    readonly line: number,
+    name = "DefError",
+  ) {
+    super(`${file} ${line} 行: ${message}`);
+    this.name = name;
+  }
+}
 
 /** 1 つのマクロ命令。 */
 export interface MacroStmt {
@@ -23,8 +41,17 @@ export interface MacroStmt {
   op: string;
   /** `キー=値` のオペランド。キーは大文字。値は書かれたまま。 */
   operands: Map<string, string>;
-  /** `キー=` の形を取らないオペランド（`SEQ` など）。 */
+  /** `キー=` の形を取らないオペランド（`SEQ` など）。大文字にそろえる。 */
   flags: string[];
+  /**
+   * `キー=` の形を取らないオペランドを**書かれたまま**並べたもの。
+   *
+   * MFS の固定文字（`DFLD '在庫照会',POS=(1,30)`）はここから取る。
+   * `flags` と同じ並びだが、大文字化していない点が違う。
+   * 文字の並びを大文字に変えてしまうと画面に出る文字が変わるため、
+   * 両方を持つ。
+   */
+  positional: string[];
 }
 
 /** 継続行の印が入る桁（1 始まり）。 */
@@ -85,6 +112,30 @@ export function splitTop(text: string): string[] {
 }
 
 /**
+ * `キー=値` の `=` の位置を探す。括弧とアポストロフィの中は見ない。
+ *
+ * 見ないのは MFS の固定文字のため。`DFLD 'A=B',POS=(1,1)` の `=` を
+ * 区切りと見ると、キーが `'A`、値が `B'` になる。
+ * 逆に `PFK=(FLD,1='/FOR X.')` は**先頭の** `=` だけを見れば正しく割れる。
+ */
+function keyValueSplit(text: string): number {
+  let depth = 0;
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quoted) {
+      if (c === "'") quoted = false;
+      continue;
+    }
+    if (c === "'") quoted = true;
+    else if (c === "(") depth++;
+    else if (c === ")") depth--;
+    else if (c === "=" && depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
  * 括弧を 1 段はがして中身を取り出す。
  * `(A,SEQ,U)` → `["A", "SEQ", "U"]`、`A` → `["A"]`。
  */
@@ -107,7 +158,7 @@ function joinLines(text: string, file: string): { line: number; text: string }[]
     while (continuing) {
       const cont = raw[++i];
       if (cont === undefined) {
-        throw new DliDefError("継続の印が付いていますが、続きの行がありません", file, startLine);
+        throw new DefError("継続の印が付いていますが、続きの行がありません", file, startLine);
       }
       body += cont.slice(CONTINUE_RESUME - 1, CONTINUE_COLUMN - 1).trimEnd();
       continuing = cont.length >= CONTINUE_COLUMN && cont[CONTINUE_COLUMN - 1] !== " ";
@@ -134,10 +185,10 @@ export function readMacros(text: string, file: string): MacroStmt[] {
     // operandWord の後ろは注釈なので読まない
 
     const operands = new Map<string, string>();
-    const flags: string[] = [];
+    const positional: string[] = [];
     for (const part of splitTop(operandWord.word)) {
-      const eq = part.indexOf("=");
-      if (eq < 0) flags.push(part.trim().toUpperCase());
+      const eq = keyValueSplit(part);
+      if (eq < 0) positional.push(part.trim());
       else operands.set(part.slice(0, eq).trim().toUpperCase(), part.slice(eq + 1).trim());
     }
     out.push({
@@ -145,7 +196,8 @@ export function readMacros(text: string, file: string): MacroStmt[] {
       ...(label === undefined ? {} : { label }),
       op: opWord.word.toUpperCase(),
       operands,
-      flags,
+      flags: positional.map((p) => p.toUpperCase()),
+      positional,
     });
   }
   return out;
@@ -155,7 +207,7 @@ export function readMacros(text: string, file: string): MacroStmt[] {
 export function required(s: MacroStmt, key: string, file: string): string {
   const v = s.operands.get(key);
   if (v === undefined) {
-    throw new DliDefError(`${s.op} 文に ${key}= がありません`, file, s.line);
+    throw new DefError(`${s.op} 文に ${key}= がありません`, file, s.line);
   }
   return v;
 }
@@ -176,7 +228,7 @@ export function requiredName(s: MacroStmt, key: string, file: string): string {
   const raw = required(s, key, file);
   const name = raw.toUpperCase();
   if (!IMS_NAME.test(name)) {
-    throw new DliDefError(
+    throw new DefError(
       `${s.op} 文の ${key}=${raw} は IMS の名前として使えません` +
         `（1〜8 桁の英数字と $ # @ だけ）`,
       file,
@@ -193,7 +245,7 @@ export function numberOf(s: MacroStmt, key: string, file: string): number {
   const text = required(s, key, file);
   const n = Number(listOf(text)[0]);
   if (!Number.isInteger(n) || n <= 0) {
-    throw new DliDefError(`${s.op} 文の ${key}=${text} は正の整数ではありません`, file, s.line);
+    throw new DefError(`${s.op} 文の ${key}=${text} は正の整数ではありません`, file, s.line);
   }
   return n;
 }
