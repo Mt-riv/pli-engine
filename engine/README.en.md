@@ -47,6 +47,15 @@ The tests come in three layers.
 | Invariants | `test/invariants.test.ts` | **two paths always agree** (randomised from a fixed seed) |
 | Golden | `test/golden/` (from a real implementation) / `test/screen/` (from the specification) | pins the output byte for byte |
 
+**The links between the documents are checked by machine too**
+(`test/docs.test.ts`). With the Japanese and the English versions side by
+side, **links that fall from the English version into the Japanese one** creep
+in. A reader only notices that the language changed, and whoever wrote it
+opens the link in the language they read, so they never see it (there really
+were four, and a user pointed them out). The test checks that every target
+exists, that a link does not cross languages, and that the Japanese and
+English versions come in pairs that point at each other.
+
 **The invariant layer was added because disagreements between paths were
 getting through even past a thousand tests.** A FLOAT that printed correctly
 but compared as 0, a `MOD` that did not go through `unifyBase`, a `TRUNC` that
