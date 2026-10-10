@@ -75,7 +75,7 @@ needs an environment set up to run it, so it is not brought into this
 repository, whose premise is "it runs as one browser page". The steps for the
 next time a real implementation is needed are in that README; what is needed
 here is only the pinned expected values and where they came from. Details in
-`test/golden/README.md`.
+`test/golden/README.en.md`.
 
 Material like the following goes through.
 
@@ -1051,8 +1051,8 @@ avoid a circular import.
 
 | Entry point | Where | What |
 |------|------|------|
-| The browser version | [`web/`](web/README.md) | **one HTML file.** Double click it; no server, works offline |
-| The VSCode extension | [`../vscode-pli/`](../vscode-pli/README.md) | highlighting, diagnostics, running, tests, snippets. The implementation ships inside |
+| The browser version | [`web/`](web/README.en.md) | **one HTML file.** Double click it; no server, works offline |
+| The VSCode extension | [`../vscode-pli/`](../vscode-pli/README.en.md) | highlighting, diagnostics, running, tests, snippets. The implementation ships inside |
 | The test CLI | `scripts/plitest.ts` | `npm run plitest -- <file/directory>` |
 | The linter CLI | `scripts/plilint.ts` | `npm run plilint -- <file/directory>` |
 | The screen CLI | `scripts/pli.ts --keys` | `npm run pli -- <file> --psb <name> --keys <script>` |
