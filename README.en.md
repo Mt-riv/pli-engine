@@ -288,13 +288,13 @@ The Node.js your distribution ships can be old. If it is below 20, use
 
 #### From a release (the easy way)
 
-Download `pli-lang-0.5.0.vsix` from
+Download `pli-lang-0.4.2.vsix` from
 [Releases](https://github.com/Mt-riv/pli-engine/releases). No build needed.
 
 With `gh`:
 
 ```bash
-gh release download vscode-v0.5.0 --repo Mt-riv/pli-engine
+gh release download vscode-v0.4.2 --repo Mt-riv/pli-engine
 ```
 
 #### Building it yourself
@@ -303,14 +303,14 @@ gh release download vscode-v0.5.0 --repo Mt-riv/pli-engine
 cd ../vscode-pli        # from pli-engine/engine
 npm ci
 npm run build
-npx @vscode/vsce package      # produces pli-lang-0.5.0.vsix
+npx @vscode/vsce package      # produces pli-lang-0.4.2.vsix
 ```
 
 #### Installing
 
 In the extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) → the `…` at the top
-right → **Install from VSIX** → pick `pli-lang-0.5.0.vsix`. With the `code`
-command, `code --install-extension pli-lang-0.5.0.vsix` works too.
+right → **Install from VSIX** → pick `pli-lang-0.4.2.vsix`. With the `code`
+command, `code --install-extension pli-lang-0.4.2.vsix` works too.
 
 How to use it: [`docs/en/vscode-manual.md`](docs/en/vscode-manual.md).
 

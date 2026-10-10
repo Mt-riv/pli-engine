@@ -29,7 +29,7 @@ While developing, `npm run web:dev` starts a server that reloads on change.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ PL/I Engine v0.5.0 [Sample▼][Snippet▼][Run][Files][Lint][Terminal][Share] [English▼] │
+│ PL/I Engine v0.4.2 [Sample▼][Snippet▼][Run][Files][Lint][Terminal][Share] [English▼] │
 ├──────────────────────────────┬──────────────────────────────┤
 │ source                 1:1   │ Output                        │
 │  1 │ hello: proc options(main);                             │

@@ -12,11 +12,11 @@ Extensions it handles: `.pli` `.pl1` `.plinc` `.inc` `.cpy`
 
 ### From a release (the easy way)
 
-Download `pli-lang-0.5.0.vsix` from
+Download `pli-lang-0.4.2.vsix` from
 [Releases](https://github.com/Mt-riv/pli-engine/releases). No build needed.
 
 ```bash
-gh release download vscode-v0.5.0 --repo Mt-riv/pli-engine
+gh release download vscode-v0.4.2 --repo Mt-riv/pli-engine
 ```
 
 ### Making the `.vsix` yourself
@@ -25,17 +25,17 @@ gh release download vscode-v0.5.0 --repo Mt-riv/pli-engine
 cd pli-engine/vscode-pli
 npm ci
 npm run build
-npx @vscode/vsce package      # produces pli-lang-0.5.0.vsix
+npx @vscode/vsce package      # produces pli-lang-0.4.2.vsix
 ```
 
 In the extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`) → the `…` at the top
-right → **Install from VSIX** → pick `pli-lang-0.5.0.vsix`. Then
+right → **Install from VSIX** → pick `pli-lang-0.4.2.vsix`. Then
 `Developer: Reload Window` to load it.
 
 If the `code` command is on your PATH, this works too.
 
 ```bash
-code --install-extension pli-lang-0.5.0.vsix
+code --install-extension pli-lang-0.4.2.vsix
 ```
 
 ### Using it while developing it
