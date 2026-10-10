@@ -456,7 +456,7 @@ cd ../vscode-pli && npm ci && npm test  # runs without starting VSCode
 The output formats and the precision rules are pinned **byte for byte** in
 `engine/test/golden/`. The tool that regenerates them lives in another
 repository (`pli-oracle`, private), and the tests here run without it (see
-[`engine/test/golden/README.md`](engine/test/golden/README.md)).
+[`engine/test/golden/README.en.md`](engine/test/golden/README.en.md)).
 
 GitHub Actions runs the same things on every push to main and every pull
 request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): type
