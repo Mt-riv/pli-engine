@@ -1,6 +1,6 @@
 {
   "name": "pli-engine",
-  "version": "0.5.0",
+  "version": "0.4.2",
   "private": true,
   "type": "module",
   "description": "PL/I サブセット処理系（自作）。ブラウザでも Node でも動く。",

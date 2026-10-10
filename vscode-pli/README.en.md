@@ -176,7 +176,7 @@ npx @vscode/vsce package
 ```
 
 The `.vsix` it produces can be installed with
-`code --install-extension pli-lang-0.5.0.vsix`.
+`code --install-extension pli-lang-0.4.2.vsix`.
 
 ## Licence
 

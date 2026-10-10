@@ -2,7 +2,7 @@
   "name": "pli-lang",
   "displayName": "PL/I",
   "description": "%extension.description%",
-  "version": "0.5.0",
+  "version": "0.4.2",
   "private": true,
   "publisher": "local",
   "repository": {
