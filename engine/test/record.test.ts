@@ -204,3 +204,60 @@ end p;
     expect(r.diagnostics[0]?.message).toContain("未実装");
   });
 });
+
+/**
+ * レコードの切り方。**実機（Iron Spring PL/I 1.4.1）で確かめた。**
+ *
+ * 実機は改行を区切りと見ない。`F RECSIZE(n)` のファイルを n バイトずつ切り、
+ * 改行もデータの 1 バイトになる:
+ *
+ *   "abcdefgh"   RECSIZE(4) → "abcd" / "efgh"
+ *   "ab\ncdef\n" RECSIZE(4) → "ab\nc" / "def\n"
+ *   "abcd\nefgh\n" RECSIZE(5) → "abcd\n" / "efgh\n"
+ *
+ * この処理系は**行指向のテキスト**として扱う方を選んでいる（理由は
+ * engine/README の「レコード入出力」。ブラウザのテキスト欄で打ち込んで
+ * 編集するものなので、改行をデータにすると利用者の意図と食い違う）。
+ *
+ * ただし **RECSIZE より長い行は切り捨てず、RECSIZE ごとに切る**。
+ * 切り捨てると残りが黙って消える。改行の無いファイルではこれで実機と一致する。
+ */
+describe("長い行とレコードの切り方", () => {
+  const read3 = (contents: string, size: number): string => {
+    const host = new MemoryHost({ "R.DAT": contents });
+    const src = `p: proc options(main);
+  dcl inp file record input env(f recsize(${size}));
+  dcl line char(${size});
+  dcl i fixed bin(15);
+  on endfile(inp) put skip list('終わり');
+  open file(inp) input title('R.DAT');
+  do i = 1 to 3;
+    read file(inp) into(line);
+    put skip list('[' || line || ']');
+  end;
+end p;
+`;
+    return runProgram(src, { host }).stdout;
+  };
+
+  it("改行が無ければ RECSIZE ごとに切る（実機と一致）", () => {
+    const out = read3("abcdefgh", 4);
+    expect(out).toContain("[abcd]");
+    expect(out).toContain("[efgh]");
+    expect(out).toContain("終わり");
+  });
+
+  it("RECSIZE より長い行の残りは次のレコードになる（黙って捨てない）", () => {
+    const out = read3("abcdefg\n", 4);
+    expect(out).toContain("[abcd]");
+    // 残り 3 文字は空白で埋める
+    expect(out).toContain("[efg ]");
+  });
+
+  it("改行があればそれが区切り（行指向。ここは実機と違う）", () => {
+    const out = read3("ab\ncdef\n", 4);
+    // 実機は "ab\nc" を 1 件目にする。この処理系は行を 1 レコードと見る
+    expect(out).toContain("[ab  ]");
+    expect(out).toContain("[cdef]");
+  });
+});

@@ -160,6 +160,34 @@ export function required(s: MacroStmt, key: string, file: string): string {
   return v;
 }
 
+/**
+ * IMS の名前として受け付けられる形か。1〜8 桁の英数字と `$ # @`。
+ *
+ * DBD 名と PSB 名は**そのままファイル名になる**（`<名前>.dbd` /
+ * `<名前>.dat`）。検査しないと、`.psb` に書いた
+ * `DBDNAME=../../どこか` がそのままパスになり、データファイルが
+ * 読み書き先を決めてしまう。セグメント名と項目名も、`.dat` の
+ * 名前欄と SSA が 8 桁なので、9 桁以上は定義できても参照できない。
+ */
+const IMS_NAME = /^[A-Z0-9$#@]{1,8}$/;
+
+/** オペランドを IMS の名前として取る。形が違えば誤りとして止める。 */
+export function requiredName(s: MacroStmt, key: string, file: string): string {
+  const raw = required(s, key, file);
+  const name = raw.toUpperCase();
+  if (!IMS_NAME.test(name)) {
+    throw new DliDefError(
+      `${s.op} 文の ${key}=${raw} は IMS の名前として使えません` +
+        `（1〜8 桁の英数字と $ # @ だけ）`,
+      file,
+      s.line,
+    );
+  }
+  return name;
+}
+
+export { IMS_NAME };
+
 /** 数値のオペランドを取る。 */
 export function numberOf(s: MacroStmt, key: string, file: string): number {
   const text = required(s, key, file);

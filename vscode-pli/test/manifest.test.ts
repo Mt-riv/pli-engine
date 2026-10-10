@@ -12,12 +12,23 @@ import { join } from "node:path";
 
 interface Manifest {
   activationEvents: string[];
+  license: string;
+  capabilities?: {
+    untrustedWorkspaces?: { supported: boolean | string; description?: string };
+    virtualWorkspaces?: boolean;
+  };
   contributes: {
     commands: { command: string }[];
     keybindings: { command: string; key: string; mac?: string; when: string }[];
     menus: Record<string, { command: string; when?: string }[]>;
     snippets: { language: string; path: string }[];
     languages: { id: string; extensions: string[] }[];
+    configuration: {
+      properties: Record<
+        string,
+        { type: string; default: unknown; minimum?: number; pattern?: string }
+      >;
+    };
   };
 }
 
@@ -98,5 +109,39 @@ describe("DL/I の設定", () => {
     expect(props["pli.dli.psb"]).toBeDefined();
     // 既定では DL/I を使わない（指定しないかぎり何も読まない）
     expect(props["pli.dli.psb"]!.default).toBe("");
+  });
+});
+
+
+/**
+ * 配布に関わる宣言。
+ *
+ * vsix には `package.json` がそのまま入るので、ここの宣言が
+ * 利用者に見えるものになる。ルートの LICENSE と食い違うと
+ * 「このコードを使っていいか」の答えが逆になる。
+ */
+describe("配布と権限の宣言", () => {
+  it("ライセンスはルートと同じ MIT", () => {
+    expect(manifest.license).toBe("MIT");
+  });
+
+  it("Workspace Trust を明示している（既定に頼らない）", () => {
+    expect(manifest.capabilities?.untrustedWorkspaces?.supported).toBe(false);
+  });
+
+  it("実行の上限に下限がある（0 や負数だと全部「上限に達した」になる）", () => {
+    const props = manifest.contributes.configuration.properties;
+    expect(props["pli.run.maxSteps"]?.minimum).toBe(1);
+    expect(props["pli.run.maxOutputBytes"]?.minimum).toBe(1);
+  });
+
+  it("PSB 名は IMS の名前の形だけを受ける（そのままファイル名になる）", () => {
+    const pattern = manifest.contributes.configuration.properties["pli.dli.psb"]?.pattern;
+    expect(pattern).toBeDefined();
+    const re = new RegExp(pattern!);
+    expect(re.test("")).toBe(true);
+    expect(re.test("STUPSB")).toBe(true);
+    expect(re.test("../../etc/x")).toBe(false);
+    expect(re.test("TOOLONGNAME")).toBe(false);
   });
 });

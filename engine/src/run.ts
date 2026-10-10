@@ -35,6 +35,16 @@ export interface Diagnostic {
    * 主ソースの誤りは undefined。
    */
   file?: string;
+  /**
+   * 誤りが手続きの中で起きたときの、呼んだ側の行番号（外側から内側）。
+   * 実行時の誤りにだけ入る。主手続きの中で起きた誤りには入らない。
+   *
+   * 呼び出し元を知りたいのは、`line` だけでは足りない場合があるため。
+   * たとえばテストフレームワークは利用者のソースの前後に前置きを
+   * 差し込むので、誤りの行が前置きの中（表明の変換など）を指すことがある。
+   * そのときはこの鎖から利用者のソースの行を拾える。
+   */
+  callerLines?: number[];
   message: string;
 }
 
@@ -65,15 +75,24 @@ export function runProgram(
   const started = Date.now();
   const interp = new Interpreter(opts);
   const done = (
-    diagnostics: Diagnostic[],
+    input: Diagnostic[],
     truncated = false,
   ): ProgramResult => {
+    const diagnostics = [...input];
     // 開いたままの出力ファイルをホストへ書き戻す。
     // 異常終了でも、ここまでに書いた分は残す
     try {
       interp.finishFiles();
-    } catch {
-      // 書き戻しに失敗しても、実行結果の報告は続ける
+    } catch (e) {
+      // 書き戻しの失敗は診断にする。黙って捨てると
+      // 「成功・終了コード 0・ファイルは無い」になって気づけない
+      const err = e as Error;
+      diagnostics.push({
+        severity: "error",
+        phase: "runtime",
+        line: 1,
+        message: `ファイルの書き戻しに失敗しました: ${err.message ?? String(e)}`,
+      });
     }
     let stdout = interp.text();
     // 上限は「超えた時点で止める」判定なので、実際の出力は少し超える。
@@ -95,6 +114,10 @@ export function runProgram(
     interp.runSource(source);
     return done([]);
   } catch (e) {
+    // 手続きの呼び出しの鎖。積みが巻き戻る前に控えたもの
+    const trace = interp.callTrace();
+    const at = (): Pick<Diagnostic, "callerLines"> =>
+      trace === undefined ? {} : { callerLines: trace };
     if (e instanceof PreprocessError) {
       return done([
         {
@@ -132,11 +155,30 @@ export function runProgram(
       ]);
     }
     if (e instanceof OutputLimitExceeded) {
-      return done([], true);
+      // 打ち切りは成功ではない。ここを ok にすると、大量に出力した後で
+      // 失敗する表明がテストで緑になる（残りの文が実行されないため）
+      return done(
+        [
+          {
+            severity: "error",
+            phase: "runtime",
+            line: e.line,
+            ...at(),
+            message: "出力が上限に達したため中断しました",
+          },
+        ],
+        true,
+      );
     }
     if (e instanceof StepLimitExceeded) {
       return done([
-        { severity: "error", phase: "runtime", line: 1, message: e.message },
+        {
+          severity: "error",
+          phase: "runtime",
+          line: e.line,
+          ...at(),
+          message: e.message,
+        },
       ]);
     }
     // 実行時エラー。メッセージに "<行>行: " が付いていれば分離する。
@@ -147,6 +189,7 @@ export function runProgram(
         severity: "error",
         phase: "runtime",
         line: m ? Number(m[1]) : (err.line ?? 1),
+        ...at(),
         message: m ? m[2]! : (err.message ?? String(e)),
       },
     ]);

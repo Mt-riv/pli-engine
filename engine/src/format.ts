@@ -72,6 +72,12 @@ export class ListWriter {
   private readonly pageSize: number;
   /** 今のページに書いた行数。ENDPAGE の判定に使う。 */
   private linesOnPage = 0;
+  /**
+   * 確定済みの行の合計文字数（改行を含む）。
+   * `length()` を O(1) にするために持つ。行数で数え直すと
+   * PUT のたびに全行を走るので、出力が増えるほど二次で遅くなる。
+   */
+  private flushed = 0;
 
   constructor(opts: WriterOptions = {}) {
     this.lineSize = opts.lineSize ?? LINE_SIZE;
@@ -84,6 +90,18 @@ export class ListWriter {
     return this.cur.length + 1;
   }
 
+  /**
+   * 書きかけの行を確定して改行する。
+   * 行を `lines` に積む経路はすべてここを通す（`page()` を除く）。
+   * 直接 push すると `flushed` の加算を忘れて出力上限が効かなくなる。
+   */
+  private flush(): void {
+    this.lines.push(this.cur);
+    this.flushed += this.cur.length + 1;
+    this.cur = "";
+    this.linesOnPage++;
+  }
+
   /** 現在の行番号（1 始まり、ページ内）。LINENO 組込関数が返す値。 */
   lineNumber(): number {
     return this.linesOnPage + 1;
@@ -91,11 +109,7 @@ export class ListWriter {
 
   /** SKIP: n 行進める。 */
   skip(n = 1): void {
-    for (let k = 0; k < n; k++) {
-      this.lines.push(this.cur);
-      this.cur = "";
-      this.linesOnPage++;
-    }
+    for (let k = 0; k < n; k++) this.flush();
   }
 
   /**
@@ -105,6 +119,7 @@ export class ListWriter {
   page(): void {
     if (this.cur !== "") this.skip();
     this.lines.push("\f");
+    this.flushed += 2;
     this.linesOnPage = 0;
   }
 
@@ -143,9 +158,7 @@ export class ListWriter {
       // PRINT でないストリーム出力は桁揃えをしない。
       // 項目を空白 1 個で区切り、行幅で折り返すだけ。
       if (this.col > 1 && this.cur.length + item.length + 1 > this.lineSize) {
-        this.lines.push(this.cur);
-        this.cur = "";
-        this.linesOnPage++;
+        this.flush();
       }
       // 項目の前に区切りの空白 1 個、後ろにも空白 1 個を置く
       // （`'x'  'y' ` のように間が 2 個に見える）
@@ -160,9 +173,7 @@ export class ListWriter {
       if (target - 1 + item.length > this.lineSize) {
         // 収まらないので現在行を行幅まで埋めて改行する
         this.cur = this.cur.padEnd(this.lineSize);
-        this.lines.push(this.cur);
-        this.cur = "";
-        this.linesOnPage++;
+        this.flush();
       } else {
         this.cur = this.cur.padEnd(target - 1);
       }
@@ -209,9 +220,7 @@ export class ListWriter {
   /** 行の折り返しだけを見て素直に追記する。 */
   private raw(s: string): void {
     if (this.cur.length + s.length > this.lineSize) {
-      this.lines.push(this.cur);
-      this.cur = "";
-      this.linesOnPage++;
+      this.flush();
     }
     this.cur += s;
   }
@@ -222,11 +231,7 @@ export class ListWriter {
    * 書きかけの行があれば改行して閉じる。
    */
   finish(): void {
-    if (this.cur !== "") {
-      this.lines.push(this.cur);
-      this.cur = "";
-      this.linesOnPage++;
-    }
+    if (this.cur !== "") this.flush();
   }
 
   /** 何も書かれていないか。ファイルを書き戻すかの判定に使う。 */
@@ -236,9 +241,7 @@ export class ListWriter {
 
   /** これまでに書いた文字数。出力上限の判定に使う。 */
   length(): number {
-    let n = this.cur.length;
-    for (const l of this.lines) n += l.length + 1;
-    return n;
+    return this.flushed + this.cur.length;
   }
 
   /** 組み立てた全文。 */

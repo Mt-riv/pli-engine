@@ -67,8 +67,10 @@ export default defineConfig({
     outDir: "../dist-web",
     emptyOutDir: true,
     target: "es2022",
-    // file:// で動かすため ESM ではなく IIFE にする
-    rollupOptions: { output: { format: "iife", inlineDynamicImports: true } },
+    // file:// で動かすため ESM ではなく IIFE にする。
+    // IIFE は分割できないので、`inlineDynamicImports` は書かない
+    // （書くと Vite 8 が「codeSplitting: false なので無視する」と警告する）
+    rollupOptions: { output: { format: "iife" } },
     assetsInlineLimit: 100_000_000,
     cssCodeSplit: false,
   },

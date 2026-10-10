@@ -47,7 +47,8 @@ end DISABLED_TEST_NOT_READY;
 
 | 呼び出し | 条件 |
 |---------|------|
-| `ASSERT_EQUALS(期待, 実際, 説明)` | 数値が等しい |
+| `ASSERT_EQUALS(期待, 実際, 説明)` | 数値が等しい（`FIXED DEC(15,5)` で比較） |
+| `ASSERT_NEAR(期待, 実際, 許容差, 説明)` | 差が許容差以内（小数 6 桁目以降を見たいとき） |
 | `ASSERT_NOT_EQUALS(期待しない値, 実際, 説明)` | 数値が異なる |
 | `ASSERT_EQUALS_CHAR(期待, 実際, 説明)` | 文字列が等しい |
 | `ASSERT_TRUE(条件, 説明)` | 条件が真 |
@@ -105,7 +106,7 @@ end __PLITEST_RUNNER;
 ```bash
 npm run plitest -- examples/tests                  # ディレクトリを再帰的に
 npm run plitest -- a_test.pli b_test.pli           # ファイルを並べて
-npm run plitest -- examples/tests --xml out/     # CI 用の XML も出す
+npm run plitest -- examples/tests --xml out/     # テストファイルごとに out/<名前>.xml を出す
 npm run plitest -- examples/tests --quiet          # 失敗したファイルだけ表示
 npm run plitest -- a_test.pli --max-steps 100000   # 文の実行数の上限
 npm run plitest -- examples/tests --psb STUPSB     # DL/I（IMS/DB）を使うテスト
@@ -124,14 +125,16 @@ DL/I を使うテストの書き方は [`dli.md`](dli.md)。例は
 ファイルを直接指定したときは名前を問わない。
 
 失敗・異常が 1 件でもあれば**終了コード 1**。そのまま CI に載せられる。
+テストが 1 件も見つからないファイルや、解析できないファイルがあっても 1 になる
+（`--xml` ではそれを 1 件の error として出すので、JUnit 系の集計でも消えない）。
 
 ```
 --- arith_test.pli ---
   OK   TEST_DECIMAL_MULTIPLY_IS_EXACT (2ms)
   FAIL TEST_MOD (1ms)
-       失敗: 17 mod 5 : 期待 3 / 実際 2
+       失敗 (12 行): 17 mod 5 : 期待 3 / 実際 2
   ERR  TEST_OVERFLOW (1ms)
-       異常: FIXEDOVERFLOW
+       異常 (21 行): FIXEDOVERFLOW
 
 テスト 3 / 成功 1 / 失敗 1 / 異常 1 / 省略 0 / 4ms
 
@@ -145,6 +148,20 @@ DL/I を使うテストの書き方は [`dli.md`](dli.md)。例は
 （成功した分まで出すと報告が埋もれるので添えない）。
 `TEARDOWN` が走っていることもここで分かる。
 
+### 行番号は「テストファイルの中の行」
+
+括弧の中の行は**テストファイルの行**である。駆動プログラムの行ではない。
+
+フレームワークは利用者のソースの前に表明の一式（80 行ほど）を差し込むので、
+駆動プログラムの行番号をそのまま出すと、テストファイルのどこでもない行を指す。
+差し込んだ行数は組み立てた文字列から数えており、表明を足しても狂わない。
+
+誤りが**前置きの中**で起きることもある（`ASSERT_EQUALS` が
+`FIXED DEC(15,5)` へ変換するときの `FIXEDOVERFLOW` など）。
+その場合は呼び出しの鎖をたどって、テストファイルにある一番内側の行
+——つまり**その表明を書いた行**——を出す。
+たどっても見つからなければ**行を出さない**（嘘の行を出さない）。
+
 ## エディタから
 
 | 入口 | 操作 |
@@ -155,7 +172,11 @@ DL/I を使うテストの書き方は [`dli.md`](dli.md)。例は
 どちらも、主手続きが無く `TEST_` 手続きがある場合は
 `実行` でもテストとして走る（そのまま実行しても「主手続きが無い」で
 終わるだけなので、振り替えても利用者の意図を損なわない）。
-判定は `isTestFileName()` / `isTestSource()` に置き、両方の入口で同じ基準にしている。
+判定の実体は `isTestFileName()` / `isTestSource()` としてエンジン側（`testing.ts`）に
+置き、どの入口も同じ関数を使う。ただし見るものが違う。
+ブラウザ版にはファイル名が無いので中身（`isTestSource`）だけ、
+VSCode は名前と中身の両方（どちらかが真なら振り替える）、
+`plitest` のディレクトリ走査は名前の規約（`--all` を付けると中身も見る）。
 
 ## プログラムから使う
 
@@ -169,8 +190,15 @@ writeFileSync("out.xml", toXmlReport(report, "math_test"));
 ```
 
 `TestReport` は `{ results, total, passed, failures, errors, skipped, ok, durationMs, note? }`。
-`results[]` の各要素は `{ name, status, message?, stdout, durationMs }` で、
+`results[]` の各要素は `{ name, status, message?, line?, stdout, durationMs }` で、
 `status` は `passed` / `failed` / `error` / `skipped` のいずれか。
+`line` は失敗・異常が起きたテストファイルの行（分かったときだけ）。
+
+```ts
+// CI の注釈（GitHub の Annotations など）はファイルと行の両方が要る。
+// plitest の --xml はこれを渡している
+writeFileSync("out.xml", toXmlReport(report, "math_test", { file: "test/math_test.pli" }));
+```
 
 `failures`（表明の失敗）と `errors`（想定外の異常）を分けてある。
 前者はテストが仕事をした結果で、後者はテストが成り立っていないことを意味し、
@@ -189,7 +217,13 @@ writeFileSync("out.xml", toXmlReport(report, "math_test"));
 
 ## 既知の制限
 
-- 表明は `FIXED DEC(15,5)` の範囲。これを超える数は `ASSERT_EQUALS_CHAR` で比較する
+- `ASSERT_EQUALS` は `FIXED DEC(15,5)` で比較する。**整数部 10 桁・小数部 5 桁**が
+  見える窓で、小数 6 桁目以降の差は見えず、整数部が 11 桁以上なら
+  `FIXEDOVERFLOW` で異常終了する。どちらかに当たるなら `ASSERT_NEAR` か
+  `ASSERT_EQUALS_CHAR` を使う
 - 浮動小数点どうしの近似比較（`assertEquals(a, b, delta)` 相当）は未実装
 - 例外の表明（`assertThrows` 相当）は未実装。`ON` 単位と旗で代用する
-- テストファイルの中で `OPTIONS(MAIN)` を書くと、テストファイルと判定されない
+- テストファイルの中で `OPTIONS(MAIN)` を書くと、手続きがその中に入れ子になるため
+  テストが見つからなくなる。名前が `*_test.pli` などなら `plitest` と VSCode は
+  テストとして走らせようとして「テストが見つかりません」で失敗し（終了コード 1）、
+  名前が合っていないブラウザ版では普通のプログラムとして実行される

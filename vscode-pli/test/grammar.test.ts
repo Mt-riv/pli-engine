@@ -118,3 +118,125 @@ describe("DL/I の入口", () => {
     expect(order.indexOf("#dli")).toBeLessThan(order.indexOf("#builtin"));
   });
 });
+
+/**
+ * 組込関数の着色と実装の同期。
+ *
+ * 文法が `sqrt` を組込関数として色付けするのに、実行すると
+ * 「未知の関数です」で止まるのは誤解を生む。実装済みと未実装を
+ * 別スコープにして、両者が重ならないことと、
+ * 実装済みの集合が `BUILTIN_NAMES` と一致することを固定する。
+ */
+describe("組込関数のスコープ", () => {
+  /** 選択肢の並びから名前を取り出す。 */
+  const namesOf = (match: string): string[] => {
+    const inner = match
+      .replace("(?i)\\b(", "")
+      .replace(")\\b(?=\\s*\\()", "");
+    return inner.split("|").map((n) => n.toUpperCase()).sort();
+  };
+
+  const implemented = namesOf(grammar.repository.builtin.match);
+  const unimplemented = namesOf(grammar.repository.unimplemented.match);
+
+  it("実装済みの集合はエンジンの BUILTIN_NAMES と一致する", () => {
+    const src = readFileSync(
+      join(import.meta.dirname, "../../engine/src/interp.ts"),
+      "utf8",
+    );
+    const m = /export const BUILTIN_NAMES: ReadonlySet<string> = new Set\(\[(.*?)\]\);/s.exec(src);
+    expect(m).not.toBeNull();
+    const engine = [...m![1]!.matchAll(/"([A-Z0-9_]+)"/g)].map((x) => x[1]!).sort();
+    expect(implemented).toEqual(engine);
+  });
+
+  it("実装済みと未実装は重ならない", () => {
+    const both = implemented.filter((n) => unimplemented.includes(n));
+    expect(both).toEqual([]);
+  });
+
+  it("未実装にも PL/I の組込関数が残っている（文法は言語を表す）", () => {
+    expect(unimplemented).toContain("SQRT");
+    expect(unimplemented).toContain("DATE");
+    expect(unimplemented.length).toBeGreaterThan(50);
+  });
+
+  /*
+   * 未実装の表は**エンジンが正**。
+   *
+   * 同じ一覧が文法ファイルとエンジンの 2 か所にあると、
+   * 片方だけ直したときに「色は未実装のままなのに動く」
+   * （あるいは逆）という食い違いが生まれる。
+   * 機械で突き合わせて、1 つの表として扱う。
+   */
+  it("未実装の集合はエンジンの UNIMPLEMENTED_BUILTINS と一致する", () => {
+    const src = readFileSync(
+      join(import.meta.dirname, "../../engine/src/interp.ts"),
+      "utf8",
+    );
+    const m =
+      /export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set\(\[(.*?)\]\);/s.exec(
+        src,
+      );
+    expect(m).not.toBeNull();
+    const engine = [
+      ...new Set([...m![1]!.matchAll(/"([A-Z0-9_]+)"/g)].map((x) => x[1]!)),
+    ].sort();
+    expect(unimplemented).toEqual(engine);
+  });
+
+  it("どちらも関数呼び出しの形のときだけ着色する", () => {
+    expect(grammar.repository.builtin.match).toContain("(?=\\s*\\()");
+    expect(grammar.repository.unimplemented.match).toContain("(?=\\s*\\()");
+  });
+});
+
+/**
+ * 字下げの規則。
+ *
+ * `put list('do it');` のように文字列の中に `do` があるだけで
+ * 字下げを増やしてはいけない。1 行で閉じた DO 群も増やさない。
+ */
+describe("字下げ", () => {
+  const config = JSON.parse(
+    readFileSync(join(import.meta.dirname, "../language-configuration.json"), "utf8"),
+  );
+  const increase = new RegExp(
+    config.indentationRules.increaseIndentPattern.replace("(?i)", ""),
+    "i",
+  );
+  const decrease = new RegExp(
+    config.indentationRules.decreaseIndentPattern.replace("(?i)", ""),
+    "i",
+  );
+
+  it("ブロックを開く行で増やす", () => {
+    for (const line of [
+      "do i = 1 to 3;",
+      "  do while(x);",
+      "outer: do i = 1 to 3;",
+      "m: proc options(main);",
+      "select (x);",
+      "  begin;",
+    ]) {
+      expect(increase.test(line), line).toBe(true);
+    }
+  });
+
+  it("文字列の中の do や 1 行完結の DO 群では増やさない", () => {
+    for (const line of [
+      "  put list('do it');",
+      "  do i=1 to 3; put list(i); end;",
+      "  x = 1;",
+      "  /* begin の説明 */",
+    ]) {
+      expect(increase.test(line), line).toBe(false);
+    }
+  });
+
+  it("END で減らす", () => {
+    expect(decrease.test("  end m;")).toBe(true);
+    expect(decrease.test("end;")).toBe(true);
+    expect(decrease.test("  x = 1;")).toBe(false);
+  });
+});

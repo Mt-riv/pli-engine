@@ -2,6 +2,11 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
+<!-- この処理系はすべてブラウザ内で動き、通信を一切しない。
+     外部への接続とフォーム送信を全面的に禁止しておく。
+     将来 XSS が入り込んでも、持ち出す先が無い形にするため。 -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PL/I エンジン</title>
 <style>
@@ -76,6 +81,13 @@
   }
   .status .ok { color: var(--ok); } .status .err { color: var(--err); }
   .hidden { display: none !important; }
+  /* 共有 URL から読み込んだときの確認バー。
+     他人のコードを黙って実行しないために挟む */
+  .shared {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    padding: 8px 12px; border-bottom: 1px solid var(--border);
+    background: var(--panel); font-size: 13px; color: var(--warn);
+  }
   /* 付随ファイル（%INCLUDE の取り込み元や入出力の相手）を書く引き出し */
   .drawer { display: flex; flex-direction: column; height: 38%; min-height: 0;
             border-top: 1px solid var(--border); }
@@ -98,6 +110,11 @@
   <span class="ver">すべてブラウザ内で動作（サーバ不要）</span>
 </header>
 
+<div class="shared hidden" id="shared">
+  <span>共有された URL のコードを読み込みました。中身を確かめてから実行してください。</span>
+  <button id="shared-run" class="primary">実行する</button>
+  <button id="shared-dismiss">閉じる</button>
+</div>
 <main>
   <div class="pane">
     <div class="pane-head">

@@ -1,0 +1,12 @@
+/* 10 進固定小数点の演算。JS の 2 進浮動小数で代用すると
+   123.45 * 6.7 が 827.1149999999999 になる。
+
+   **除算はここに入れない。** 除算の結果の桁数は最大精度 N で決まり、
+   実機（Iron Spring）の N は 18、この処理系は IBM PL/I for MVS and VM 1.1 に
+   合わせて 15 なので、どんな除算でも桁数が一致しない。
+   この差は engine/README「実機と違えている点」に書いてある。 */
+decimal: proc options(main);
+  put skip list(123.45 * 6.7);
+  put skip list(mod(17, 5));
+  put skip list(length('abcdefghi'));
+end decimal;

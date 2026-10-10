@@ -1,0 +1,16 @@
+/* F 書式の丸めが「書式の性質」なのか「代入の性質」なのかを分ける。
+   PL/I の規定では FIXED への代入は切り捨てだが、F 書式は丸めると
+   読める。pli-engine は同じ経路で実装しているので、違えば分ける必要がある。 */
+dassign: proc options(main);
+  dcl x fixed dec(5,2);
+  dcl y fixed dec(5,1);
+  x = 1.26; y = x;
+  put skip list('y=x  (1.26) ', y);
+  x = 1.25; y = x;
+  put skip list('y=x  (1.25) ', y);
+  x = -1.26; y = x;
+  put skip list('y=x  (-1.26)', y);
+  y = 1.26;
+  put skip list('y=1.26      ', y);
+  put skip edit('x=1.26 f(6,1)[', 1.26, ']')(a, f(6,1), a);
+end dassign;

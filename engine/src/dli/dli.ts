@@ -145,6 +145,11 @@ export class DliRuntime {
 
     // SSA を解析する。書式の誤りは AJ
     const levels: Level[] = [];
+    /**
+     * SSA に書いたセグメントの `SENSEG PROCOPT=`。
+     * PCB 単位の `PROCOPT` に加えて、これも満たさなければならない。
+     */
+    const sensegOpts: string[] = [];
     for (const text of ssaTexts) {
       if (text.trim() === "") continue;
       const parsed = parseSsa(text, dbd);
@@ -154,27 +159,35 @@ export class DliRuntime {
           throw new DliUnsupported(`コマンドコード ${c} は未実装です`);
         }
       }
-      if (!pcb.def.senseg.has(parsed.ssa.segment)) {
+      const senseg = pcb.def.senseg.get(parsed.ssa.segment);
+      if (senseg === undefined) {
         // AM — PROCOPT / 感知の範囲外
         return this.done(pcb, "AM");
       }
+      // SENSEG ごとに PROCOPT を上書きできる。読むだけで効かせないと、
+      // 「読み取り専用にしたつもりのセグメントが書ける」ことになる
+      if (senseg.procopt !== undefined) sensegOpts.push(senseg.procopt);
       levels.push({ ssa: parsed.ssa, seg: dbd.segments.get(parsed.ssa.segment)! });
     }
     if (!hierarchic(dbd, levels)) return this.done(pcb, "AC");
 
+    /** PCB の PROCOPT と、SSA に書いた SENSEG の PROCOPT の両方を満たすか。 */
+    const permitted = (what: "get" | "insert" | "replace" | "delete"): boolean =>
+      allows(pcb.def.procopt, what) && sensegOpts.every((o) => allows(o, what));
+
     if (GET_FUNCTIONS.has(code)) {
-      if (!allows(pcb.def.procopt, "get")) return this.done(pcb, "AM");
+      if (!permitted("get")) return this.done(pcb, "AM");
       return this.get(pcb, db, dbd, code, levels);
     }
     switch (code) {
       case "ISRT":
-        if (!allows(pcb.def.procopt, "insert")) return this.done(pcb, "AM");
+        if (!permitted("insert")) return this.done(pcb, "AM");
         return this.insert(pcb, db, dbd, ioArea, levels);
       case "REPL":
-        if (!allows(pcb.def.procopt, "replace")) return this.done(pcb, "AM");
+        if (!permitted("replace")) return this.done(pcb, "AM");
         return this.replace(pcb, db, dbd, ioArea);
       default:
-        if (!allows(pcb.def.procopt, "delete")) return this.done(pcb, "AM");
+        if (!permitted("delete")) return this.done(pcb, "AM");
         return this.remove(pcb, db, dbd);
     }
   }
@@ -192,22 +205,36 @@ export class DliRuntime {
     const unique = code === "GU" || code === "GHU";
     const inParent = code === "GNP" || code === "GHNP";
 
+    // **ホールドは 1 回の呼び出しで使い切る。**
+    // 取り出しの入口で必ず落とし、GH 系が成功したときだけ付け直す。
+    // 落とさないと「GHU → 失敗した GU → REPL」が DJ にならず、
+    // 別のセグメントを置き換えてしまう
+    pcb.hold = undefined;
+
     let found: Occurrence | undefined;
     let warning = OK;
 
     if (unique) {
       found = this.locate(db, dbd, levels, pcb.position);
-      if (found === undefined) return this.done(pcb, "GE");
+      if (found === undefined) {
+        // 位置づけに失敗したら親の確立も解ける（GNP は GP になる）
+        pcb.parentage = undefined;
+        return this.done(pcb, "GE");
+      }
     } else if (inParent) {
       const parent = pcb.parentage;
       // GP — 親が確立していない
       if (parent === undefined) return this.done(pcb, "GP");
-      found = this.scan(db, dbd, levels, pcb.position, parent);
+      found = this.scan(pcb, db, dbd, levels, pcb.position, parent);
+      // GNP の失敗では親の確立を解かない（配下を走査し終えただけ）
       if (found === undefined) return this.done(pcb, "GE");
     } else {
-      found = this.scan(db, dbd, levels, pcb.position, undefined);
+      found = this.scan(pcb, db, dbd, levels, pcb.position, undefined);
       // GB — データベースの終端に達した
-      if (found === undefined) return this.done(pcb, "GB");
+      if (found === undefined) {
+        pcb.parentage = undefined;
+        return this.done(pcb, "GB");
+      }
       if (levels.length === 0 && pcb.position !== undefined) {
         warning = sequentialWarning(dbd, pcb.position, found);
       }
@@ -227,7 +254,16 @@ export class DliRuntime {
 
   /**
    * SSA の並びをたどって 1 件に絞る（GU）。
-   * 各レベルで候補を作り、先頭（または `L` なら末尾）を選ぶ。
+   *
+   * 各レベルの候補を順に試し、**下のレベルで行き止まったら次の候補へ戻る**
+   * （深さ優先の探索）。IMS は全 SSA を満たす最初の経路まで階層順に探すので、
+   * 上のレベルを 1 つ選んだだけで打ち切ってはいけない。
+   *
+   * 以前は各レベルで先頭の候補に固定していたため、
+   * `GU STUDENT, COURSE(COURSEID =C003)` のように上位が無修飾で
+   * 下位が 2 人目の学生の配下にあるとき、`GE` を返していた。
+   *
+   * `L` コマンドコードはそのレベルの候補を後ろから試す。
    */
   private locate(
     db: Database,
@@ -236,15 +272,18 @@ export class DliRuntime {
     position: Occurrence | undefined,
   ): Occurrence | undefined {
     if (levels.length === 0) return db.first();
-    let parent: Occurrence | undefined;
-    let chosen: Occurrence | undefined;
-    for (const lv of levels) {
+    const search = (i: number, parent: Occurrence | undefined): Occurrence | undefined => {
+      const lv = levels[i]!;
       const cands = this.candidates(db, dbd, lv, parent, position);
-      chosen = lv.ssa.commands.includes("L") ? cands[cands.length - 1] : cands[0];
-      if (chosen === undefined) return undefined;
-      parent = chosen;
-    }
-    return chosen;
+      const order = lv.ssa.commands.includes("L") ? [...cands].reverse() : cands;
+      for (const c of order) {
+        if (i === levels.length - 1) return c;
+        const deeper = search(i + 1, c);
+        if (deeper !== undefined) return deeper;
+      }
+      return undefined;
+    };
+    return search(0, undefined);
   }
 
   /**
@@ -252,6 +291,7 @@ export class DliRuntime {
    * `within` を渡すとその配下だけを見る。
    */
   private scan(
+    pcb: PcbState,
     db: Database,
     dbd: DbdDef,
     levels: Level[],
@@ -273,6 +313,10 @@ export class DliRuntime {
     }
     for (; at !== undefined; at = db.next(at)) {
       if (within !== undefined && !inRange(at)) return undefined;
+      // **感知していないセグメントは見えない。**
+      // 実機の PCB は SENSEG だけが見える階層なので、
+      // 無修飾の GN でも感知外の型は返してはいけない
+      if (!pcb.def.senseg.has(at.type)) continue;
       if (levels.length === 0) return at;
       const last = levels[levels.length - 1]!;
       if (at.type !== last.ssa.segment) continue;
@@ -312,6 +356,8 @@ export class DliRuntime {
         ? db.hierarchy().filter((o) => o.type === lv.ssa.segment)
         : descendantsOf(parent).filter((o) => o.type === lv.ssa.segment);
     return pool.filter((o) => this.matches(dbd, lv, o, position));
+    // 型は SSA で指定されているので、感知の検査は呼び出しの入口
+    // （`call` の SENSEG 検査）で済んでいる
   }
 
   /** 修飾に合うか。 */
@@ -400,15 +446,37 @@ export class DliRuntime {
     if (levels.length === 0) return this.done(pcb, "AD");
     const target = levels[levels.length - 1]!;
     const path = levels.slice(0, -1);
+
+    // 挿入する側の SSA（最下位）に修飾を付けてはいけない。
+    // 付けても条件は使われないので、黙って通すと「条件に合うものを
+    // 挿入した」と誤解される
+    if (target.ssa.qualified) return this.done(pcb, "AJ");
+
     let parent: Occurrence | undefined;
     if (path.length > 0) {
       parent = this.locate(db, dbd, path, pcb.position);
       if (parent === undefined) return this.done(pcb, "GE");
+    } else if (target.seg.parent !== undefined) {
+      // **親の SSA を省いたら現在位置から親を決める。**
+      // 「GU / GN で親を取る → 子を無修飾 SSA 1 つで ISRT」は
+      // IMS で最もよく書かれる挿入の形。ロードモードの
+      // 「親 ISRT → 子 ISRT」も同じ形になる。
+      parent = this.parentFromPosition(pcb, target.seg.parent);
+      if (parent === undefined) {
+        // 位置が無い、または位置の祖先に親の型が無い。
+        // ロードモードなら「親が無い」の LD、ふつうは GE
+        return this.done(pcb, pcb.def.procopt.includes("L") ? "LD" : "GE");
+      }
     }
     // 挿入先は、絞り込んだ親の直接の子でなければならない
     const expected = parent === undefined ? undefined : parent.type;
     if (target.seg.parent !== expected) return this.done(pcb, "AC");
 
+    // 改行などの制御文字を入れると、unload が行を分割して
+    // データファイルが壊れる（次回の読み込みで「DBD にありません」になる）
+    if (/[\r\n\t\0]/.test(ioArea.slice(0, target.seg.bytes))) {
+      return this.done(pcb, "AJ");
+    }
     const data = ioArea.padEnd(target.seg.bytes).slice(0, target.seg.bytes);
     const siblings = parent === undefined ? db.roots : parent.children;
     const key = keyOf(target.seg, data);
@@ -434,6 +502,26 @@ export class DliRuntime {
     return { status: OK };
   }
 
+  /**
+   * 現在位置から、指定した型の親を探す。
+   *
+   * 位置そのものがその型ならそれを使い、違えば祖先をたどる。
+   * 直前の `GU` / `GN` が確立した位置が親になる、という
+   * 実機の挙動に合わせるため。
+   */
+  private parentFromPosition(
+    pcb: PcbState,
+    parentType: string,
+  ): Occurrence | undefined {
+    const at = pcb.position;
+    if (at === undefined) return undefined;
+    if (at.type === parentType) return at;
+    for (let o = at.parent; o !== undefined; o = o.parent) {
+      if (o.type === parentType) return o;
+    }
+    return undefined;
+  }
+
   /** ロードモード（PROCOPT=L）の順序の検査。 */
   private loadCheck(
     dbd: DbdDef,
@@ -457,8 +545,11 @@ export class DliRuntime {
     const last = [...siblings].reverse().find((s) => s.type === seg.name);
     if (last === undefined || seg.sequence === undefined) return OK;
     const prev = Database.keyValue(dbd, last);
-    // LB — 同じキーのセグメントが既にある / LC — キーの順序が崩れた
-    if (key === prev) return "LB";
+    // LB — 同じキーのセグメントが既にある。
+    // **一意キー（`U`）のときだけ。** 非一意キー（`M`）は重複を許すので、
+    // 同じキーを 2 回ロードしても誤りではない
+    if (key === prev && seg.sequence.unique) return "LB";
+    // LC — キーの順序が崩れた
     if (key < prev) return "LC";
     return OK;
   }
@@ -468,6 +559,10 @@ export class DliRuntime {
     // DJ — 直前に GHU / GHN / GHNP が無い
     if (held === undefined) return this.done(pcb, "DJ");
     const seg = dbd.segments.get(held.type)!;
+    // ISRT と同じく、制御文字はデータファイルを壊すので断る
+    if (/[\r\n\t\0]/.test(ioArea.slice(0, seg.bytes))) {
+      return this.done(pcb, "AJ");
+    }
     const data = ioArea.padEnd(seg.bytes).slice(0, seg.bytes);
     // DA — キー項目を変更した
     if (seg.sequence !== undefined && keyOf(seg, data) !== Database.keyValue(dbd, held)) {
