@@ -205,6 +205,20 @@ end invq;
 
 ## 動かす
 
+動く一式が `engine/examples/screen/` にある。
+品番を引いて名前を出す会話（在庫照会）で、画面とデータベースを
+1 本のプログラムで使う形になっている。
+
+```
+engine/examples/screen/
+  dbinq.pli    プログラム
+  dbinq.mfs    書式定義（MID / MOD / DIF / DOF）
+  dbinq.keys   端末の台本
+  INVPSB.psb   先頭が入出力 PCB、2 つめが ITEM の DB PCB
+  ITEM.dbd     階層の定義
+  ITEM.dat     データ
+```
+
 ### ブラウザ版
 
 付随ファイルに `::: 名前.mfs` で書式定義を、`::: 名前.psb` で PSB を置き、
@@ -219,7 +233,7 @@ PF キーは右の一覧から選んで「送信」。
 端末のかわりに**台本**を流す。
 
 ```
-npm run pli -- invq.pli --psb INVPSB --keys invq.keys
+npm run pli -- examples/screen/dbinq.pli --psb INVPSB --keys examples/screen/dbinq.keys
 ```
 
 書式定義はソースと同じディレクトリの `*.mfs` を全部読む
@@ -229,7 +243,10 @@ npm run pli -- invq.pli --psb INVPSB --keys invq.keys
 
 コマンド「PL/I: 画面を動かす（MFS）」。書式定義と台本はソースと同じ
 場所から読み、画面像を出力パネルに出す。編集中で未保存のものは
-その内容を使う。
+その内容を使う。PSB も同じ場所の `*.psb` を使う（1 つだけのとき）。
+
+`engine/examples/screen/dbinq.pli` を開いてこのコマンドを実行すれば、
+設定を触らずにそのまま動く。
 
 ## 台本（`*.keys`）
 

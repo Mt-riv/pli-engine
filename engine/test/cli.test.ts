@@ -15,6 +15,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { psbBeside } from "../scripts/node-host.js";
 
 const SCRIPTS = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts");
 
@@ -220,6 +221,47 @@ describe("plitest", () => {
 
   it("--help は終了コード 0", () => {
     expect(run("plitest.ts", ["--help"]).code).toBe(0);
+  });
+});
+
+/**
+ * ソースの隣の PSB を既定にする規則。
+ *
+ * CLI（plitest）と VSCode 拡張が同じ関数を使う。拡張が自前で設定
+ * `pli.dli.psb` だけを見ていたころは、`plitest examples/tests` が全部通るのに
+ * 同じファイルをエディタから走らせると DL/I のテストが全部
+ * 「PSB が指定されていません」で異常になっていた。
+ */
+describe("psbBeside", () => {
+  it("ちょうど 1 つなら使う", () => {
+    const d = mkdtempSync(join(tmpdir(), "pli-psb1-"));
+    writeFileSync(join(d, "STUPSB.psb"), "");
+    expect(psbBeside(join(d, "a.pli"))).toBe("STUPSB");
+  });
+
+  it("2 つ以上なら選ばない（どちらでもない答えを黙って出さない）", () => {
+    const d = mkdtempSync(join(tmpdir(), "pli-psb2-"));
+    writeFileSync(join(d, "STUPSB.psb"), "");
+    writeFileSync(join(d, "INVPSB.psb"), "");
+    expect(psbBeside(join(d, "a.pli"))).toBeUndefined();
+  });
+
+  it("無ければ undefined", () => {
+    const d = mkdtempSync(join(tmpdir(), "pli-psb0-"));
+    expect(psbBeside(join(d, "a.pli"))).toBeUndefined();
+  });
+
+  it("IMS の名前になれないものは数に入れない", () => {
+    // `my-psb.psb` を数えると、STUPSB があっても「2 つあるので選ばない」
+    // になり、数えずに選ぶと「PSB 名 my-psb は使えません」で止まる
+    const d = mkdtempSync(join(tmpdir(), "pli-psb3-"));
+    writeFileSync(join(d, "STUPSB.psb"), "");
+    writeFileSync(join(d, "my-psb.psb"), "");
+    expect(psbBeside(join(d, "a.pli"))).toBe("STUPSB");
+  });
+
+  it("読めないディレクトリでも投げない", () => {
+    expect(psbBeside(join(tmpdir(), "pli-no-such-dir-xyz", "a.pli"))).toBeUndefined();
   });
 });
 

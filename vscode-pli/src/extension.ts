@@ -13,7 +13,9 @@ import {
   runTestsForEditor,
   looksLikeTestFile,
   snippetCompletions,
+  choosePsb,
   type EditorDiagnostic,
+  type PsbChoice,
 } from "./core.js";
 import { isFragmentFileName, RULES } from "../../engine/src/index.js";
 import type { FileMode, PliFile, PliHost, RuleSetting } from "../../engine/src/index.js";
@@ -25,6 +27,7 @@ import {
   isSafeWriteTarget,
   resolveName,
 } from "../../engine/scripts/safe-path.js";
+import { psbBeside } from "../../engine/scripts/node-host.js";
 
 /**
  * 扱う言語 ID。
@@ -323,29 +326,62 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   /**
-   * PSB の名前を読む。
+   * どの PSB を使うか決める。
    *
-   * ワークスペースの `.vscode/settings.json` から来る値がそのまま
-   * ファイル名になるので、IMS の名前の形だけを通す。
+   * 決め方そのものは `core.ts` の `choosePsb` にある（VSCode 無しで
+   * テストできる側）。ここは VSCode から値を集めて警告を出すだけ。
+   *
+   * この判断が丸ごとここにあったころ、ソースの隣の `*.psb` を見る段が
+   * 抜けていても気づけなかった。`extension.ts` は `vscode` を import
+   * するので vitest から読めず、1 行も実行されていない。
    */
-  const psbSetting = (): string => {
-    const raw = config().get<string>("dli.psb", "").trim();
-    if (raw === "" || /^[A-Za-z0-9$#@]{1,8}$/.test(raw)) return raw;
-    void vscode.window.showWarningMessage(
-      `設定 pli.dli.psb の値「${raw}」は IMS の名前として使えません` +
-        "（1〜8 桁の英数字と $ # @ だけ）。DL/I は無効にします。",
-    );
-    return "";
+  const psbFor = (doc: vscode.TextDocument): PsbChoice => {
+    const beside = doc.isUntitled ? undefined : psbBeside(doc.fileName);
+    const choice = choosePsb({
+      setting: config().get<string>("dli.psb", ""),
+      ...(beside === undefined ? {} : { beside }),
+    });
+    if (choice.warning !== undefined) {
+      void vscode.window.showWarningMessage(choice.warning);
+    }
+    return choice;
   };
 
-  const limits = (doc: vscode.TextDocument, dryRun = false) => ({
+  // 1 回の実行で psbFor は 1 度だけ呼ぶ（設定が不正なときの警告が
+  // 2 枚出ないように、実行と報告で同じ結果を使い回す）
+  const limits = (doc: vscode.TextDocument, psb: PsbChoice, dryRun = false) => ({
     maxSteps: positive("run.maxSteps", 5_000_000),
     maxOutputBytes: positive("run.maxOutputBytes", 1_000_000),
     host: hostFor(doc, { dryRun }),
     // DL/I を使うときだけ設定する。空なら CALL PLITDLI は
     // 「PSB が指定されていません」と言って止まる
-    psb: psbSetting(),
+    psb: psb.name,
   });
+
+  /**
+   * 結果を出力パネルへ出し、診断を貼り直す。
+   *
+   * 実行時の診断は**静的な診断に足して**貼る。置き換えると、
+   * 成功したときに Linter の指摘が消える（実行するたびに黄線が消えて、
+   * また入力すると戻る、という挙動になる）。
+   */
+  const report = (
+    doc: vscode.TextDocument,
+    psb: PsbChoice,
+    text: string,
+    runDiagnostics: readonly EditorDiagnostic[],
+  ): void => {
+    output.clear();
+    // 設定に書いていない PSB を使ったときは、どれを使ったかを言う。
+    // 黙って拾うと、同じソースが置き場所で挙動を変える理由が分からない
+    if (psb.fromDir) output.appendLine(`DL/I の PSB: ${psb.name}（ソースの隣から）`);
+    output.appendLine(text);
+    output.show(true);
+    diagnostics.set(doc.uri, [
+      ...staticDiagnostics(doc),
+      ...runDiagnostics.map(toVsDiagnostic),
+    ]);
+  };
 
   const runTests = (): void => {
     const doc = activeDocument();
@@ -354,17 +390,10 @@ export function activate(context: vscode.ExtensionContext): void {
     // テストは既定で実ファイルへ書き戻さない。CLI の plitest と同じ約束。
     // 書き戻すと、テストが書いたファイルで次回の結果が変わる
     // （DL/I の DLET を試すテストで実際に起きた）
-    const outcome = runTestsForEditor(doc.getText(), name, limits(doc, true));
-
-    output.clear();
-    output.appendLine(outcome.text);
-    output.show(true);
-    // 失敗・異常の行に印を付ける。静的な診断に**足して**貼る
-    // （置き換えると Linter の指摘が消える）
-    diagnostics.set(doc.uri, [
-      ...staticDiagnostics(doc),
-      ...outcome.diagnostics.map(toVsDiagnostic),
-    ]);
+    const psb = psbFor(doc);
+    const outcome = runTestsForEditor(doc.getText(), name, limits(doc, psb, true));
+    // 失敗・異常の行に印を付ける
+    report(doc, psb, outcome.text, outcome.diagnostics);
   };
 
   /**
@@ -418,19 +447,14 @@ export function activate(context: vscode.ExtensionContext): void {
       keysPath = join(dir, pick);
     }
 
+    const psb = psbFor(doc);
     const outcome = runScreenForEditor(doc.getText(), doc.fileName, {
-      ...limits(doc),
+      ...limits(doc, psb),
       mfs,
       keys: read(keysPath),
       keysName: basename(keysPath),
     });
-    output.clear();
-    output.appendLine(outcome.text);
-    output.show(true);
-    diagnostics.set(doc.uri, [
-      ...staticDiagnostics(doc),
-      ...outcome.diagnostics.map(toVsDiagnostic),
-    ]);
+    report(doc, psb, outcome.text, outcome.diagnostics);
   };
 
   const execute = async (args: string[]): Promise<void> => {
@@ -447,18 +471,10 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const outcome = runForEditor(source, name, { ...limits(doc), args });
+    const psb = psbFor(doc);
+    const outcome = runForEditor(source, name, { ...limits(doc, psb), args });
 
-    output.clear();
-    output.appendLine(outcome.report);
-    output.show(true);
-    // 実行時の診断を**静的な診断に足して**貼る。
-    // 置き換えると、成功したときに Linter の指摘が消える
-    // （実行するたびに黄線が消えて、また入力すると戻る、という挙動になる）
-    diagnostics.set(doc.uri, [
-      ...staticDiagnostics(doc),
-      ...outcome.diagnostics.map(toVsDiagnostic),
-    ]);
+    report(doc, psb, outcome.report, outcome.diagnostics);
   };
 
   // `pli` の Snippet は package.json の宣言で載せている。

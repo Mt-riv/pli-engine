@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   checkSyntax,
+  choosePsb,
   looksLikeTestFile,
   runForEditor,
   runScreenForEditor,
@@ -486,5 +487,59 @@ end p;
     expect(r.ok).toBe(false);
     expect(r.diagnostics.length).toBeGreaterThan(0);
     expect(r.text).toMatch(/セグメント長 LL/);
+  });
+});
+
+/**
+ * どの PSB を使うか。
+ *
+ * この判断は `extension.ts` にあった。そこは `vscode` を import するので
+ * vitest から読めず、1 行も実行されていない。そのため
+ * **ソースの隣の `*.psb` を見る段が抜けていても緑のまま**だった
+ * （`plitest examples/tests` は通るのに、同じファイルをエディタから
+ * 走らせると DL/I のテストが全部「PSB が指定されていません」で異常）。
+ */
+describe("choosePsb", () => {
+  it("設定があればそれを使う", () => {
+    expect(choosePsb({ setting: "STUPSB", beside: "INVPSB" })).toEqual({
+      name: "STUPSB",
+      fromDir: false,
+    });
+  });
+
+  it("前後の空白は落とす", () => {
+    expect(choosePsb({ setting: "  STUPSB  " }).name).toBe("STUPSB");
+  });
+
+  it("設定が空ならソースの隣から拾う", () => {
+    expect(choosePsb({ setting: "", beside: "STUPSB" })).toEqual({
+      name: "STUPSB",
+      fromDir: true,
+    });
+  });
+
+  it("隣から拾ったことが分かる（出力に出すため）", () => {
+    expect(choosePsb({ setting: "", beside: "STUPSB" }).fromDir).toBe(true);
+    expect(choosePsb({ setting: "STUPSB" }).fromDir).toBe(false);
+  });
+
+  it("どちらも無ければ DL/I を使わない", () => {
+    expect(choosePsb({ setting: "" })).toEqual({ name: "", fromDir: false });
+  });
+
+  /**
+   * 書き間違えた設定で隣へ落ちると、「設定は無視します」と言いながら
+   * 別の PSB で動くことになる。書き間違いが見つからなくなるので落とさない。
+   */
+  it("設定が IMS の名前として使えないときは、隣へ落ちずに断る", () => {
+    const r = choosePsb({ setting: "TOO-LONG-NAME", beside: "STUPSB" });
+    expect(r.name).toBe("");
+    expect(r.fromDir).toBe(false);
+    expect(r.warning).toMatch(/IMS の名前として使えません/);
+  });
+
+  it("使えた設定では警告を出さない", () => {
+    expect(choosePsb({ setting: "STUPSB" }).warning).toBeUndefined();
+    expect(choosePsb({ setting: "", beside: "STUPSB" }).warning).toBeUndefined();
   });
 });

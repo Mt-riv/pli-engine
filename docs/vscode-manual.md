@@ -10,10 +10,10 @@ PL/I の構文強調・診断・実行・テスト・検査・Snippet を VSCode
 ### リリースから入手する（手軽）
 
 [Releases](https://github.com/Mt-riv/pli-engine/releases) から
-`pli-lang-0.4.0.vsix` をダウンロードします。ビルドは要りません。
+`pli-lang-0.4.1.vsix` をダウンロードします。ビルドは要りません。
 
 ```bash
-gh release download vscode-v0.4.0 --repo Mt-riv/pli-engine
+gh release download vscode-v0.4.1 --repo Mt-riv/pli-engine
 ```
 
 ### 自分で `.vsix` を作る
@@ -22,17 +22,17 @@ gh release download vscode-v0.4.0 --repo Mt-riv/pli-engine
 cd pli-engine/vscode-pli
 npm ci
 npm run build
-npx @vscode/vsce package      # pli-lang-0.4.0.vsix ができる
+npx @vscode/vsce package      # pli-lang-0.4.1.vsix ができる
 ```
 
 VSCode の拡張ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）→ 右上の `…` →
-**「VSIX からのインストール」** → `pli-lang-0.4.0.vsix` を選択。
+**「VSIX からのインストール」** → `pli-lang-0.4.1.vsix` を選択。
 `Developer: Reload Window` で読み込み直します。
 
 `code` コマンドを PATH に通している場合は次でも入ります。
 
 ```bash
-code --install-extension pli-lang-0.4.0.vsix
+code --install-extension pli-lang-0.4.1.vsix
 ```
 
 ### 開発しながら使う
@@ -73,6 +73,9 @@ HELLO, PL/I
 - 実行時エラーは診断としても表示され、問題タブから行へ飛べます
 - 無限ループは上限（文 500 万・出力 100 万文字）で止まります
 - 主手続きに引数を渡すには `PL/I: 引数を指定して実行`
+- IMS/DB（DL/I）はソースと同じディレクトリの `*.psb` を使います（1 つだけのとき）。
+  設定 `pli.dli.psb` が優先。設定から来ていない PSB を使ったときは
+  出力パネルの先頭に `DL/I の PSB: STUPSB（ソースの隣から）` と出ます
 
 ## テストする
 
@@ -114,7 +117,10 @@ end TEST_MOD;
 |---------|---------|
 | 書式定義 `*.mfs` | ソースと同じディレクトリ（全部読む） |
 | 端末の台本 `*.keys` | 同じ名前の `.keys`、無ければ同じ場所から選ぶ |
-| PSB | 設定 `pli.dli.psb`（入出力 PCB を含むもの） |
+| PSB | ソースと同じディレクトリの `*.psb`（1 つだけ）。設定 `pli.dli.psb` が優先。どちらも入出力 PCB を含むもの |
+
+動く例が `engine/examples/screen/` にあります。`dbinq.pli` を開いて
+このコマンドを実行すれば、設定を触らずにそのまま動きます。
 
 画面像が出力パネルに出ます。拡張には端末が無いので、**打つ手順は台本に
 書きます**（書き方は [`mfs.md`](mfs.md)）。編集中で未保存の `.mfs` と
@@ -144,7 +150,7 @@ i は宣言されていません。暗黙に FIXED BIN(15,0) として宣言さ�
 | `pli.lint.rules` | `{}` | 規則ごとの上書き |
 | `pli.run.maxSteps` | `5000000` | 実行する文の数の上限（無限ループ対策） |
 | `pli.run.maxOutputBytes` | `1000000` | 出力の上限（文字数） |
-| `pli.dli.psb` | `""` | IMS/DB（DL/I）で使う PSB の名前。空なら DL/I を使わない |
+| `pli.dli.psb` | `""` | IMS/DB（DL/I）で使う PSB の名前。空ならソースの隣の `*.psb` を使う（1 つだけのとき） |
 
 ```jsonc
 {
@@ -196,6 +202,8 @@ IF IF = THEN THEN THEN = ELSE;
 | 問題タブに大量の警告 | Linter の指摘。`pli.lint.rules` で個別に `off` にできる |
 | `%INCLUDE` が見つからない | 編集中のファイルの隣かワークスペース直下に置く。拡張子は `.inc` などを自動で試す |
 | テストが「テストが見つかりません」 | 手続き名が `TEST_` で始まっているか、引数を取っていないかを確認 |
+| DL/I のテストが全部「PSB が指定されていません」で異常 | ソースと同じディレクトリに `*.psb` が 1 つだけあるか確認する。2 つ以上あると選べないので、設定 `pli.dli.psb` に名前を書く |
+| 「主手続きの引数 … はポインタで宣言されています」 | PCB を受け取る IMS のプログラム。上と同じく PSB が要る |
 
 ## 開発
 

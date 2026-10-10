@@ -2,7 +2,7 @@
   "name": "pli-lang",
   "displayName": "PL/I",
   "description": "PL/I の構文強調・診断・実行。処理系は拡張に同梱されているので外部のコンパイラを必要としない。",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "publisher": "local",
   "repository": {
@@ -126,7 +126,7 @@
           "pattern": "^([A-Za-z0-9$#@]{1,8})?$",
           "patternErrorMessage": "IMS の名前は 1〜8 桁の英数字と $ # @ だけです。",
           "scope": "machine-overridable",
-          "description": "IMS/DB（DL/I）で使う PSB の名前。指定すると <名前>.psb を読み、主手続きの引数が PCB のポインタになる。空なら CALL PLITDLI は PSB が無いと言って止まる。"
+          "description": "IMS/DB（DL/I）で使う PSB の名前。指定すると <名前>.psb を読み、主手続きの引数が PCB のポインタになる。空のときはソースと同じディレクトリの *.psb を使う（ちょうど 1 つあるときだけ）。それも無ければ CALL PLITDLI は PSB が無いと言って止まる。"
         },
         "pli.run.maxSteps": {
           "type": "number",

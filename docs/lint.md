@@ -98,7 +98,7 @@ Linter は誤検出が出た時点で切られるので、既知の正しいコ�
 
 - ブラウザ版のサンプル 14 本 → 指摘 0
 - `examples/tests` のテストファイル 5 本 → 指摘 0
-- `examples/dli` の例 → 指摘 0（vitest には載せていないが、CI が `npm run plilint -- examples --strict` で見ている）
+- `examples/dli` と `examples/screen` の例 → 指摘 0（CI が `npm run plilint -- examples --strict` で見ている。走らせる方は `test/examples.test.ts`）
 
 判定で気を遣っている点:
 
