@@ -295,7 +295,7 @@ class Parser {
         case "IF":
           return this.parseIf();
         case "DO":
-          return this.parseDo();
+          return this.parseDo(labels.map((l) => l.name.toUpperCase()));
         case "GET":
           return this.parseGet();
         case "ALLOCATE":
@@ -1186,12 +1186,14 @@ class Parser {
     return stmt;
   }
 
-  private parseDo(): Stmt {
+  private parseDo(labelNames: string[] = []): Stmt {
     const line = this.next().line; // DO
+    // `LEAVE outer;` の宛先になるので、DO 自身にラベルを持たせる
+    const labels = labelNames.length > 0 ? { labels: labelNames } : {};
 
     // DO;
     if (this.eat("semi")) {
-      return { kind: "doGroup", body: this.parseBlockUntilEnd(), line };
+      return { kind: "doGroup", body: this.parseBlockUntilEnd(), ...labels, line };
     }
 
     // DO WHILE(...) / DO UNTIL(...)
@@ -1203,8 +1205,8 @@ class Parser {
       this.expect("semi", "セミコロン");
       const body = this.parseBlockUntilEnd();
       return which === "WHILE"
-        ? { kind: "doWhile", cond, body, line }
-        : { kind: "doUntil", cond, body, line };
+        ? { kind: "doWhile", cond, body, ...labels, line }
+        : { kind: "doUntil", cond, body, ...labels, line };
     }
 
     // DO var = <指定>[, <指定>...];
@@ -1238,7 +1240,7 @@ class Parser {
     } while (this.eat("comma"));
     this.expect("semi", "セミコロン");
     const body = this.parseBlockUntilEnd();
-    return { kind: "doIter", varName, specs, body, line };
+    return { kind: "doIter", varName, specs, body, ...labels, line };
   }
 
   /** SELECT(expr) ... WHEN(...) ... OTHERWISE ... END */

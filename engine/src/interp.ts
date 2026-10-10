@@ -114,6 +114,19 @@ class IterateSignal {
   constructor(readonly label?: string) {}
 }
 
+/**
+ * `LEAVE` / `ITERATE` が、このループ宛てかどうか。
+ *
+ * ラベルを書いていなければ一番内側のループ宛て。書いてあれば、
+ * **そのラベルが付いたループだけ**が受け止めて、他は外へ投げ直す。
+ * 投げ直さないと `leave outer;` が内側のループを抜けるだけになり、
+ * 誤りも出ないまま意味が変わる。
+ */
+function forThisLoop(e: LeaveSignal | IterateSignal, labels?: string[]): boolean {
+  if (e.label === undefined) return true;
+  return labels?.includes(e.label.toUpperCase()) ?? false;
+}
+
 /** GOTO を実装するための内部例外。飛び先のラベルを運ぶ。 */
 class GotoSignal {
   constructor(readonly label: string) {}
@@ -1398,7 +1411,17 @@ export class Interpreter {
         return;
       }
       case "doGroup":
-        this.execBlock(s.body, scope);
+        // ラベル付きの DO 群は `LEAVE そのラベル;` で抜けられる。
+        // ラベルなしの LEAVE は従来どおり外側のループへ渡す
+        try {
+          this.execBlock(s.body, scope);
+        } catch (e) {
+          const mine =
+            e instanceof LeaveSignal &&
+            e.label !== undefined &&
+            forThisLoop(e, s.labels);
+          if (!mine) throw e;
+        }
         return;
       case "doWhile":
         while (this.truth(this.eval(s.cond, scope, s.line), s.line)) {
@@ -1406,8 +1429,8 @@ export class Interpreter {
           try {
             this.execBlock(s.body, scope);
           } catch (e) {
-            if (e instanceof LeaveSignal) break;
-            if (!(e instanceof IterateSignal)) throw e;
+            if (e instanceof LeaveSignal && forThisLoop(e, s.labels)) break;
+            if (!(e instanceof IterateSignal) || !forThisLoop(e, s.labels)) throw e;
           }
         }
         return;
@@ -1417,8 +1440,8 @@ export class Interpreter {
           try {
             this.execBlock(s.body, scope);
           } catch (e) {
-            if (e instanceof LeaveSignal) break;
-            if (!(e instanceof IterateSignal)) throw e;
+            if (e instanceof LeaveSignal && forThisLoop(e, s.labels)) break;
+            if (!(e instanceof IterateSignal) || !forThisLoop(e, s.labels)) throw e;
           }
         } while (!this.truth(this.eval(s.cond, scope, s.line), s.line));
         return;
@@ -1742,7 +1765,6 @@ export class Interpreter {
    * LEAVE / ITERATE は内部例外で制御する。
    */
   private doIter(s: Extract<Stmt, { kind: "doIter" }>, scope: Scope): void {
-    const key = s.varName.toUpperCase();
     const target: Ref = { kind: "ref", name: s.varName, subscripts: [] };
 
     outer: for (const spec of s.specs) {
@@ -1753,8 +1775,8 @@ export class Interpreter {
         try {
           this.execBlock(s.body, scope);
         } catch (e) {
-          if (e instanceof LeaveSignal) break outer;
-          if (e instanceof IterateSignal) continue;
+          if (e instanceof LeaveSignal && forThisLoop(e, s.labels)) break outer;
+          if (e instanceof IterateSignal && forThisLoop(e, s.labels)) continue;
           throw e;
         }
         continue;
@@ -1770,28 +1792,23 @@ export class Interpreter {
       for (;;) {
         this.step();
         this.assign(target, cur, scope, s.line);
+        // 読み戻しは `evalRef`。`readVar` は DEFINED / BASED の別名を
+        // 解決しないので、`assign` で書いた先と読む先が食い違い、
+        // `do i = 1 to 3;` の i が DEFINED だと終了判定が永久に成立しない
         const c = compare(
-          asFixed(this.readVar(key, scope, s.line), s.line),
+          asFixed(this.evalRef(target, scope, s.line), s.line),
           asFixed(limit, s.line),
         );
         if (down ? c < 0 : c > 0) break;
         try {
           this.execBlock(s.body, scope);
         } catch (e) {
-          if (e instanceof LeaveSignal) break outer;
-          if (!(e instanceof IterateSignal)) throw e;
+          if (e instanceof LeaveSignal && forThisLoop(e, s.labels)) break outer;
+          if (!(e instanceof IterateSignal) || !forThisLoop(e, s.labels)) throw e;
         }
-        cur = add(asFixed(this.readVar(key, scope, s.line), s.line), step);
+        cur = add(asFixed(this.evalRef(target, scope, s.line), s.line), step);
       }
     }
-  }
-
-  private readVar(key: string, scope: Scope, line: number): Value {
-    const v = scope.lookupVar(key);
-    if (!v || v.cells[0] === undefined) {
-      throw new RuntimeError(`変数 ${key} が見つかりません`, line);
-    }
-    return v.cells[0];
   }
 
   private put(s: Extract<Stmt, { kind: "put" }>, scope: Scope): void {

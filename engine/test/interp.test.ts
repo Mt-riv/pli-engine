@@ -223,6 +223,121 @@ describe("制御構造", () => {
   it("IF/ELSE", () =>
     expect(out("m: proc options(main); if 1=1 then put list('T'); else put list('F'); end m;"))
       .toBe("T \n"));
+
+  /**
+   * ラベル付きの `LEAVE` / `ITERATE`。
+   *
+   * ループが自分のラベルを知らないと、一番内側が必ず受け止めてしまう。
+   * 誤りも出ないので、**書いたとおりに動かないのに気づけない**。
+   */
+  describe("ラベル付きの LEAVE / ITERATE", () => {
+    it("LEAVE はラベルの付いたループを抜ける", () => {
+      const src = `m: proc options(main);
+  dcl (i,j) fixed bin(15);
+  outer: do i = 1 to 3;
+    do j = 1 to 3;
+      if j = 2 then leave outer;
+      put skip list(i, j);
+    end;
+  end;
+  put skip list('done');
+end m;`;
+      const r = out(src);
+      // 外側まで抜けるので 1 回だけ出る
+      expect(r.match(/\n/g)).toHaveLength(3); // 先頭の改行 + 2 行
+      expect(r).toContain("done");
+      expect(r.replace(/\s+/g, " ")).toBe(" 1 1 done ");
+    });
+
+    it("ITERATE はラベルの付いたループを次へ進める", () => {
+      const src = `m: proc options(main);
+  dcl (i,j) fixed bin(15);
+  outer: do i = 1 to 3;
+    do j = 1 to 3;
+      if j = 2 then iterate outer;
+      put skip list('body', i, j);
+    end;
+    put skip list('never', i);
+  end;
+end m;`;
+      const r = out(src);
+      expect(r).toContain("body");
+      // 内側を抜けた後の文は実行されない
+      expect(r).not.toContain("never");
+      expect(r.match(/body/g)).toHaveLength(3);
+    });
+
+    it("ラベルを書かなければ一番内側のループ（従来どおり）", () => {
+      const src = `m: proc options(main);
+  dcl (i,j) fixed bin(15);
+  outer: do i = 1 to 2;
+    do j = 1 to 3;
+      if j = 2 then leave;
+      put skip list(i, j);
+    end;
+  end;
+end m;`;
+      expect(out(src).replace(/\s+/g, " ")).toBe(" 1 1 2 1 ");
+    });
+
+    it("ラベル付きの DO 群も抜けられる", () => {
+      const src = `m: proc options(main);
+  blk: do;
+    put skip list('in');
+    leave blk;
+    put skip list('never');
+  end;
+  put skip list('out');
+end m;`;
+      const r = out(src);
+      expect(r).toContain("in");
+      expect(r).toContain("out");
+      expect(r).not.toContain("never");
+    });
+
+    it("対応するループが無いラベルは誤りにする", () => {
+      const r = runRaw(
+        "m: proc options(main); dcl i fixed bin(15); do i=1 to 3; leave nosuch; end; end m;",
+      );
+      expect(r.error).toContain("LEAVE nosuch に対応するループがありません");
+    });
+  });
+
+  /**
+   * 制御変数が別名（`DEFINED` / `BASED`）のとき。
+   *
+   * 書き込みは `assign`（別名を解決する）で、読み戻しは別名を解決しない
+   * 経路だったため、書いた先と読む先が食い違って**終了判定が永久に
+   * 成立しなかった**（`DEFINED`）か、変数が見つからず落ちた（`BASED`）。
+   */
+  describe("別名の制御変数でもループが終わる", () => {
+    it("DEFINED の制御変数", () => {
+      const src = `m: proc options(main);
+  dcl b(3) fixed bin(15);
+  dcl i fixed bin(15) def (b(1));
+  do i = 1 to 3;
+    put skip list(i);
+  end;
+  put skip list('after');
+end m;`;
+      const r = out(src);
+      expect(r).toContain("after");
+      expect(r.replace(/\s+/g, " ")).toBe(" 1 2 3 after ");
+    });
+
+    it("BASED の制御変数", () => {
+      const src = `m: proc options(main);
+  dcl p pointer;
+  dcl i fixed bin(15) based(p);
+  allocate i set(p);
+  do i = 1 to 3;
+    put skip list(i);
+  end;
+  put skip list('after');
+end m;`;
+      expect(out(src).replace(/\s+/g, " ")).toBe(" 1 2 3 after ");
+    });
+  });
 });
 
 describe("エラー", () => {
