@@ -42,7 +42,10 @@ export class Database {
   static load(dbd: DbdDef, text: string, file: string): Database {
     const db = new Database(dbd);
     const last = new Map<string, Occurrence>();
-    const lines = text.split("\n");
+    // CRLF も受ける。`\n` だけで切ると `\r` がデータの末尾に残り、
+    // キーの比較や unload が静かに狂う（Windows や
+    // VSCode の改行設定で起きる）
+    const lines = text.split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
       if (line.trim() === "") continue;
@@ -67,9 +70,19 @@ export class Database {
           );
         }
       }
+      const raw = line.slice(NAME_WIDTH);
+      // 桁あふれは黙って切らない。切ると「書いたはずの値が無い」に
+      // なり、桁ずれを見逃す（SSA は長すぎる値を断っているので揃える）
+      if (raw.trimEnd().length > seg.bytes) {
+        throw new DliDefError(
+          `${type} の行が長すぎます（BYTES=${seg.bytes} に対して ${raw.trimEnd().length} 桁）`,
+          file,
+          lineNo,
+        );
+      }
       const occ: Occurrence = {
         type,
-        data: fit(line.slice(NAME_WIDTH), seg.bytes),
+        data: fit(raw, seg.bytes),
         ...(parent === undefined ? {} : { parent }),
         children: [],
       };
@@ -213,6 +226,29 @@ export class Database {
     file: string,
     line: number,
   ): void {
+    // 兄弟は DBD の子の宣言順に固まって並んでいなければならない。
+    // `COURSE, ADDR, COURSE` のような混在を通すと、階層順が
+    // DBD の並びとずれたまま保持され、以降の挿入でさらに乱れる
+    const order = (type: string): number => {
+      const parentType = occ.parent?.type;
+      const list =
+        parentType === undefined
+          ? [...this.dbd.segments.values()].filter((x) => x.parent === undefined).map((x) => x.name)
+          : (this.dbd.segments.get(parentType)?.children ?? []);
+      return list.indexOf(type);
+    };
+    const mine = order(occ.type);
+    for (const sib of siblings) {
+      if (sib.type === occ.type) continue;
+      if (order(sib.type) > mine) {
+        throw new DliDefError(
+          `${occ.type} が ${sib.type} より後に来ています` +
+            `（兄弟は DBD の子の宣言順に並べてください）`,
+          file,
+          line,
+        );
+      }
+    }
     if (seg.sequence === undefined) return;
     const prev = [...siblings].reverse().find((s) => s.type === occ.type);
     if (prev === undefined) return;

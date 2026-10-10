@@ -1,0 +1,5 @@
+実機: Iron Spring PL/I 1.4.1（Linux / i386）。2026-10-10 に取得。
+取り直す手順は別リポジトリ pli-oracle の README（`./regen.sh <名前>`）。
+固定している規則: FIXED DEC(p,q) のフィールド幅は p+3、FIXED BIN(p,q) は
+10 進換算 +3（BIN(31)→14、BIN(15)→9）、FLOAT DEC(6) は p+8 で
+" 3.50000E+0000" の 14 桁。

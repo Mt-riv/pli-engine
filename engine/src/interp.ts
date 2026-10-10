@@ -15,7 +15,7 @@ import type {
   Ref,
   Stmt,
 } from "./ast.js";
-import { qualifyDeclareItems } from "./declare.js";
+import { groupNames, qualifyDeclareItems } from "./declare.js";
 import type { PliHost } from "./host.js";
 import { makePointer, type PointerVal, type Storage } from "./value.js";
 import {
@@ -40,13 +40,18 @@ import { parsePsb } from "./dli/psb.js";
 import { Database } from "./dli/store.js";
 import { DliRuntime, DliUnsupported, type PcbState } from "./dli/dli.js";
 import { DliDefError, type DbdDef } from "./dli/types.js";
+import { IMS_NAME } from "./dli/macro.js";
 import {
   FixedOverflow,
   MAX_BIN,
   MAX_DEC,
+  ipow,
+  powNeedsFloat,
+  powFitsFixed,
   ZeroDivide,
   add,
   assignTo,
+  roundForFormat,
   binDigitsToDec,
   compare,
   div,
@@ -64,6 +69,16 @@ import {
   type FixedVal,
   type Value,
 } from "./value.js";
+
+/**
+ * 診断に載せる値を短く切る。
+ * 切らないと、長い文字列を数値に変換しようとしたときに
+ * その全文がメッセージになり、UI と CI のログを埋める。
+ */
+function clip(v: string, max = 60): string {
+  const t = JSON.stringify(v);
+  return t.length <= max ? t : `${t.slice(0, max)}…(${v.length} 文字)`;
+}
 
 export class RuntimeError extends Error {
   constructor(
@@ -149,6 +164,14 @@ interface Variable {
    */
   isParam?: boolean;
   /**
+   * 呼び元の記憶域を共有している引数か（参照渡し）。
+   *
+   * PL/I は変数を参照で渡すので、呼び先が書き換えると呼び元に戻る。
+   * ただし宣言した属性が渡された値と違う場合、実機は一時変数
+   * （ダミー引数）を作って値渡しにする。その判定のために印を持つ。
+   */
+  sharedParam?: boolean;
+  /**
    * BASED 宣言。独自の記憶域を持たず、ポインタの先を見る。
    * `pointer` は既定のポインタ（`based(p)` の `p`）。
    * `group` は確保の単位（構造体なら親の名前）。
@@ -156,8 +179,34 @@ interface Variable {
   based?: { pointer?: Ref; group: string };
 }
 
+/**
+ * 実引数の束縛。
+ *
+ * `shared` が真なら呼び元の記憶域そのものを指す（参照渡し）。
+ * 偽なら一時値（ダミー引数）。
+ */
+interface ArgBinding {
+  attr: DataAttr;
+  cells: Value[];
+  dims?: Bound[];
+  shared: boolean;
+}
+
+function isArgBinding(x: Value | ArgBinding): x is ArgBinding {
+  return typeof x === "object" && x !== null && "cells" in x && "shared" in x;
+}
+
 interface ProcDef {
   stmt: Extract<Stmt, { kind: "procedure" }>;
+  /**
+   * 手続きが定義された位置のスコープ。
+   *
+   * 名前解決は**定義された位置**から外へたどる（レキシカルスコープ）。
+   * 呼んだ位置からたどると、呼び先の未宣言の名前が呼び元の変数に化ける。
+   * 登録の時点ではまだスコープが無い場合があるので、
+   * `callProcedure` で補う。
+   */
+  defScope?: Scope;
 }
 
 class Scope {
@@ -165,10 +214,40 @@ class Scope {
   readonly procs = new Map<string, ProcDef>();
   /** ON 単位。条件名から実行する文への対応。 */
   readonly onUnits = new Map<string, Stmt>();
+  /**
+   * 構造体のグループ名から、その配下の葉の修飾名（宣言順）への対応。
+   *
+   * `declare.ts` が構造体を葉の修飾名に潰すので、`vars` にはグループ名が
+   * 入らない。これを持たないと `b = a;` や `PUT LIST(r);` が
+   * 「未宣言のスカラ」として扱われ、暗黙宣言の 0 に落ちる
+   * （無言で間違った結果になる、この処理系で最も悪い壊れ方）。
+   */
+  readonly groups = new Map<string, string[]>();
+  /**
+   * 呼び出し元のスコープ（動的な連鎖）。
+   *
+   * 名前解決は `parent`（レキシカル）をたどるが、**ON 単位は動的**に
+   * 探すのが PL/I の規定なので、そちらはこの連鎖をたどる。
+   */
+  caller?: Scope;
+  /** この手続きの `RETURNS` 属性。`RETURN` 文が合わせる型。 */
+  returns?: DataAttr;
+  /** 手続きの入口で作られたスコープか（`RETURNS` を探す範囲の境界）。 */
+  isProcScope?: boolean;
+
   constructor(readonly parent?: Scope) {}
 
+  /**
+   * ON 単位を探す。
+   *
+   * まずレキシカルに外へ、見つからなければ呼び出し元へたどる。
+   * PL/I の ON 単位は動的に有効になるので、呼び元が置いた
+   * `ON ENDFILE` が呼び先でも効く必要がある。
+   */
   lookupOn(condition: string): Stmt | undefined {
-    return this.onUnits.get(condition) ?? this.parent?.lookupOn(condition);
+    const own = this.onUnits.get(condition);
+    if (own !== undefined) return own;
+    return this.parent?.lookupOn(condition) ?? this.caller?.lookupOn(condition);
   }
 
   lookupVar(name: string): Variable | undefined {
@@ -178,6 +257,30 @@ class Scope {
   lookupProc(name: string): ProcDef | undefined {
     return this.procs.get(name) ?? this.parent?.lookupProc(name);
   }
+
+  /** 構造体のグループなら、配下の葉の修飾名を宣言順で返す。 */
+  lookupGroup(name: string): string[] | undefined {
+    return this.groups.get(name) ?? this.parent?.lookupGroup(name);
+  }
+}
+
+/**
+ * 整数を BIT の 2 進列にする。
+ *
+ * 長さを指定されたら、その幅に右詰めで収める（PL/I の規定）。
+ */
+function toBits(n: number, length?: number): string {
+  const bits = Math.abs(n).toString(2);
+  if (length === undefined) return bits;
+  return bits.length >= length
+    ? bits.slice(bits.length - length)
+    : bits.padStart(length, "0");
+}
+
+/** FIXED を BIT の 2 進列にする。小数部は捨てる（BIT は整数のビット列）。 */
+function fixedToBits(x: FixedVal, length?: number): string {
+  const intVal = assignTo(x, x.base, Math.max(1, x.p - x.q), 0);
+  return toBits(Number(render(intVal).trim()), length);
 }
 
 /**
@@ -194,6 +297,9 @@ function implicitAttr(name: string): DataAttr {
 
 function zeroOf(attr: DataAttr): Value {
   switch (attr.type) {
+    case "implicit":
+      // declare で名前から解決してから渡す。ここには来ない
+      return zeroOf(implicitAttr("X"));
     case "pointer":
       return makePointer();
     case "picture": {
@@ -254,11 +360,40 @@ export interface RunOptions {
    * コマンドライン引数ではなく PCB のポインタになる。
    */
   psb?: string;
+  /**
+   * 1 つの宣言・1 回の ALLOCATE で確保できる要素の数の上限。
+   *
+   * `maxSteps` では止められない。`dcl a(200000000) fixed bin(31);` の
+   * **1 文**でメモリを使い切れるので、文の数とは別に要素数で止める。
+   */
+  maxStorageCells?: number;
+  /**
+   * 文字列の長さの上限。
+   *
+   * `CHAR(n) VARYING` は宣言の n を超えて伸びるので、
+   * `repeat('A', 100000000)` が 1 億文字の値を作れる。
+   */
+  maxStringLength?: number;
+  /** ALLOCATE の回数の上限。 */
+  maxAllocations?: number;
+}
+
+/** 記憶域の上限の既定値。ブラウザのタブを守れる程度に取る。 */
+export const DEFAULT_MAX_STORAGE_CELLS = 1_000_000;
+export const DEFAULT_MAX_STRING_LENGTH = 10_000_000;
+export const DEFAULT_MAX_ALLOCATIONS = 100_000;
+
+/** 記憶域の上限に達したことを表す内部例外。 */
+export class StorageLimitExceeded extends Error {
+  constructor(message: string, readonly line = 1) {
+    super(message);
+    this.name = "StorageLimitExceeded";
+  }
 }
 
 /** 出力上限に達したことを表す内部例外。 */
 export class OutputLimitExceeded extends Error {
-  constructor() {
+  constructor(readonly line = 1) {
     super("出力が上限に達しました");
     this.name = "OutputLimitExceeded";
   }
@@ -266,7 +401,7 @@ export class OutputLimitExceeded extends Error {
 
 /** 文数の上限に達したことを表す内部例外。 */
 export class StepLimitExceeded extends Error {
-  constructor(limit: number) {
+  constructor(limit: number, readonly line = 1) {
     super(`実行した文の数が上限(${limit})に達しました。無限ループの可能性があります`);
     this.name = "StepLimitExceeded";
   }
@@ -287,6 +422,35 @@ export class Interpreter {
   private readonly files: FileTable;
 
   private steps = 0;
+  /**
+   * 実行中の文の行番号。上限に達したときの報告に使う。
+   * これが無いと「無限ループで止まった」の診断が常に 1 行目を指す。
+   */
+  private currentLine = 1;
+  /**
+   * 手続きを呼んだ側の行番号の積み。外側から内側の順。
+   *
+   * 誤りが手続きの中で起きたときに「どこから呼んだか」を報告するために持つ。
+   * これが無いと、テストフレームワークのように**処理系が前置きを差し込む**
+   * 作りでは、報告の行番号が利用者のソースのどこでもない場所を指す。
+   */
+  private callerLines: number[] = [];
+  /**
+   * 誤りで終わったときの `callerLines` の写し。
+   *
+   * 積みは例外が抜けるときに巻き戻るので、投げる時点で控えておく。
+   */
+  private failureCallerLines?: number[];
+  /** ALLOCATE した回数。上限の判定に使う。 */
+  private allocations = 0;
+  /**
+   * STATIC な変数の記憶域。宣言のノードごとに持つ。
+   *
+   * 手続きを抜けても残る必要があるので、スコープではなく
+   * 処理系に持たせる。宣言のノードで引くので、別の手続きに
+   * 同じ名前の STATIC があっても取り違えない。
+   */
+  private readonly staticVars = new Map<DeclItem, Map<string, Variable>>();
   /** 条件の処理中か。ON 単位からの再入を防ぐ。 */
   private inCondition = false;
   /** ENTRY で宣言された外部手続きの名前。呼ばれたときの説明に使う。 */
@@ -323,7 +487,7 @@ export class Interpreter {
    */
   private step(): void {
     if (this.maxSteps !== undefined && ++this.steps > this.maxSteps) {
-      throw new StepLimitExceeded(this.maxSteps);
+      throw new StepLimitExceeded(this.maxSteps, this.currentLine);
     }
   }
 
@@ -335,7 +499,32 @@ export class Interpreter {
   /** 出力が上限を超えていないか確かめる。全ファイルの合計で見る。 */
   private checkOutput(): void {
     if (this.maxOutputBytes !== undefined && this.files.totalWritten() > this.maxOutputBytes) {
-      throw new OutputLimitExceeded();
+      throw new OutputLimitExceeded(this.currentLine);
+    }
+  }
+
+  /**
+   * 確保しようとしている要素の数を確かめる。
+   * 1 文で記憶域を使い切られるのを防ぐ（`maxSteps` では止まらない）。
+   */
+  private checkCells(n: number, what: string, line: number): void {
+    const limit = this.opts.maxStorageCells ?? DEFAULT_MAX_STORAGE_CELLS;
+    if (n > limit) {
+      throw new StorageLimitExceeded(
+        `${what}の要素数 ${n} が上限(${limit})を超えています`,
+        line,
+      );
+    }
+  }
+
+  /** 文字列の長さを確かめる。VARYING は宣言の長さを超えて伸びるため。 */
+  private checkLength(n: number, line: number): void {
+    const limit = this.opts.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH;
+    if (n > limit) {
+      throw new StorageLimitExceeded(
+        `文字列の長さ ${n} が上限(${limit})を超えています`,
+        line,
+      );
     }
   }
 
@@ -346,10 +535,55 @@ export class Interpreter {
   }
 
   run(program: Program): void {
+    try {
+      this.runUnguarded(program);
+    } catch (e) {
+      // 内部で使っている制御用の例外が外へ漏れたら、意味の分かる誤りに直す。
+      // Error ではないので、そのまま漏らすと診断が `[object Object]` になり、
+      // 行番号も 1 固定になる
+      if (e instanceof GotoSignal) {
+        throw new RuntimeError(
+          `ラベル ${e.label} が見つかりません（GOTO の飛び先は同じ並びの中に要ります）`,
+          this.currentLine,
+        );
+      }
+      if (e instanceof LeaveSignal) {
+        throw new RuntimeError(
+          e.label === undefined
+            ? "LEAVE はループの中でしか使えません"
+            : `LEAVE ${e.label} に対応するループがありません`,
+          this.currentLine,
+        );
+      }
+      if (e instanceof IterateSignal) {
+        throw new RuntimeError(
+          e.label === undefined
+            ? "ITERATE はループの中でしか使えません"
+            : `ITERATE ${e.label} に対応するループがありません`,
+          this.currentLine,
+        );
+      }
+      if (e instanceof RangeError && /call stack/i.test(e.message)) {
+        // 再帰が深すぎて JS のスタックを使い切った。
+        // そのまま出すと行番号の無い英語のメッセージになる
+        throw new RuntimeError(
+          "再帰が深すぎます（この処理系は JavaScript のスタックを使うので、" +
+            "数百段で尽きます）",
+          this.currentLine,
+        );
+      }
+      throw e;
+    }
+  }
+
+  private runUnguarded(program: Program): void {
     const global = new Scope();
-    // まず全ての手続きを登録する（前方参照を許すため）
+    // まず全ての手続きを登録する（前方参照を許すため）。
+    // 外側の手続きの定義位置はこの global
     for (const s of program.body) {
-      if (s.kind === "procedure") global.procs.set(s.name.toUpperCase(), { stmt: s });
+      if (s.kind === "procedure") {
+        global.procs.set(s.name.toUpperCase(), { stmt: s, defScope: global });
+      }
     }
     const main =
       program.body.find((s) => s.kind === "procedure" && s.isMain) ??
@@ -366,7 +600,7 @@ export class Interpreter {
       this.opts.psb === undefined
         ? main.params.map((_, i) => makeChar(this.opts.args?.[i] ?? "", undefined, true))
         : this.pcbPointers(main.params.length, main.line);
-    this.callProcedure({ stmt: main }, args, global);
+    this.callProcedure({ stmt: main, defScope: global }, args, global);
   }
 
   text(): string {
@@ -374,10 +608,20 @@ export class Interpreter {
     return this.out.text();
   }
 
-  /** 実行の後始末。開いたままのファイルを閉じてホストへ書き戻す。 */
+  /**
+   * 実行の後始末。開いたままのファイルを閉じてホストへ書き戻す。
+   *
+   * DL/I の書き戻しが失敗しても、通常のファイルは必ず閉じる。
+   * 順に並べると、DBD 名の食い違いなどで `finishDli` が投げた時点で
+   * `closeAll` に到達せず、そのプログラムが書いた**全ファイルが
+   * 黙って消える**（終了コードは 0）。
+   */
   finishFiles(): void {
-    this.finishDli();
-    this.files.closeAll();
+    try {
+      this.finishDli();
+    } finally {
+      this.files.closeAll();
+    }
   }
 
   /**
@@ -396,32 +640,121 @@ export class Interpreter {
 
   // ---- 手続き ----
 
-  private callProcedure(def: ProcDef, args: Value[], outer: Scope): Value | undefined {
-    const scope = new Scope(outer);
-    // 入れ子の手続きを登録
-    for (const s of def.stmt.body) {
-      if (s.kind === "procedure") scope.procs.set(s.name.toUpperCase(), { stmt: s });
+  /**
+   * いま実行中の手続きの `RETURNS` 属性。
+   *
+   * `RETURN` 文は手続きのスコープの中から呼ばれるので、
+   * 手続きの境界まで外へたどる。
+   */
+  private returnsOf(scope: Scope): DataAttr | undefined {
+    for (let sc: Scope | undefined = scope; sc; sc = sc.parent) {
+      if (sc.returns !== undefined) return sc.returns;
+      if (sc.isProcScope === true) return undefined;
     }
-    // 引数を束縛する（値渡し）
+    return undefined;
+  }
+
+  /**
+   * 実引数を束縛の形にする。
+   *
+   * **PL/I は変数を参照で渡す。** 呼び先が引数を書き換えると呼び元に戻る
+   * （`CALL SWAP(A, B)` が成り立つのはこのため）。値渡しにすると
+   * 出力引数を使うふつうの PL/I サブルーチンが黙って嘘の答えを返す。
+   *
+   * 参照にするのは「添字の無い変数そのもの」だけ。式・定数・配列要素は
+   * 一時値（ダミー引数）として渡す。`DEFINED` と `BASED` は
+   * 別の記憶域への窓なので、共有せず値で渡す。
+   */
+  private bindArgs(args: Expr[], scope: Scope, line: number): ArgBinding[] {
+    return args.map((a) => {
+      if (a.kind === "ref" && a.subscripts.length === 0 && a.locator === undefined) {
+        const v = scope.lookupVar(a.name.toUpperCase());
+        if (v !== undefined && v.defined === undefined && v.based === undefined) {
+          return {
+            attr: v.attr,
+            cells: v.cells,
+            ...(v.dims === undefined ? {} : { dims: v.dims }),
+            shared: true,
+          };
+        }
+      }
+      const value = this.eval(a, scope, line);
+      return { attr: attrOfValue(value), cells: [value], shared: false };
+    });
+  }
+
+  /**
+   * 手続きを呼ぶ。
+   *
+   * 新しいスコープの親は**定義された位置**（`def.defScope`）にする。
+   * 呼んだ位置を親にすると動的スコープになり、呼び先の未宣言の名前が
+   * 呼び元の変数に化ける（兄弟の手続きが呼び元のループ変数を壊す、など）。
+   * ON 単位だけは動的に探す必要があるので、呼び出し元を `caller` に残す。
+   */
+  private callProcedure(
+    def: ProcDef,
+    args: (Value | ArgBinding)[],
+    caller: Scope,
+  ): Value | undefined {
+    const scope = new Scope(def.defScope ?? caller);
+    scope.caller = caller;
+    scope.isProcScope = true;
+    if (def.stmt.returns !== undefined) scope.returns = def.stmt.returns;
+    // 入れ子の手続きを登録。その手続きの定義位置はこのスコープ
+    for (const s of def.stmt.body) {
+      if (s.kind === "procedure") {
+        scope.procs.set(s.name.toUpperCase(), { stmt: s, defScope: scope });
+      }
+    }
+    // 引数を束縛する。変数は参照、式は一時値（ダミー引数）
     def.stmt.params.forEach((p, i) => {
-      const v = args[i];
-      if (v === undefined) {
+      const a = args[i];
+      if (a === undefined) {
         throw new RuntimeError(`引数 ${p} が渡されていません`, def.stmt.line);
       }
+      const b: ArgBinding =
+        isArgBinding(a) ? a : { attr: attrOfValue(a), cells: [a], shared: false };
       scope.vars.set(p.toUpperCase(), {
-        attr: attrOfValue(v),
-        cells: [v],
+        attr: b.attr,
+        // 共有する場合は配列そのものを渡す（書き戻しが呼び元へ届く）
+        cells: b.shared ? b.cells : [...b.cells],
+        ...(b.dims === undefined ? {} : { dims: b.dims }),
         isParam: true,
+        ...(b.shared ? { sharedParam: true } : {}),
       });
     });
 
+    // 呼び出した位置を控える。誤りの報告で「どこから呼んだか」を出すため
+    this.callerLines.push(this.currentLine);
     try {
       this.execBlock(def.stmt.body, scope);
     } catch (e) {
       if (e instanceof ReturnSignal) return e.value;
+      // 積みが巻き戻る前に控える。
+      // 最初に抜けた時点（一番深いところ）のものを残す。
+      // GOTO / LEAVE / ITERATE は誤りではないので控えない
+      const flow =
+        e instanceof GotoSignal || e instanceof LeaveSignal || e instanceof IterateSignal;
+      if (!flow && this.failureCallerLines === undefined) {
+        this.failureCallerLines = [...this.callerLines];
+      }
       throw e;
+    } finally {
+      this.callerLines.pop();
     }
     return undefined;
+  }
+
+  /**
+   * 誤りで終わったときの、手続きを呼んだ側の行番号（外側から内側）。
+   *
+   * 誤りが起きた行そのものは診断の `line` に入る。これはその外側の鎖。
+   */
+  callTrace(): number[] | undefined {
+    if (this.failureCallerLines === undefined) return undefined;
+    // 先頭は主手続きの呼び出し。処理系が呼ぶので呼び出し元の行が無い
+    const lines = this.failureCallerLines.slice(1);
+    return lines.length === 0 ? undefined : lines;
   }
 
   // ---- 処理系が受け持つサブルーチン ----
@@ -495,7 +828,15 @@ export class Interpreter {
       ioRef === undefined || ioRef.kind !== "ref"
         ? ""
         : this.readIoArea(ioRef, scope, s.line);
-    const ssas = args.slice(4).map((a) => this.asText(this.eval(a, scope, s.line)));
+    // SSA は構造体で組み立てるのが PL/I の IMS プログラムの典型形
+    // （SSA_NAME / '(' / FIELD / OP / VALUE / ')' を並べた構造体）。
+    // 値として評価すると構造体はスカラにならないので、
+    // I/O 領域と同じく**葉を宣言順に連結**する。
+    const ssas = args.slice(4).map((a) =>
+      a.kind === "ref" && a.subscripts.length === 0
+        ? this.readIoArea(a, scope, s.line)
+        : this.asText(this.eval(a, scope, s.line)),
+    );
 
     let result;
     try {
@@ -537,6 +878,15 @@ export class Interpreter {
 
   /** PSB を読み、そこから DBD とデータを読む。 */
   private loadDli(psbName: string): DliRuntime {
+    // PSB 名は CLI の `--psb` と VSCode の設定 `pli.dli.psb` から来る。
+    // そのままファイル名になるので、IMS の名前の形を強制する
+    if (!IMS_NAME.test(psbName.toUpperCase())) {
+      throw new DliDefError(
+        `PSB 名 ${psbName} は IMS の名前として使えません（1〜8 桁の英数字と $ # @ だけ）`,
+        "(PSB の指定)",
+        1,
+      );
+    }
     const text = (name: string): string | undefined =>
       this.opts.host?.openFile?.(name, "input")?.read?.();
     const psbFile = `${psbName}.psb`;
@@ -721,7 +1071,9 @@ export class Interpreter {
 
   private execBlockScoped(stmts: Stmt[], scope: Scope): void {
     for (const s of stmts) {
-      if (s.kind === "procedure") scope.procs.set(s.name.toUpperCase(), { stmt: s });
+      if (s.kind === "procedure") {
+        scope.procs.set(s.name.toUpperCase(), { stmt: s, defScope: scope });
+      }
     }
     this.execBlock(stmts, scope);
   }
@@ -749,7 +1101,13 @@ export class Interpreter {
         }
       }
     }
-    if (s.otherwise) this.exec(s.otherwise, scope);
+    if (s.otherwise !== undefined) {
+      this.exec(s.otherwise, scope);
+      return;
+    }
+    // どの WHEN にも合わず OTHERWISE も無い場合は ERROR 条件。
+    // 黙って通すと「どれかに合ったつもり」で先へ進んでしまう
+    this.raise("ERROR", scope, s.line);
   }
 
   /**
@@ -816,6 +1174,20 @@ export class Interpreter {
     throw new FinishSignal(condition, line, file);
   }
 
+  /**
+   * 検査条件を上げる。
+   *
+   * `ON` 単位が置かれていればそこへ回し、無ければふつうの実行時誤りにする。
+   * 置かれていないときに条件の名前だけを出すと、何が起きたのか分からない。
+   */
+  private raiseChecked(condition: string, message: string, line: number): never {
+    const scope = this.currentScope;
+    if (scope.lookupOn(condition) !== undefined) {
+      this.raise(condition, scope, line);
+    }
+    throw new RuntimeError(message, line);
+  }
+
   // ---- 文 ----
 
   private exec(s: Stmt, scope: Scope): void {
@@ -823,6 +1195,7 @@ export class Interpreter {
     // 実行した文の数で打ち切る。
     this.step();
     this.currentScope = scope;
+    if (s.line > 0) this.currentLine = s.line;
     switch (s.kind) {
       case "procedure":
         // 定義のみ。呼ばれたときに実行する
@@ -833,18 +1206,26 @@ export class Interpreter {
         this.declareAll(s.items, scope, s.line);
         return;
       case "assign": {
+        // 構造体全体の代入（b = a）は葉を宣言順に突き合わせる
+        if (this.assignGroup(s.target, s.value, scope, s.line)) return;
         // 配列全体への代入（c = a + b など）は要素ごとに行う
         const lhs = scope.lookupVar(s.target.name.toUpperCase());
         if (lhs?.dims && s.target.subscripts.length === 0) {
-          const values =
-            s.value.kind === "binary"
-              ? this.tryArrayExpr(s.value, scope, s.line)
-              : undefined;
+          // 右辺が配列になるなら要素ごとに代入する。
+          // `binary` だけを見ると `c = -a` が先頭要素の配り直しになる
+          const values = this.evalArray(s.value, scope, s.line);
           if (values) {
+            // 要素数が合わなければ断る。黙って切ると
+            // 「後ろの要素が更新されていない」ことに気づけない
+            if (values.length !== lhs.cells.length) {
+              throw new RuntimeError(
+                `配列式の要素数が合いません（${s.target.name} は ` +
+                  `${lhs.cells.length} 要素、右辺は ${values.length} 要素）`,
+                s.line,
+              );
+            }
             values.forEach((v, i) => {
-              if (i < lhs.cells.length) {
-                lhs.cells[i] = this.coerce(v, lhs.attr, s.line);
-              }
+              lhs.cells[i] = this.coerce(v, lhs.attr, s.line);
             });
             return;
           }
@@ -899,8 +1280,7 @@ export class Interpreter {
       case "call": {
         const def = scope.lookupProc(s.name.toUpperCase());
         if (def) {
-          const args = s.args.map((a) => this.eval(a, scope, s.line));
-          this.callProcedure(def, args, scope);
+          this.callProcedure(def, this.bindArgs(s.args, scope, s.line), scope);
           return;
         }
         // 処理系が受け持つサブルーチン（DL/I の PLITDLI など）。
@@ -926,15 +1306,21 @@ export class Interpreter {
       case "label":
         // ラベルそのものは何もしない（GOTO の飛び先として使われる）
         return;
-      case "on":
+      case "on": {
         // ファイルを取る条件は「条件(ファイル名)」を鍵にする
-        scope.onUnits.set(
+        const key =
           s.conditionFile === undefined
             ? s.condition
-            : `${s.condition}(${s.conditionFile.toUpperCase()})`,
-          s.body,
-        );
+            : `${s.condition}(${s.conditionFile.toUpperCase()})`;
+        if (s.body === undefined) {
+          // `ON ... SYSTEM;` は既定動作へ戻す（ON 単位の解除）。
+          // 空の ON 単位を置くと「何もせず復帰して続行」になってしまう
+          scope.onUnits.delete(key);
+          return;
+        }
+        scope.onUnits.set(key, s.body);
         return;
+      }
       case "open": {
         for (const f of s.files) {
           const attrs: FileAttributes = {};
@@ -964,9 +1350,17 @@ export class Interpreter {
         if (tmpl === undefined) {
           throw new RuntimeError(`${s.name} は BASED で宣言されていません`, s.line);
         }
+        const allocLimit = this.opts.maxAllocations ?? DEFAULT_MAX_ALLOCATIONS;
+        if (++this.allocations > allocLimit) {
+          throw new StorageLimitExceeded(
+            `ALLOCATE の回数が上限(${allocLimit})を超えています`,
+            s.line,
+          );
+        }
         const storage: Storage = { cells: new Map(), freed: false, group };
         for (const leaf of tmpl) {
           const n = elementCount(leaf.dims);
+          this.checkCells(n, `${leaf.name} の ALLOCATE`, s.line);
           const cells: Value[] = [];
           for (let k = 0; k < n; k++) cells.push(zeroOf(leaf.attr));
           storage.cells.set(leaf.name, cells);
@@ -985,7 +1379,19 @@ export class Interpreter {
       }
       case "free": {
         for (const ref of s.refs) {
-          const v = scope.lookupVar(ref.name.toUpperCase());
+          const key = ref.name.toUpperCase();
+          let v = scope.lookupVar(key);
+          // 構造体の BASED はグループ名で `FREE p -> node;` と書く。
+          // グループ名は `vars` に無いので葉から引き直す。
+          // 引き直さないと「node は BASED で宣言されていません」という
+          // 事実と逆のメッセージになる
+          if (v?.based === undefined) {
+            const group = scope.lookupGroup(key);
+            const leaf = group
+              ?.map((k) => scope.lookupVar(k))
+              .find((x) => x?.based !== undefined);
+            if (leaf !== undefined) v = leaf;
+          }
           if (!v?.based) {
             throw new RuntimeError(`${ref.name} は BASED で宣言されていません`, s.line);
           }
@@ -1020,10 +1426,17 @@ export class Interpreter {
           s.line,
           ...(s.conditionFile === undefined ? [] : [s.conditionFile]),
         );
-      case "return":
+      case "return": {
+        if (s.value === undefined) throw new ReturnSignal();
+        // 宣言した RETURNS の型へ合わせる。合わせないと
+        // `returns(fixed dec(7,2))` と書いても式の精度のまま返り、
+        // 表示幅も宣言とずれる
+        const value = this.eval(s.value, scope, s.line);
+        const want = this.returnsOf(scope);
         throw new ReturnSignal(
-          s.value === undefined ? undefined : this.eval(s.value, scope, s.line),
+          want === undefined ? value : this.coerce(value, want, s.line),
         );
+      }
     }
   }
 
@@ -1034,7 +1447,25 @@ export class Interpreter {
    * 中間レベル（名前だけで型を持たない）は記憶域を持たない。
    */
   private declareAll(items: DeclItem[], scope: Scope, line: number): void {
-    for (const item of qualifyDeclareItems(items)) this.declare(item, scope, line);
+    const qualified = qualifyDeclareItems(items);
+    for (const item of qualified) this.declare(item, scope, line);
+    // 構造体のグループ名を覚える。葉は宣言順に並べる
+    // （構造体同士の代入とデータリストの展開がこの順で決まる）
+    for (const group of groupNames(items)) {
+      const upper = group.toUpperCase();
+      const prefix = `${upper}.`;
+      const leaves: string[] = [];
+      for (const item of qualified) {
+        for (const name of item.names) {
+          const key = name.toUpperCase();
+          if (key === upper || key.startsWith(prefix)) {
+            // さらに下にグループがあれば葉ではない。vars にあるものだけ採る
+            if (scope.vars.has(key)) leaves.push(key);
+          }
+        }
+      }
+      scope.groups.set(upper, leaves);
+    }
   }
 
   private declare(item: DeclItem, scope: Scope, line: number): void {
@@ -1061,14 +1492,45 @@ export class Interpreter {
       return;
     }
     const n = elementCount(item.dims);
+    this.checkCells(n, `${item.names[0] ?? "配列"} の宣言`, line);
+    // 型を書いていない宣言（`dcl x;`）は、名前の先頭文字で属性が決まる。
+    // 名前ごとに違う属性になりうるので、ここで解決する
+    if (item.attr.type === "implicit") {
+      for (const name of item.names) {
+        this.declare(
+          { ...item, names: [name], attr: implicitAttr(name.split(".").pop() ?? name) },
+          scope,
+          line,
+        );
+      }
+      return;
+    }
+    if (item.attr.type === "char" && item.attr.length !== undefined) {
+      this.checkLength(item.attr.length, line);
+    }
     for (const name of item.names) {
       const key = name.toUpperCase();
       // 引数名の DECLARE は属性の宣言であって新変数ではない。
       // 渡された値を宣言された型へ変換して保持する。
       const existing = scope.vars.get(key);
       if (existing?.isParam) {
+        // 宣言した属性が渡された値と同じなら、記憶域の共有を保つ
+        // （参照渡し。呼び先の書き換えが呼び元へ戻る）。
+        // 違うなら実機と同じく一時変数（ダミー引数）にして、
+        // 呼び元の変数の型を書き換えないようにする。
+        const needsConversion = existing.cells.some(
+          (c) => !sameAttr(item.attr, attrOfValue(c)),
+        );
+        if (existing.sharedParam === true && needsConversion) {
+          existing.cells = existing.cells.map((c) => this.coerce(c, item.attr, line));
+          existing.sharedParam = false;
+        } else {
+          // 配列そのものを差し替えないこと。差し替えると共有が切れる
+          for (let i = 0; i < existing.cells.length; i++) {
+            existing.cells[i] = this.coerce(existing.cells[i]!, item.attr, line);
+          }
+        }
         existing.attr = item.attr;
-        existing.cells = existing.cells.map((c) => this.coerce(c, item.attr, line));
         if (item.dims) existing.dims = item.dims;
         continue;
       }
@@ -1090,6 +1552,18 @@ export class Interpreter {
         this.basedTemplates.set(group, tmpl);
         continue;
       }
+      // STATIC は手続きを抜けても値が残る。
+      // 宣言ごとに 1 つの記憶域を持ち、2 回目以降はそれを使い回す
+      // （初期化も最初の 1 回だけ）。宣言のノードで引くので、
+      // 同じ名前の STATIC が別の手続きにあっても混ざらない。
+      if (item.storage === "static") {
+        const slot = this.staticVars.get(item);
+        const kept = slot?.get(key);
+        if (kept !== undefined) {
+          scope.vars.set(key, kept);
+          continue;
+        }
+      }
       const cells: Value[] = [];
       for (let k = 0; k < n; k++) cells.push(zeroOf(item.attr));
       if (item.init) {
@@ -1104,6 +1578,11 @@ export class Interpreter {
       // DEFINED は基底変数への別名。独自の記憶域は使わない。
       if (item.defined) v.defined = item.defined;
       scope.vars.set(key, v);
+      if (item.storage === "static") {
+        const slot = this.staticVars.get(item) ?? new Map<string, Variable>();
+        slot.set(key, v);
+        this.staticVars.set(item, slot);
+      }
     }
   }
 
@@ -1210,6 +1689,18 @@ export class Interpreter {
     const out: Value[] = [];
     for (const e of items) {
       if (e.kind === "ref" && e.subscripts.length === 0) {
+        // 構造体はその葉を宣言順に展開する（PL/I の規定）。
+        // 展開しないとグループ名が「未宣言のスカラ」になり 0 が出る
+        const group = scope.lookupGroup(e.name.toUpperCase());
+        if (group !== undefined) {
+          for (const key of group) {
+            const leaf = scope.lookupVar(key);
+            if (leaf === undefined) continue;
+            if (leaf.dims) out.push(...leaf.cells);
+            else if (leaf.cells[0] !== undefined) out.push(leaf.cells[0]);
+          }
+          continue;
+        }
         const v = scope.lookupVar(e.name.toUpperCase());
         if (v?.dims) {
           // DEFINED の別名なら各要素を基底から読む
@@ -1348,10 +1839,12 @@ export class Interpreter {
         return;
       case "f": {
         const width = num(f.width);
-        const d = f.decimals === undefined ? undefined : num(f.decimals);
-        const fx = asFixed(v, line);
-        const scaled = d === undefined ? fx : assignTo(fx, fx.base, fx.p, d);
-        w.editNumber(render(scaled), width);
+        // F(w) は小数部 0 桁。実機は丸めて整数にする（1.99 → 2、1.49 → 1）。
+        // 以前は小数部の指定が無いと値をそのまま出していた（1.99 → 1.99）
+        const d = f.decimals === undefined ? 0 : num(f.decimals);
+        // 丸めは**書式の性質**なので代入（assignTo）とは別の関数を使う。
+        // 代入は切り捨て、F 書式は 0 から遠い側へ丸める（実機で確認）
+        w.editNumber(render(roundForFormat(asFixed(v, line), d)), width);
         return;
       }
       case "e": {
@@ -1450,8 +1943,19 @@ export class Interpreter {
     if (slots.length === 0) return;
 
     const texts: string[] = [];
-    /** 代入を済ませたあとに ENDFILE を上げるか。 */
-    let endfileAfter = false;
+    /**
+     * 代入を済ませたあとに ENDFILE を上げる回数。
+     *
+     * 実機（Iron Spring PL/I 1.4.1）で確かめた。`get list(a, b);` に対し:
+     *   "12 34 56" … 0 回（末尾に届いていない）
+     *   "12 34"    … 1 回。a=12 / b=34（末尾に届いた読み取りで上がる）
+     *   "12"       … 2 回。**a=12 / b=0**（a は読めているので代入される。
+     *                 b はデータが無いのでもう 1 回上がる）
+     * ON 単位から戻ったら GET は次の項目へ進む（打ち切らない）。
+     *
+     * 以前は 1 回だけ上げ、**読めた分も捨てていた**（"12" で a=0）。
+     */
+    let endfileAfter = 0;
     if (s.format) {
       const fmt = this.flattenFormat(s.format, scope, s.line);
       const num = (e: Expr) =>
@@ -1468,8 +1972,10 @@ export class Interpreter {
           continue;
         }
         if (cursor.atEnd() && fileName !== undefined) {
-          this.raiseIo("ENDFILE", scope, s.line, fileName);
-          return; // ON 単位から戻ったら、この GET は読まずに終わる
+          // 読めた分は代入してから上げる（LIST と同じ扱い。
+          // EDIT については実機で確かめていないが、読めた値を捨てる理由が無い）
+          endfileAfter++;
+          break;
         }
         let width: number;
         if (f.kind === "a" || f.kind === "b") {
@@ -1488,18 +1994,15 @@ export class Interpreter {
       for (let i = 0; i < slots.length; i++) {
         const item = cursor.nextItem();
         if (item === undefined) {
-          // ファイルの終わり。ON 単位があれば実行して、この GET は打ち切る
-          if (fileName !== undefined) {
-            this.raiseIo("ENDFILE", scope, s.line, fileName);
-            return;
-          }
+          // データが尽きた。**読めた分は捨てない**（代入してから上げる）
+          if (fileName !== undefined) endfileAfter++;
           break;
         }
         texts.push(item);
-        // 「最後の項目を読んだ GET」で ENDFILE を上げる。
-        // 代入は済ませてから上げるので、ここで印を付けておく
+        // 末尾に届いた読み取りでも上げる。
+        // 代入は済ませてから上げるので、ここでは数えるだけ
         if (fileName !== undefined && cursor.atLastItem()) {
-          endfileAfter = true;
+          endfileAfter++;
         }
       }
     }
@@ -1514,7 +2017,7 @@ export class Interpreter {
       else this.assign(slot.ref, parsed, scope, s.line);
     });
 
-    if (endfileAfter && fileName !== undefined) {
+    for (let i = 0; i < endfileAfter && fileName !== undefined; i++) {
       this.raiseIo("ENDFILE", scope, s.line, fileName);
     }
   }
@@ -1530,8 +2033,23 @@ export class Interpreter {
     }
     const t = text.trim();
     if (t === "") return zeroOf(attr);
-    if (!/^[+-]?\d*\.?\d+$/.test(t)) {
-      throw new RuntimeError(`数値として読めません: ${JSON.stringify(text)}`, line);
+    // 指数表記（`1.5E3`）と末尾の小数点（`5.`）も受ける。
+    // FLOAT 変数へ読むのは PL/I でふつうの書き方なので、
+    // 受け付けないと「数値として読めません」で止まる
+    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(t)) {
+      this.raiseChecked("CONVERSION", `数値として読めません: ${clip(text)}`, line);
+    }
+    if (/[eE]/.test(t)) {
+      // 指数表記は FLOAT として受ける。FIXED へ代入するなら coerce が丸める
+      const n = Number(t);
+      if (!Number.isFinite(n)) {
+        this.raiseChecked("CONVERSION", `数値として読めません: ${clip(text)}`, line);
+      }
+      return this.coerce(
+        { t: "float", base: "dec", p: 6, v: n },
+        attr,
+        line,
+      );
     }
     return this.coerce(fixedFromLiteral(t), attr, line);
   }
@@ -1613,11 +2131,64 @@ export class Interpreter {
     const text = this.gatherRecord(s.from, scope, s.line);
     if (s.op === "write") {
       file.writeRecord(text);
+      // レコード出力も出力上限で打ち切る。ブラウザには別プロセスが
+      // 無いので、PUT だけ数えていると WRITE で際限なく伸ばせる
+      this.checkOutput();
       return;
     }
     if (!file.rewriteRecord(text)) {
       throw new RuntimeError("REWRITE の前に READ が必要です", s.line);
     }
+    this.checkOutput();
+  }
+
+  /**
+   * 構造体全体の代入。扱ったら true。
+   *
+   * `b = a;` は葉を**宣言順**に突き合わせる（PL/I の規定）。
+   * 名前ではなく順で結び付けるのは、項目名が違っていても
+   * 形が同じなら代入できるため。形が違えば誤りとして止める。
+   *
+   * これが無いと、グループ名が `vars` に無いので
+   * 「未宣言のスカラ」として暗黙宣言の 0 に落ち、**無言で何も起きない**。
+   */
+  private assignGroup(target: Ref, value: Expr, scope: Scope, line: number): boolean {
+    const dest = scope.lookupGroup(target.name.toUpperCase());
+    if (dest === undefined) return false;
+    if (target.subscripts.length > 0) {
+      throw new Unsupported("構造体配列の要素への代入", line);
+    }
+    if (value.kind !== "ref" || value.subscripts.length > 0) {
+      throw new RuntimeError(
+        `${target.name} は構造体です。構造体に代入できるのは同じ形の構造体だけです`,
+        line,
+      );
+    }
+    const srcKey = value.name.toUpperCase();
+    const src = scope.lookupGroup(srcKey);
+    if (src === undefined) {
+      throw new RuntimeError(
+        `${value.name} は構造体ではありません（${target.name} は構造体です）`,
+        line,
+      );
+    }
+    if (src.length !== dest.length) {
+      throw new RuntimeError(
+        `構造体の形が違います: ${target.name} は項目 ${dest.length} 個、` +
+          `${value.name} は ${src.length} 個`,
+        line,
+      );
+    }
+    for (const [i, destKey] of dest.entries()) {
+      const to = scope.lookupVar(destKey);
+      const from = scope.lookupVar(src[i]!);
+      if (to === undefined || from === undefined) {
+        throw new RuntimeError(`構造体の項目 ${destKey} が見つかりません`, line);
+      }
+      // 配列の葉は要素ごとに写す
+      to.cells = from.cells.map((c) => this.coerce(c, to.attr, line));
+    }
+    return true;
   }
 
   /** 構造体の葉を宣言順に取り出す。レコードの項目の並びになる。 */
@@ -1824,7 +2395,10 @@ export class Interpreter {
       const n = subs[i];
       if (n === undefined) throw new RuntimeError("添字の数が合いません", line);
       if (n < d.lo || n > d.hi) {
-        throw new RuntimeError(`添字が範囲外です: ${n}`, line);
+        // SUBSCRIPTRANGE 条件。ON 単位が置かれていればそこへ回る。
+        // 上げないと `ON SUBSCRIPTRANGE` を書いても実行されない
+        // （PL/I の既定は無検査だが、この処理系は常に検査する方を採る）
+        this.raiseChecked("SUBSCRIPTRANGE", `添字が範囲外です: ${n}`, line);
       }
       idx = idx * (d.hi - d.lo + 1) + (n - d.lo);
     });
@@ -1869,6 +2443,9 @@ export class Interpreter {
   private coerce(value: Value, attr: DataAttr, line: number): Value {
     try {
       switch (attr.type) {
+        case "implicit":
+          // declare で名前から解決してから渡す。ここには来ない
+          return this.coerce(value, implicitAttr("X"), line);
         case "pointer": {
           if (value.t !== "pointer") {
             throw new RuntimeError("ポインタにはポインタしか代入できません", line);
@@ -1908,7 +2485,16 @@ export class Interpreter {
           return makeChar(s, attr.length, attr.varying);
         }
         case "bit": {
-          const s = value.t === "bit" ? value.v : value.t === "char" ? value.v : "";
+          if (value.t === "pointer") {
+            throw new RuntimeError("ポインタは BIT に変換できません", line);
+          }
+          // 数値から BIT への変換は 2 進表現にする。
+          // 以前は空文字に落としていたので `b = 1;` が '0'B になっていた
+          const s =
+            value.t === "bit" ? value.v
+            : value.t === "char" ? value.v
+            : value.t === "fixed" ? fixedToBits(value, attr.length)
+            : toBits(Math.trunc(value.v), attr.length);
           return makeBit(s, attr.length);
         }
         case "file":
@@ -1932,8 +2518,8 @@ export class Interpreter {
     if (v.t === "float") return fixedFromLiteral(String(v.v));
     if (v.t === "bit") return makeFixed("bin", Math.max(1, v.v.length), 0, BigInt(parseInt(v.v || "0", 2)));
     const s = v.v.trim();
-    if (!/^[+-]?\d*\.?\d+$/.test(s)) {
-      throw new RuntimeError(`数値に変換できません: ${JSON.stringify(v.v)}`, line);
+    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(s)) {
+      this.raiseChecked("CONVERSION", `数値に変換できません: ${clip(v.v)}`, line);
     }
     return fixedFromLiteral(s);
   }
@@ -1958,15 +2544,13 @@ export class Interpreter {
       case "ref":
         return this.evalRef(e, scope, line);
       case "unary": {
-        const v = this.eval(e.operand, scope, line);
-        if (e.op === "-") return neg(asFixed(v, line));
-        if (e.op === "+") return v;
-        // NOT: ビット反転
-        const b = v.t === "bit" ? v.v : this.truth(v, line) ? "1" : "0";
-        return makeBit(
-          [...b].map((c) => (c === "0" ? "1" : "0")).join(""),
-          b.length,
-        );
+        const arr = this.evalArray(e, scope, line);
+        if (arr !== undefined) {
+          const first = arr[0];
+          if (first === undefined) throw new RuntimeError("空の配列式です", line);
+          return first;
+        }
+        return this.applyUnary(e.op, this.eval(e.operand, scope, line), line);
       }
       case "binary":
         return this.evalBinary(e, scope, line);
@@ -1977,19 +2561,44 @@ export class Interpreter {
    * 配列式。A+S / S+A / A+A を要素ごとに計算する（1.4.0 以降の機能）。
    * 配列が絡む場合だけ特別扱いし、結果を値の並びで返す。
    */
+  /** 単項演算。配列式からも使うので 1 箇所にまとめる。 */
+  private applyUnary(op: string, v: Value, line: number): Value {
+    if (op === "-") return neg(asFixed(v, line));
+    if (op === "+") return v;
+    // NOT: ビット反転
+    const b = v.t === "bit" ? v.v : this.truth(v, line) ? "1" : "0";
+    return makeBit([...b].map((c) => (c === "0" ? "1" : "0")).join(""), b.length);
+  }
+
+  /**
+   * 式を配列として評価する。配列にならなければ undefined。
+   *
+   * **部分式も再帰的に見る。** 最上位の二項演算だけを配列として扱うと、
+   * `c = a + b * 2` の `b * 2` が `eval` 側へ回って先頭要素に潰れ、
+   * `c(i) = a(i) + b(1)*2` になってしまう。
+   */
+  private evalArray(e: Expr, scope: Scope, line: number): Value[] | undefined {
+    if (e.kind === "ref" && e.subscripts.length === 0) {
+      const v = scope.lookupVar(e.name.toUpperCase());
+      if (!v?.dims) return undefined;
+      return this.dataList([e], scope, line);
+    }
+    if (e.kind === "binary") return this.tryArrayExpr(e, scope, line);
+    if (e.kind === "unary") {
+      const inner = this.evalArray(e.operand, scope, line);
+      if (inner === undefined) return undefined;
+      return inner.map((v) => this.applyUnary(e.op, v, line));
+    }
+    return undefined;
+  }
+
   private tryArrayExpr(
     e: Extract<Expr, { kind: "binary" }>,
     scope: Scope,
     line: number,
   ): Value[] | undefined {
-    const arrayOf = (x: Expr): Value[] | undefined => {
-      if (x.kind !== "ref" || x.subscripts.length > 0) return undefined;
-      const v = scope.lookupVar(x.name.toUpperCase());
-      if (!v?.dims) return undefined;
-      return this.dataList([x], scope, line);
-    };
-    const la = arrayOf(e.left);
-    const ra = arrayOf(e.right);
+    const la = this.evalArray(e.left, scope, line);
+    const ra = this.evalArray(e.right, scope, line);
     if (!la && !ra) return undefined;
     const n = la?.length ?? ra!.length;
     if (la && ra && la.length !== ra.length) {
@@ -2031,8 +2640,26 @@ export class Interpreter {
       return makeChar(this.asText(a) + this.asText(b), undefined, true);
     }
 
-    // 論理演算
+    // 論理演算。
+    //
+    // PL/I の `&` と `|` は**ビットごと**の演算で、ビット列の長さが
+    // 2 以上なら結果も同じ長さのビット列になる。短い側は '0'B で埋める。
+    // 以前は常に 1 ビットへ潰していたため、`'1100'B & '1010'B` が
+    // '1'B になっていた（BIT(1) のときだけブール演算と一致するので、
+    // 比較結果しか試していないテストでは気づけなかった）。
     if (op === "&" || op === "|") {
+      if (a.t === "bit" && b.t === "bit" && (a.v.length > 1 || b.v.length > 1)) {
+        const n = Math.max(a.v.length, b.v.length);
+        const x = a.v.padEnd(n, "0");
+        const y = b.v.padEnd(n, "0");
+        let out = "";
+        for (let i = 0; i < n; i++) {
+          const bitA = x[i] === "1";
+          const bitB = y[i] === "1";
+          out += (op === "&" ? bitA && bitB : bitA || bitB) ? "1" : "0";
+        }
+        return makeBit(out, n);
+      }
       const x = this.truth(a, line);
       const y = this.truth(b, line);
       return makeBit((op === "&" ? x && y : x || y) ? "1" : "0", 1);
@@ -2053,7 +2680,14 @@ export class Interpreter {
 
     // PL/I では FLOAT が FIXED より優位。どちらかが FLOAT なら結果も FLOAT。
     if (a.t === "float" || b.t === "float") {
-      return floatArith(op, a, b, line);
+      try {
+        return floatArith(op, a, b, line);
+      } catch (err) {
+        // FLOAT の 0 除算も ZERODIVIDE 条件にする。
+        // FIXED 側だけ条件にしていると ON 単位が片方でしか効かない
+        if (err instanceof ZeroDivide) this.raise("ZERODIVIDE", this.currentScope, line);
+        throw err;
+      }
     }
 
     const x = asFixed(a, line);
@@ -2064,7 +2698,14 @@ export class Interpreter {
         case "-": return sub(x, y);
         case "*": return mul(x, y);
         case "/": return div(x, y);
-        case "**": return pow(x, y);
+        case "**":
+          // 指数が整数でない、または負なら FLOAT で計算する（PL/I の規定）。
+          // `4 ** 1.5` は 8、`2 ** -1` は 0.5
+          if (powNeedsFloat(y)) return floatArith("**", a, b, line);
+          // 整数の指数でも、規定の精度 p = (p1+1)*y - 1 が最大精度を
+          // 超えるなら FLOAT。実機で境目を確かめた（`2**10` が FLOAT）
+          if (!powFitsFixed(x, y)) return floatArith("**", a, b, line);
+          return pow(x, y);
         default:
           throw new Unsupported(`演算子 ${op}`, line);
       }
@@ -2145,21 +2786,39 @@ export class Interpreter {
       return cell;
     }
 
-    const args = ref.subscripts.map((a) => this.eval(a, scope, line));
+    // 構造体をスカラの位置で使った。0 を返すと無言で間違うので断る
+    const group = scope.lookupGroup(key);
+    if (group !== undefined) {
+      throw new RuntimeError(
+        `${ref.name} は構造体です。値として使うには項目を指定してください` +
+          `（例: ${ref.name}.${(group[0] ?? "").split(".").pop() ?? "項目"}）`,
+        line,
+      );
+    }
 
     const proc = scope.lookupProc(key);
     if (proc) {
-      const r = this.callProcedure(proc, args, scope);
+      // 関数としての呼び出しも引数は参照渡し（PL/I の規定）
+      const r = this.callProcedure(proc, this.bindArgs(ref.subscripts, scope, line), scope);
       if (r === undefined) {
         throw new RuntimeError(`手続き ${ref.name} は値を返しません`, line);
       }
       return r;
     }
 
+    const args = ref.subscripts.map((a) => this.eval(a, scope, line));
     const builtin = this.builtin(key, args, line, scope, ref.subscripts);
     if (builtin !== undefined) return builtin;
 
-    if (ref.subscripts.length > 0) {
+    // 括弧を書いた参照は関数呼び出し。`date()` のように引数が無くても同じ。
+    // ここを `subscripts.length > 0` だけで見ると、引数ゼロの呼び出しが
+    // 「未宣言のスカラ」に落ちて暗黙宣言の 0 になる
+    if (ref.subscripts.length > 0 || ref.called === true) {
+      // 知っている組込関数なら「未実装」と言う。
+      // 「未知の関数」だと綴り間違いと区別が付かない
+      if (UNIMPLEMENTED_BUILTINS.has(key)) {
+        throw new Unsupported(`組込関数 ${ref.name}`, line);
+      }
       if (this.externalEntries.has(ref.name.toUpperCase())) {
         throw new RuntimeError(
           `${ref.name} は ENTRY で宣言された外部手続きです。` +
@@ -2169,7 +2828,12 @@ export class Interpreter {
       }
       throw new RuntimeError(`${ref.name} は未知の関数です`, line);
     }
-    // 未宣言のスカラ参照は暗黙宣言の初期値
+    // 知っている組込関数で未実装のものは名指しで断る。
+    // 暗黙宣言に落とすと 0 を返して無言で間違う
+    if (UNIMPLEMENTED_BUILTINS.has(key)) {
+      throw new Unsupported(`組込関数 ${ref.name}`, line);
+    }
+    // 未宣言のスカラ参照は暗黙宣言の初期値（PL/I の規定）
     return zeroOf(implicitAttr(ref.name));
   }
 
@@ -2211,7 +2875,7 @@ export class Interpreter {
         // PL/I の MOD は第2引数と同じ符号の結果を返す。
         const a = fx(0);
         const b = fx(1);
-        if (b.v === 0n) throw new RuntimeError("ZERODIVIDE", line);
+        if (b.v === 0n) this.raise("ZERODIVIDE", scope, line);
         return modFixed(a, b);
       }
       case "ABS": {
@@ -2265,14 +2929,33 @@ export class Interpreter {
         return makeFixed(a.base, p, 0, v);
       }
       case "ROUND": {
-        // ROUND(x, n) は小数第 n 位に丸める
+        /*
+         * ROUND(x, n) は小数第 n 位に丸める。
+         *
+         * BigInt で直接計算する。以前は `0.05` のような 10 進の値を足して
+         * `assignTo` で桁を落としていたが、2 つの問題があった。
+         *   - BINARY の値に DECIMAL の `half` を足すので基数混在になる
+         *   - `n > q` のとき `assignTo(.., a.p, n)` が整数桁を縮めて
+         *     誤って FIXEDOVERFLOW になる（`ROUND(12.5, 3)`）
+         * 結果の精度は「整数桁 + n」で、桁が減ることはない。
+         */
         const a = fx(0);
         const n = int(1);
-        const half = fixedFromLiteral(
-          `0.${"0".repeat(Math.max(0, n))}5`,
-        );
-        const shifted = a.v < 0n ? sub(a, half) : add(a, half);
-        return assignTo(shifted, a.base, a.p, n);
+        if (n >= a.q) {
+          // 落とす桁が無い。精度を広げ、**尺度も n に合わせる**。
+          // 実機で確認: `dcl x fixed dec(5,1); x = 12.5;` のとき
+          // round(x,3) が 12.500（尺度 3）、round(x,1) が 12.5、round(x,0) が 13。
+          // 以前は元の尺度を保っていたので round(x,3) が 12.5 になっていた
+          return assignTo(a, a.base, roundPrecision(a, n), Math.max(0, n));
+        }
+        const r = a.base === "bin" ? 2n : 10n;
+        const drop = a.q - n;
+        const scale = ipow(r, drop);
+        const neg = a.v < 0n;
+        const abs = neg ? -a.v : a.v;
+        // 0 から遠い側へ丸める（half away from zero）
+        const rounded = (abs * 2n + scale) / (scale * 2n);
+        return makeFixed(a.base, roundPrecision(a, n), n, neg ? -rounded : rounded);
       }
       case "SIGN": {
         // 出力幅 9 なので FIXED BIN(15,0)
@@ -2284,7 +2967,7 @@ export class Interpreter {
         // DIVIDE(a, b, p, q) は結果の精度を明示する除算
         const a = fx(0);
         const b = fx(1);
-        if (b.v === 0n) throw new RuntimeError("ZERODIVIDE", line);
+        if (b.v === 0n) this.raise("ZERODIVIDE", scope, line);
         const p = int(2);
         const q = args.length > 3 ? int(3) : 0;
         const quotient = div(a, b);
@@ -2333,7 +3016,11 @@ export class Interpreter {
       }
       case "REPEAT": {
         const s = tx(0);
-        return makeChar(s.repeat(int(1) + 1), undefined, true);
+        const times = int(1) + 1;
+        // 結果長を先に確かめる。作ってから確かめると、
+        // 1 回の呼び出しでメモリを使い切れる
+        this.checkLength(s.length * Math.max(0, times), line);
+        return makeChar(s.repeat(Math.max(0, times)), undefined, true);
       }
       default:
         return undefined;
@@ -2380,15 +3067,35 @@ export function floatWidth(p: number): number {
 }
 
 /** FLOAT を含む演算。JS の number で計算する。 */
+/**
+ * `ROUND(x, n)` の結果の精度。
+ *
+ * 整数桁 + n に **1 桁足す**。丸めが桁上がりすることがあるため
+ * （`round(9.9, 0)` は 10 で、整数桁 1 のままでは入らない）。
+ * 実機（Iron Spring PL/I 1.4.1）の出力幅と一致する:
+ *   dcl x fixed dec(5,1) に round(x,3) → 幅 11（p=8, q=3）
+ *   round(1.005, 2) → 幅 7（p=4, q=2）
+ */
+function roundPrecision(a: FixedVal, n: number): number {
+  return Math.min(
+    a.base === "bin" ? MAX_BIN : MAX_DEC,
+    Math.max(1, a.p - a.q) + Math.max(0, n) + 1,
+  );
+}
+
 function floatArith(op: string, a: Value, b: Value, line: number): Value {
   const num = (v: Value): number => {
     if (v.t === "float") return v.v;
     if (v.t === "fixed") return Number(render(v));
     throw new RuntimeError("数値として扱えません", line);
   };
+  // 結果の精度は両辺の精度の大きい方。**FIXED の辺も数に入れる**
+  // （FIXED(p,q) は FLOAT(p) に変換されてから演算されるため）。
+  // 実機で確認: 4**1.5 / 9**0.5 / 2**10 はどれも FLOAT DEC(2) で
+  // 出力幅 10（" 8.0E+0000"）。以前は FLOAT の辺だけ見ていたので幅 9 だった
   const p = Math.max(
-    a.t === "float" ? a.p : 0,
-    b.t === "float" ? b.p : 0,
+    a.t === "float" || a.t === "fixed" ? a.p : 0,
+    b.t === "float" || b.t === "fixed" ? b.p : 0,
     1,
   );
   const base: Base = a.t === "float" ? a.base : b.t === "float" ? b.base : "dec";
@@ -2400,12 +3107,22 @@ function floatArith(op: string, a: Value, b: Value, line: number): Value {
     case "-": v = x - y; break;
     case "*": v = x * y; break;
     case "/":
-      if (y === 0) throw new RuntimeError("ZERODIVIDE", line);
+      // ZeroDivide を投げる。applyBinary の catch が ZERODIVIDE 条件に変える。
+      // RuntimeError のままだと ON 単位へ届かない
+      if (y === 0) throw new ZeroDivide();
       v = x / y;
       break;
     case "**": v = x ** y; break;
     default:
       throw new Unsupported(`FLOAT に対する演算子 ${op}`, line);
+  }
+  // Infinity / NaN をそのまま返すと `render` が "Infinity" を出す。
+  // 数でないものを数として扱わない
+  if (!Number.isFinite(v)) {
+    throw new RuntimeError(
+      Number.isNaN(v) ? "計算結果が数になりません" : "浮動小数点の桁あふれです",
+      line,
+    );
   }
   return { t: "float", base, p, v };
 }
@@ -2431,6 +3148,25 @@ function missing(name: string, i: number, line: number): never {
   throw new RuntimeError(`${name} の第${i + 1}引数がありません`, line);
 }
 
+/** 2 つのデータ属性が同じか。参照渡しにできるかの判定に使う。 */
+function sameAttr(a: DataAttr, b: DataAttr): boolean {
+  if (a.type !== b.type) return false;
+  switch (a.type) {
+    case "fixed":
+      return b.type === "fixed" && a.base === b.base && a.p === b.p && a.q === b.q;
+    case "float":
+      return b.type === "float" && a.base === b.base && a.p === b.p;
+    case "char":
+      return b.type === "char" && a.length === b.length && a.varying === b.varying;
+    case "bit":
+      return b.type === "bit" && a.length === b.length;
+    case "picture":
+      return b.type === "picture" && a.picture === b.picture;
+    default:
+      return true;
+  }
+}
+
 function attrOfValue(v: Value): DataAttr {
   switch (v.t) {
     case "pointer": return { type: "pointer" };
@@ -2451,8 +3187,8 @@ function asFixed(v: Value, line: number): FixedVal {
     return makeFixed("bin", Math.max(1, v.v.length), 0, BigInt(parseInt(v.v || "0", 2)));
   }
   const s = v.v.trim();
-  if (!/^[+-]?\d*\.?\d+$/.test(s)) {
-    throw new RuntimeError(`数値として扱えません: ${JSON.stringify(v.v)}`, line);
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(s)) {
+    throw new RuntimeError(`数値として扱えません: ${clip(v.v)}`, line);
   }
   return fixedFromLiteral(s);
 }
@@ -2523,6 +3259,100 @@ function pcbLayout(
     { name: "KEY_FB", attr: char(keylen), value: () => chars(pcb.keyFeedback, keylen) },
   ];
 }
+
+/**
+ * PL/I の組込関数のうち、この処理系が実装していないもの。
+ *
+ * **名指しで断るために持つ。** これが無いと、宣言の無い名前として
+ * 暗黙宣言の規則に落ち、`ONCODE` も `DATE` も `SQRT` も黙って 0 を返す。
+ * 「できないことは黙って動かさず、何が未実装かを名指しで断る」という
+ * この処理系の約束は、名前を知っていないと守れない。
+ *
+ * 利用者が同じ名前で変数や手続きを宣言した場合は、宣言が優先される
+ * （`lookupVar` / `lookupProc` を先に見るため）。
+ *
+ * 構文強調の `support.function.unimplemented.pli` と同じ集合で、
+ * `vscode-pli/test/grammar.test.ts` が食い違いを拾う。
+ */
+export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
+  "ACOS",
+  "ADD",
+  "ALLOCATION",
+  "ASIN",
+  "ATAN",
+  "ATAND",
+  "ATANH",
+  "BINARYVALUE",
+  "BIT",
+  "BOOL",
+  "BYTE",
+  "CHARACTER",
+  "CHARVAL",
+  "COLLATE",
+  "COMPLEX",
+  "CONJG",
+  "COPY",
+  "COS",
+  "COSD",
+  "COSH",
+  "COUNT",
+  "CURRENTSTORAGE",
+  "DATE",
+  "DATETIME",
+  "DAYS",
+  "DAYSTODATE",
+  "DECAT",
+  "DECIMAL",
+  "DIMENSION",
+  "EMPTY",
+  "ERF",
+  "ERFC",
+  "EXP",
+  "FIXED",
+  "FLOAT",
+  "HEX",
+  "HEXIMAGE",
+  "HIGH",
+  "IMAG",
+  "LINENO",
+  "LOG",
+  "LOG10",
+  "LOG2",
+  "LOW",
+  "MAXLENGTH",
+  "MULTIPLY",
+  "OFFSET",
+  "OMITTED",
+  "ONCHAR",
+  "ONCODE",
+  "ONCONDID",
+  "ONFILE",
+  "ONKEY",
+  "ONLOC",
+  "ONSOURCE",
+  "PAGENO",
+  "POINTER",
+  "PREC",
+  "PRECISION",
+  "RANDOM",
+  "RANK",
+  "REAL",
+  "REVERSE",
+  "SIN",
+  "SIND",
+  "SINH",
+  "SQRT",
+  "STORAGE",
+  "STRING",
+  "SUM",
+  "TAN",
+  "TAND",
+  "TANH",
+  "TIME",
+  "TRIM",
+  "UNSPEC",
+  "VALID",
+]);
 
 export const BUILTIN_NAMES: ReadonlySet<string> = new Set([
   "ABS",

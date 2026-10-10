@@ -71,6 +71,14 @@ export function parsePicture(source: string): PictureSpec {
   let p = 0;
   let q = 0;
   let seenV = false;
+  /**
+   * ピクチャに `V` があるか。
+   *
+   * `V` が無ければ最初の `.` を小数点の位置として扱う。
+   * これを見ないと `ZZ9.99` が p=5 / q=0 と解釈され、
+   * 12.34 が 12 に切られて桁がずれる。
+   */
+  const hasV = src.includes("V");
   let integerDigits = 0;
   let driftSymbol: string | undefined;
   let fill: " " | "*" = " ";
@@ -181,6 +189,16 @@ export function parsePicture(source: string): PictureSpec {
     }
 
     if (INSERTION.has(c)) {
+      // `.` は小数点としても働く（`PIC'ZZ9.99'`）。
+      // 文字として出しつつ、以降の数字は小数部として数える。
+      //
+      // 以前は挿入文字としてしか扱っていなかったため、
+      // `ZZ9.99` が p=5 / q=0 と解釈され、12.34 が 12 に切られて
+      // 桁がずれていた（`ZZ9V.99` と書いたときだけ正しく動いていた）。
+      // `V` が無いピクチャでは、最初の `.` が小数点の位置も表す。
+      // `ZZ9V.99` のように `V` を併記した形では、尺度は `V` が決めるので
+      // `.` は文字を出すだけ（これが実機の標準の書き方）。
+      if (c === "." && !hasV && !seenV) seenV = true;
       positions.push({ kind: "insert", ch: c === "B" ? " " : c });
       i++;
       continue;

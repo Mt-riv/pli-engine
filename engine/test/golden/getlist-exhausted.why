@@ -1,0 +1,4 @@
+実機: Iron Spring PL/I 1.4.1（Linux / i386）。2026-10-10 に取得。
+取り直す手順は別リポジトリ pli-oracle の README（`./regen.sh <名前>`）。
+固定している規則: GET LIST が**末尾に届いた読み取り**でも ENDFILE を上げること。
+入力 "12 34" に対し ENDFILE は 1 回で、a=12 / b=34 はどちらも代入される。

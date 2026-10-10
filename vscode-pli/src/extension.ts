@@ -14,9 +14,16 @@ import {
   snippetCompletions,
   type EditorDiagnostic,
 } from "./core.js";
+import { isFragmentFileName, RULES } from "../../engine/src/index.js";
 import type { FileMode, PliFile, PliHost, RuleSetting } from "../../engine/src/index.js";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import {
+  contain,
+  isPlainName,
+  isSafeWriteTarget,
+  resolveName,
+} from "../../engine/scripts/safe-path.js";
 
 /**
  * 扱う言語 ID。
@@ -57,6 +64,45 @@ function toVsDiagnostic(d: EditorDiagnostic): vscode.Diagnostic {
   return diag;
 }
 
+const RULE_SETTINGS = new Set(["off", "info", "warning", "error"]);
+
+/**
+ * `pli.lint.rules` を検証する。
+ *
+ * ワークスペースの設定から来る値なので、綴り違いの規則 id や
+ * `"warn"` のような値が混ざる。そのまま渡すと重大度の対応表が
+ * undefined を返し、「off にしたつもりが赤線」になる。
+ * CLI の `--rule` は弾いているので、揃えておく。
+ */
+function validRules(raw: Record<string, RuleSetting>): Record<string, RuleSetting> {
+  const known = new Set(RULES.map((r) => r.id));
+  const out: Record<string, RuleSetting> = {};
+  const badIds: string[] = [];
+  const badValues: string[] = [];
+  for (const [id, value] of Object.entries(raw)) {
+    if (!known.has(id)) {
+      badIds.push(id);
+      continue;
+    }
+    if (!RULE_SETTINGS.has(value)) {
+      badValues.push(`${id}=${String(value)}`);
+      continue;
+    }
+    out[id] = value;
+  }
+  if (badIds.length > 0 || badValues.length > 0) {
+    const parts: string[] = [];
+    if (badIds.length > 0) parts.push(`知らない規則 id: ${badIds.join(", ")}`);
+    if (badValues.length > 0) {
+      parts.push(
+        `値は off / info / warning / error のどれかです: ${badValues.join(", ")}`,
+      );
+    }
+    void vscode.window.showWarningMessage(`設定 pli.lint.rules を無視しました。${parts.join(" / ")}`);
+  }
+  return out;
+}
+
 /** `%INCLUDE a;` で試す名前。 */
 const INCLUDE_EXTENSIONS = ["", ".inc", ".pli", ".pl1", ".cpy", ".plinc"];
 /** ファイル入出力で試す拡張子。PL/I のファイル名は `.` を含められない。 */
@@ -68,31 +114,52 @@ const DATA_EXTENSIONS = ["", ".txt", ".dat", ".csv"];
  * 拡張は Node の上で動くので `node:fs` を使ってよい。
  * エンジン側（`engine/src/`）には持ち込まない。
  */
-function hostFor(doc: vscode.TextDocument): PliHost {
+function hostFor(doc: vscode.TextDocument, opts: { dryRun?: boolean } = {}): PliHost {
   const dirs: string[] = [];
   if (!doc.isUntitled) dirs.push(dirname(doc.fileName));
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
     dirs.push(folder.uri.fsPath);
   }
+
+  /**
+   * PL/I 側から来た名前を、許可したディレクトリの中へ封じ込める。
+   *
+   * 拡張は利用者の権限で動くので、ここが抜けると
+   * `%INCLUDE '/どこか';` を書いた `.pli` を**開いただけ**で
+   * （入力中の構文検査はプリプロセスを走らせる）ワークスペース外が読まれる。
+   * シンボリックリンクも辿るので、文字列の検査だけでは守れない。
+   */
+  const resolveIn = (
+    name: string,
+    extensions: readonly string[],
+    existsOnly: boolean,
+  ): string | undefined =>
+    resolveName(name, extensions, dirs, { roots: dirs, existsOnly });
+
+  /** 開いているドキュメントの未保存の内容。候補パスと突き合わせる。 */
+  const unsaved = (path: string): string | undefined => {
+    for (const open of vscode.workspace.textDocuments) {
+      if (open.isUntitled) continue;
+      if (open.uri.fsPath === path) return open.getText();
+    }
+    return undefined;
+  };
+
   return {
     readInclude(name: string): string | undefined {
-      // 開いていて未保存のファイルを優先する（保存前でも取り込める）
-      for (const open of vscode.workspace.textDocuments) {
-        if (open.isUntitled) continue;
-        const base = open.fileName.slice(open.fileName.lastIndexOf("/") + 1);
-        if (base.toLowerCase() === name.toLowerCase()) return open.getText();
+      const path = resolveIn(name, INCLUDE_EXTENSIONS, true);
+      if (path === undefined) return undefined;
+      // 保存前の内容を優先する。
+      // 以前は「開いているファイルの basename と %INCLUDE の名前が
+      // そのまま一致するとき」だけ見ていたので、拡張子を補う
+      // ふつうの `%INCLUDE decls;` では効いていなかった
+      const draft = unsaved(path);
+      if (draft !== undefined) return draft;
+      try {
+        return readFileSync(path, "utf8");
+      } catch {
+        return undefined;
       }
-      const candidates = isAbsolute(name)
-        ? [name]
-        : dirs.flatMap((d) => INCLUDE_EXTENSIONS.map((e) => join(d, name + e)));
-      for (const p of candidates) {
-        try {
-          if (existsSync(p)) return readFileSync(p, "utf8");
-        } catch {
-          // 読めないものは「無い」と同じ扱いにする
-        }
-      }
-      return undefined;
     },
 
     /**
@@ -102,22 +169,19 @@ function hostFor(doc: vscode.TextDocument): PliHost {
      * 書き出しは閉じるときに 1 回だけ来るので、そこで実ファイルへ落とす。
      */
     openFile(name: string, mode: FileMode): PliFile | undefined {
-      const candidates = isAbsolute(name)
-        ? [name]
-        : dirs.flatMap((d) => DATA_EXTENSIONS.map((e) => join(d, name + e)));
-      let found: string | undefined;
-      for (const p of candidates) {
+      const found = resolveIn(name, DATA_EXTENSIONS, true);
+      if (mode === "input") {
+        if (found === undefined) return undefined;
+        const draft = unsaved(found);
+        if (draft !== undefined) return { read: () => draft, write: () => {} };
         try {
-          if (existsSync(p)) {
-            found = p;
-            break;
-          }
+          const text = readFileSync(found, "utf8");
+          return { read: () => text, write: () => {} };
         } catch {
-          // 読めないものは「無い」と同じ扱いにする
+          return undefined;
         }
       }
-      if (mode === "input" && found === undefined) return undefined;
-      const path = found ?? candidates[0];
+      const path = found ?? newPathIn(name, dirs[0]);
       if (path === undefined) return undefined;
       let buffer = "";
       if (mode !== "output" && found !== undefined) {
@@ -131,15 +195,23 @@ function hostFor(doc: vscode.TextDocument): PliHost {
         read: () => buffer,
         write: (contents: string) => {
           buffer = contents;
-          try {
-            writeFileSync(path, contents);
-          } catch {
-            // 書けない場所なら黙って諦める。実行そのものは続ける
+          if (opts.dryRun === true) return;
+          if (!isSafeWriteTarget(path)) {
+            // 既存のシンボリックリンクやディレクトリへは書かない
+            throw new Error(`ファイル ${name} へは書き込めません`);
           }
+          writeFileSync(path, contents);
         },
       };
     },
   };
+}
+
+/** まだ無いファイルを作る先。基準ディレクトリの直下だけを許す。 */
+function newPathIn(name: string, baseDir: string | undefined): string | undefined {
+  if (baseDir === undefined) return undefined;
+  if (!isPlainName(name)) return undefined;
+  return contain(join(baseDir, name), { roots: [baseDir] });
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -149,6 +221,27 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const config = () => vscode.workspace.getConfiguration("pli");
 
+  /**
+   * 構文と Linter の診断（実行しない分）。
+   *
+   * 実行後に貼り直すときもこれを足す。足さないと、
+   * 実行のたびに Linter の指摘が消える。
+   */
+  const staticDiagnostics = (doc: vscode.TextDocument): vscode.Diagnostic[] => {
+    const c = config();
+    if (!c.get<boolean>("diagnostics.enabled", true)) return [];
+    return checkSyntax(doc.getText(), {
+      host: hostFor(doc, { dryRun: true }),
+      lint: c.get<boolean>("lint.enabled", true),
+      lintOptions: {
+        rules: validRules(c.get<Record<string, RuleSetting>>("lint.rules", {})),
+        // コピーブックは宣言だけの断片。missing-main と
+        // 「使われていない」を出すと、開いただけで警告が並ぶ
+        ...(isFragmentFileName(doc.fileName) ? { fragment: true } : {}),
+      },
+    }).map(toVsDiagnostic);
+  };
+
   /** 入力のたびに構文を検査して問題を表示する。 */
   const refresh = (doc: vscode.TextDocument): void => {
     if (doc.languageId !== DIAGNOSTIC_LANGUAGE_ID) return;
@@ -156,30 +249,41 @@ export function activate(context: vscode.ExtensionContext): void {
       diagnostics.delete(doc.uri);
       return;
     }
-    const c = config();
-    diagnostics.set(
-      doc.uri,
-      checkSyntax(doc.getText(), {
-        host: hostFor(doc),
-        lint: c.get<boolean>("lint.enabled", true),
-        lintOptions: {
-          rules: c.get<Record<string, RuleSetting>>("lint.rules", {}),
-        },
-      }).map(toVsDiagnostic),
-    );
+    diagnostics.set(doc.uri, staticDiagnostics(doc));
   };
 
-  // 入力中は少し待ってから検査する（打鍵のたびに走らせない）
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  // 入力中は少し待ってから検査する（打鍵のたびに走らせない）。
+  //
+  // タイマーはドキュメントごとに持つ。1 本で共有すると、
+  // 出力パネルなど無関係なドキュメントの変更で
+  // 入力中の .pli の保留中の検査が消える
+  // （onDidChangeTextDocument は言語を問わず発火する）。
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
   const refreshSoon = (doc: vscode.TextDocument): void => {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => refresh(doc), 250);
+    if (doc.languageId !== DIAGNOSTIC_LANGUAGE_ID) return;
+    const key = doc.uri.toString();
+    const existing = timers.get(key);
+    if (existing) clearTimeout(existing);
+    timers.set(
+      key,
+      setTimeout(() => {
+        timers.delete(key);
+        refresh(doc);
+      }, 250),
+    );
   };
 
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument(refresh),
     vscode.workspace.onDidChangeTextDocument((e) => refreshSoon(e.document)),
-    vscode.workspace.onDidCloseTextDocument((doc) => diagnostics.delete(doc.uri)),
+    vscode.workspace.onDidCloseTextDocument((doc) => {
+      // 閉じた直後に保留中の検査が走ると、閉じたファイルの診断が残る
+      const key = doc.uri.toString();
+      const t = timers.get(key);
+      if (t) clearTimeout(t);
+      timers.delete(key);
+      diagnostics.delete(doc.uri);
+    }),
     // 設定を変えたら開いている全部を貼り直す（再読み込みを求めない）
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration("pli")) return;
@@ -206,24 +310,60 @@ export function activate(context: vscode.ExtensionContext): void {
     return editor.document;
   };
 
-  const limits = (doc: vscode.TextDocument) => ({
-    maxSteps: config().get<number>("run.maxSteps", 5_000_000),
-    maxOutputBytes: config().get<number>("run.maxOutputBytes", 1_000_000),
-    host: hostFor(doc),
+  /** 1 以上の整数の設定を読む。不正な値は既定に戻して知らせる。 */
+  const positive = (key: string, fallback: number): number => {
+    const raw = config().get<number>(key, fallback);
+    if (Number.isInteger(raw) && raw >= 1) return raw;
+    void vscode.window.showWarningMessage(
+      `設定 pli.${key} の値 ${String(raw)} は 1 以上の整数ではないので、` +
+        `${fallback} を使います。`,
+    );
+    return fallback;
+  };
+
+  /**
+   * PSB の名前を読む。
+   *
+   * ワークスペースの `.vscode/settings.json` から来る値がそのまま
+   * ファイル名になるので、IMS の名前の形だけを通す。
+   */
+  const psbSetting = (): string => {
+    const raw = config().get<string>("dli.psb", "").trim();
+    if (raw === "" || /^[A-Za-z0-9$#@]{1,8}$/.test(raw)) return raw;
+    void vscode.window.showWarningMessage(
+      `設定 pli.dli.psb の値「${raw}」は IMS の名前として使えません` +
+        "（1〜8 桁の英数字と $ # @ だけ）。DL/I は無効にします。",
+    );
+    return "";
+  };
+
+  const limits = (doc: vscode.TextDocument, dryRun = false) => ({
+    maxSteps: positive("run.maxSteps", 5_000_000),
+    maxOutputBytes: positive("run.maxOutputBytes", 1_000_000),
+    host: hostFor(doc, { dryRun }),
     // DL/I を使うときだけ設定する。空なら CALL PLITDLI は
     // 「PSB が指定されていません」と言って止まる
-    psb: config().get<string>("dli.psb", ""),
+    psb: psbSetting(),
   });
 
   const runTests = (): void => {
     const doc = activeDocument();
     if (!doc) return;
     const name = doc.isUntitled ? "untitled" : doc.fileName;
-    const outcome = runTestsForEditor(doc.getText(), name, limits(doc));
+    // テストは既定で実ファイルへ書き戻さない。CLI の plitest と同じ約束。
+    // 書き戻すと、テストが書いたファイルで次回の結果が変わる
+    // （DL/I の DLET を試すテストで実際に起きた）
+    const outcome = runTestsForEditor(doc.getText(), name, limits(doc, true));
 
     output.clear();
     output.appendLine(outcome.text);
     output.show(true);
+    // 失敗・異常の行に印を付ける。静的な診断に**足して**貼る
+    // （置き換えると Linter の指摘が消える）
+    diagnostics.set(doc.uri, [
+      ...staticDiagnostics(doc),
+      ...outcome.diagnostics.map(toVsDiagnostic),
+    ]);
   };
 
   const execute = async (args: string[]): Promise<void> => {
@@ -245,7 +385,13 @@ export function activate(context: vscode.ExtensionContext): void {
     output.clear();
     output.appendLine(outcome.report);
     output.show(true);
-    diagnostics.set(doc.uri, outcome.diagnostics.map(toVsDiagnostic));
+    // 実行時の診断を**静的な診断に足して**貼る。
+    // 置き換えると、成功したときに Linter の指摘が消える
+    // （実行するたびに黄線が消えて、また入力すると戻る、という挙動になる）
+    diagnostics.set(doc.uri, [
+      ...staticDiagnostics(doc),
+      ...outcome.diagnostics.map(toVsDiagnostic),
+    ]);
   };
 
   // `pli` の Snippet は package.json の宣言で載せている。

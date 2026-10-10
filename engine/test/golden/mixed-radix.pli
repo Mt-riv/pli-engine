@@ -1,0 +1,19 @@
+/* 論点 1: 基数混在で 2 進尺度へ移すときの端数。
+   FIXED BIN(15,0) と FIXED DEC(1,1) を混ぜると、10 進 1 桁は
+   2 進 4 桁（ceil(1*log2(10))）へ移る。0.1 × 2⁴ = 1.6 なので
+   四捨五入なら 2/16 = 0.125、0 方向への切り捨てなら 1/16 = 0.0625。
+   2⁴ を掛け戻すと蓄えた整数がそのまま見えるので、両者を見分けられる。 */
+mixrad: proc options(main);
+  dcl i fixed bin(15);
+  i = 1;
+  put skip list('i*0.1      ', i * 0.1);
+  put skip list('i*0.1*16   ', (i * 0.1) * 16);
+  put skip list('i*0.3      ', i * 0.3);
+  put skip list('i*0.3*16   ', (i * 0.3) * 16);
+  put skip list('i*0.7      ', i * 0.7);
+  put skip list('i*0.7*16   ', (i * 0.7) * 16);
+  put skip list('i*1.5      ', i * 1.5);
+  put skip list('i*1.5*16   ', (i * 1.5) * 16);
+  put skip list('i+0.5      ', i + 0.5);
+  put skip list('i=1.5 cmp  ', (i < 1.5));
+end mixrad;

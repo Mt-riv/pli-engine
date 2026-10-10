@@ -1,0 +1,7 @@
+/* F(w) で小数部の指定が無いとき。d=0 として丸めるのか、そのまま出すのか。 */
+fnop: proc options(main);
+  put skip edit('1.99 f(4)  [', 1.99, ']')(a, f(4), a);
+  put skip edit('1.49 f(4)  [', 1.49, ']')(a, f(4), a);
+  put skip edit('1.5  f(6,3)[', 1.5, ']')(a, f(6,3), a);
+  put skip edit('12   f(6,2)[', 12, ']')(a, f(6,2), a);
+end fnop;

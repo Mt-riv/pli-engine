@@ -1,7 +1,7 @@
 /**
  * pli-engine の公開 API。
  *
- * 実体は 3 つに分かれている:
+ * 実体は 5 つに分かれている:
  *   - `run.ts`      — ソースを実行して診断を返す
  *   - `host.ts`     — 外界（%INCLUDE とファイル）への差し込み口
  *   - `lint.ts`     — 構文は通るが怪しい書き方を指摘する
@@ -22,7 +22,7 @@ export type {
   RunOptions,
 } from "./run.js";
 
-export { lint, formatLint, RULES } from "./lint.js";
+export { lint, formatLint, isFragmentFileName, RULES } from "./lint.js";
 export type {
   LintCategory,
   LintMessage,

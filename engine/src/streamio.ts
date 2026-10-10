@@ -167,6 +167,12 @@ export class StreamFile {
   private recordIndex = 0;
   /** レコード出力。 */
   private readonly written: string[] = [];
+  /**
+   * レコード出力の総文字数（改行を含む）。
+   * ストリーム出力の `ListWriter.length()` に相当するもので、
+   * 出力上限の判定に使う。これが無いと WRITE は上限を通らない。
+   */
+  private recordBytes = 0;
   /** 書き戻し先。SYSPRINT と SYSIN は持たない。 */
   private readonly backing: PliFile | undefined;
 
@@ -180,11 +186,15 @@ export class StreamFile {
     if (attrs.record) {
       const text = opts.contents ?? "";
       if (text !== "") {
-        this.records = text.replace(/\n$/, "").split("\n");
+        const lines = text.replace(/\n$/, "").split("\n");
+        const size = attrs.recordSize;
+        this.records =
+          size === undefined ? lines : lines.flatMap((l) => splitRecord(l, size));
       }
       if (mode === "update") {
         // 更新は読みながら書き換えるので、読んだ内容を土台にする
         this.written = [...this.records];
+        for (const r of this.written) this.recordBytes += r.length + 1;
       }
       return;
     }
@@ -193,6 +203,14 @@ export class StreamFile {
     } else {
       this.writer = new ListWriter(opts.writerOptions ?? {});
     }
+  }
+
+  /**
+   * このファイルへ書いた総文字数。
+   * ストリームなら書き出し口の、レコードならレコードの合計。
+   */
+  writtenLength(): number {
+    return this.writer?.length() ?? this.recordBytes;
   }
 
   /** レコードを 1 つ読む。終わりなら undefined。 */
@@ -207,16 +225,19 @@ export class StreamFile {
   /** レコードを 1 つ書く。 */
   writeRecord(text: string): void {
     const size = this.attrs.recordSize;
-    this.written.push(size === undefined ? text : text.padEnd(size).slice(0, size));
+    const rec = size === undefined ? text : text.padEnd(size).slice(0, size);
+    this.written.push(rec);
+    this.recordBytes += rec.length + 1;
   }
 
   /** 直前に読んだレコードを置き換える（UPDATE）。 */
   rewriteRecord(text: string): boolean {
     if (this.recordIndex === 0) return false;
     const size = this.attrs.recordSize;
-    this.written[this.recordIndex - 1] = size === undefined
-      ? text
-      : text.padEnd(size).slice(0, size);
+    const rec = size === undefined ? text : text.padEnd(size).slice(0, size);
+    const prev = this.written[this.recordIndex - 1] ?? "";
+    this.written[this.recordIndex - 1] = rec;
+    this.recordBytes += rec.length - prev.length;
     return true;
   }
 
@@ -231,6 +252,28 @@ export class StreamFile {
     this.writer.finish();
     this.backing?.write?.(this.writer.text());
   }
+}
+
+/**
+ * 1 行を固定長レコードに切る。
+ *
+ * **実機（Iron Spring PL/I 1.4.1）は改行を区切りと見ない。**
+ * `F RECSIZE(n)` のファイルは n バイトずつ切り、改行もデータの 1 バイトになる
+ * （`"ab\ncdef\n"` を `RECSIZE(4)` で読むと `"ab\nc"` と `"def\n"` の 2 件）。
+ *
+ * この処理系は**行指向のテキスト**として扱う方を選んでいる。仮想ファイルは
+ * ブラウザのテキスト欄で打ち込んで編集するものなので、改行をデータにすると
+ * 利用者の意図（1 行 1 レコード）と食い違う。DL/I の記憶形式と同じ方針。
+ *
+ * ただし **RECSIZE より長い行は切り捨てずに切る**。切り捨てると残りが黙って
+ * 消える（`"abcdefgh"` を `RECSIZE(4)` で読むと `efgh` に到達できなかった）。
+ * こうすると、改行の無いファイルでは実機と同じ結果になる。
+ */
+function splitRecord(line: string, size: number): string[] {
+  if (line.length <= size) return [line];
+  const out: string[] = [];
+  for (let i = 0; i < line.length; i += size) out.push(line.slice(i, i + size));
+  return out;
 }
 
 /** ファイル名の標準形。PL/I のファイル名は識別子なので大文字で持つ。 */
@@ -346,10 +389,13 @@ export class FileTable {
     }
   }
 
-  /** 出力の総量。上限の判定に使う。 */
+  /**
+   * 出力の総量。上限の判定に使う。
+   * ストリーム出力とレコード出力の両方を数える。
+   */
   totalWritten(): number {
     let n = 0;
-    for (const f of this.open.values()) n += f.writer?.length() ?? 0;
+    for (const f of this.open.values()) n += f.writtenLength();
     return n;
   }
 }

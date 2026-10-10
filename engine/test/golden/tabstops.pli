@@ -1,0 +1,10 @@
+/* PUT LIST の 24 桁タブストップと 120 桁の行幅。
+   engine/README.md の「出力の規定」の表を固定する。 */
+tabstops: proc options(main);
+  dcl i fixed bin(15);
+  put skip list('A', 'B', 'C');
+  put skip list(1, 2, 3, 4, 5);
+  do i = 1 to 7;
+    put list(i);
+  end;
+end tabstops;

@@ -1,0 +1,13 @@
+/* 論点 2b: F 書式の幅に収まらないとき。
+   SIZE 条件か、* 埋めか、上位桁の切り捨てか。
+   SIZE は既定で無効なので、ここでは前置子を付けずに既定動作を見る。
+   最後の 'after' が出れば続行、出なければそこで終わっている。 */
+fover: proc options(main);
+  dcl x fixed dec(6);
+  x = 123456;
+  put skip edit('123456 f(3) [', x, ']')(a, f(3), a);
+  put skip list('after');
+  x = -12345;
+  put skip edit('-12345 f(4) [', x, ']')(a, f(4), a);
+  put skip list('end');
+end fover;

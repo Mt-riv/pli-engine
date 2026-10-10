@@ -1,0 +1,12 @@
+/* ** の精度規則。p = (p1+1)*y - 1、q = q1*y。
+   最大精度を超えると FLOAT になる（ここには最大精度の違いで
+   結果が変わる式は入れない。2**9 は実機 FIXED / この処理系 FLOAT）。 */
+pw2: proc options(main);
+  put skip list('2**8  ', 2**8);
+  put skip list('2**10 ', 2**10);
+  put skip list('3**5  ', 3**5);
+  put skip list('10**3 ', 10**3);
+  put skip list('2.0**3', 2.0**3);
+  put skip list('4**1.5', 4**1.5);
+  put skip list('9**0.5', 9**0.5);
+end pw2;

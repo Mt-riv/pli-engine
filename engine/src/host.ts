@@ -43,6 +43,17 @@ export interface PliHost {
 
   /** SYSIN の内容。`GET`（ファイル指定なし）と `GET FILE(SYSIN)` が読む。 */
   stdin?: string;
+
+  /**
+   * 同じ内容を持つ別のホストを作る。
+   *
+   * テストフレームワークが**テストごとに**呼ぶ。1 つのホストを
+   * 共有すると、先のテストが書いたファイルを後のテストが読んでしまい、
+   * 実行の順序に結果が左右される（テストの独立が壊れる）。
+   * 実装しなければ共有のまま（実ファイルを見るホストのように、
+   * 書き戻しを別の手段で抑えている場合）。
+   */
+  clone?(): PliHost;
 }
 
 /**
@@ -82,6 +93,11 @@ export class MemoryHost implements PliHost {
     return Object.fromEntries(
       [...this.files].map(([k, v]) => [this.names.get(k) ?? k, v]),
     );
+  }
+
+  /** いまの内容を持つ別のホスト。テストごとの分離に使う。 */
+  clone(): MemoryHost {
+    return new MemoryHost(this.entries(), this.stdin);
   }
 
   /**

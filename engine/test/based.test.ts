@@ -199,7 +199,9 @@ describe("連結リスト", () => {
         2 value fixed bin(31),
         2 next pointer;
   dcl i fixed bin(31);
-  dcl line char(30) varying;
+  /* FIXED BIN(31) の文字表現は幅 14 なので 3 件で 42 桁になる。
+     VARYING は宣言の最大長で切られるので、収まる長さにする */
+  dcl line char(50) varying;
 
   head = null();
   do i = 1 to 3;
@@ -216,7 +218,7 @@ describe("連結リスト", () => {
     cur = cur -> node.next;
   end;
   put list(line);`;
-    // 先頭に挿していくので 3,2,1 の順。FIXED BIN(31) の文字表現は幅 11
+    // 先頭に挿していくので 3,2,1 の順
     expect(out(src).replace(/\s+/g, "")).toBe("321");
   });
 });
