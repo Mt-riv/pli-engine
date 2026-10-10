@@ -1,5 +1,7 @@
 # pli-engine — PL/I を書いて動かすツール
 
+**日本語** | [English](README.en.md)
+
 いにしえの言語 PL/I のプログラムを**ブラウザだけで**、あるいは**VSCode の中で**書いて動かせます。
 コンパイラのインストールは要りません。処理系（インタプリタ）を TypeScript で
 自作して同梱しているためです。
@@ -166,6 +168,32 @@ z/OS 専用で、手元で動かせる実装も入手できません）。この
 出処の 1 行目を「IBM 仕様に基づく（実機の出力ではない）」で始めることを
 テストで機械的に確かめています。
 
+## 表示する言語（日本語 / English）
+
+メッセージ・診断・Linter の指摘・テストの報告・画面の文字は、日本語と英語の
+どちらでも出せます。**既定は日本語**で、明示して切り替えます。
+環境変数 `LANG` やブラウザの言語設定には追従しません（同じコマンド・同じ URL が
+機械の設定で違う言葉を出すと、出力を固定したテストや説明が成り立たなくなるため）。
+
+| 入口 | 切り替え方 |
+|------|-----------|
+| ブラウザ版 | 画面上部の言語の選択（選ぶと `?lang=en` を付けて読み直します。書いた内容は残ります） |
+| VSCode | 設定 `pli.language`（`auto` / `ja` / `en`。既定の `auto` は VSCode の表示言語に合わせます） |
+| CLI | `--lang ja|en`、または環境変数 `PLI_LANG` |
+| ライブラリとして | `setLocale("en")` / `withLocale("en", fn)` / `runProgram(src, { locale: "en" })` |
+
+```bash
+npm run pli -- examples/tests/arith_test.pli --lang en
+PLI_LANG=en npm run plitest -- examples/tests
+```
+
+VSCode のコマンド名と設定の説明だけは VSCode 自身の仕組み（`package.nls.*.json`）で
+決まるため、**VSCode の表示言語**に従います。`pli.language` で食い違わせることも
+できますが、既定の `auto` なら揃います。
+
+訳は `engine/src/i18n/en.ts` に置いてあり、日本語の文そのものが鍵です。
+抜けは `engine/test/i18n.test.ts` が構文木から鍵を集めて落とします。
+
 ## 必要なもの
 
 | | 版 | 用途 |
@@ -231,12 +259,12 @@ xdg-open dist-web/index.html
 #### リリースから入手する（手軽）
 
 [Releases](https://github.com/Mt-riv/pli-engine/releases) から
-`pli-lang-0.4.1.vsix` をダウンロードします。ビルドは要りません。
+`pli-lang-0.5.0.vsix` をダウンロードします。ビルドは要りません。
 
 `gh` が使えるなら次でも取れます。
 
 ```bash
-gh release download vscode-v0.4.1 --repo Mt-riv/pli-engine
+gh release download vscode-v0.5.0 --repo Mt-riv/pli-engine
 ```
 
 #### 自分でビルドする
@@ -245,14 +273,14 @@ gh release download vscode-v0.4.1 --repo Mt-riv/pli-engine
 cd ../vscode-pli        # pli-engine/engine から
 npm ci
 npm run build
-npx @vscode/vsce package      # pli-lang-0.4.1.vsix ができる
+npx @vscode/vsce package      # pli-lang-0.5.0.vsix ができる
 ```
 
 #### インストール
 
 VSCode の拡張ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）→ 右上の `…` →
-**「VSIX からのインストール」** で `pli-lang-0.4.1.vsix` を選びます。
-`code` コマンドが使えるなら `code --install-extension pli-lang-0.4.1.vsix` でも入ります。
+**「VSIX からのインストール」** で `pli-lang-0.5.0.vsix` を選びます。
+`code` コマンドが使えるなら `code --install-extension pli-lang-0.5.0.vsix` でも入ります。
 
 使い方は [`docs/vscode-manual.md`](docs/vscode-manual.md)。
 
@@ -283,6 +311,7 @@ Windows でも同じコマンドが動きます（`npm run` 経由なのでパ�
 | `--write` | `plitest` | テストの書き出しを実ファイルへ反映する（既定は反映しない） |
 | `--all` | `plitest` | 名前が規約に合わないファイルも中身で判定する |
 | `--strict` | `plilint` | warning も失敗として扱う |
+| `--lang ja\|en` | 3 本とも | メッセージの言語（既定 `ja`。環境変数 `PLI_LANG` でも指定できる） |
 
 **ファイル入出力の範囲。** `pli` は既定で、ソースのあるディレクトリと `-I` で
 足した場所だけを読み書きします。`../` や絶対パスで外へ出ることはできず、
@@ -301,11 +330,16 @@ Windows でも同じコマンドが動きます（`npm run` 経由なのでパ�
 | [`docs/mfs.md`](docs/mfs.md) | **画面入出力（MFS）の使い方**。書式定義、入出力 PCB、台本、会話型 |
 | [`engine/README.md`](engine/README.md) | 処理系の内部。字句・構文・評価・書式の作り |
 
+英語版は [`docs/en/`](docs/en/) にあります（[browser](docs/en/browser-manual.md) /
+[vscode](docs/en/vscode-manual.md) / [test](docs/en/test.md) / [lint](docs/en/lint.md) /
+[dli](docs/en/dli.md) / [mfs](docs/en/mfs.md) / [engine](engine/README.en.md)）。
+
 ## リポジトリの構成
 
 ```
 engine/        処理系（TypeScript、Node 非依存）
   src/           字句・構文・評価・Linter・テストフレームワーク・PICTURE・入出力
+  src/i18n/      表示する言語（日本語が鍵、英語の訳の表）
   src/dli/       IMS/DB（DL/I）
   src/mfs/       画面入出力（MFS）
   src/tm/        IMS TM（メッセージキュー・画面との往復）
@@ -315,7 +349,7 @@ engine/        処理系（TypeScript、Node 非依存）
   test/golden/   実機の出力を固定した期待値
   test/screen/   画面像の期待値（出処は IBM 仕様）
 vscode-pli/    VSCode Extension（処理系を同梱）
-docs/          文書
+docs/          文書（en/ に英語版）
   browser-manual.md  ブラウザ版の使い方
   vscode-manual.md   VSCode Extension の使い方
   test.md            テストフレームワークの設計と書き方

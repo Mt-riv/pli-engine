@@ -1,3 +1,4 @@
+import { m, msg, tr } from "../i18n/index.js";
 import { dayOfYear } from "../datetime.js";
 /**
  * IMS TM（メッセージキュー）の層。
@@ -62,24 +63,24 @@ export interface TmOptions {
  * 言われないよう、`dli/dli.ts` の表と同じ語をそろえる。
  */
 const KNOWN_UNSUPPORTED = new Map<string, string>([
-  ["CHKP", "チェックポイント（同期点）"],
-  ["XRST", "再起動"],
-  ["ROLB", "ロールバック"],
-  ["ROLL", "ロールバック"],
-  ["ROLS", "ロールバック"],
-  ["SETS", "セーブポイント"],
-  ["LOG", "ログ書き出し"],
-  ["STAT", "統計取得"],
-  ["SNAP", "スナップ出力"],
-  ["GSCD", "システム領域の取得"],
-  ["APSB", "PSB の割り当て"],
-  ["DPSB", "PSB の解放"],
-  ["CHNG", "送り先の変更（代替 PCB）"],
-  ["SETO", "出力オプション"],
-  ["CMD", "IMS コマンド"],
-  ["GCMD", "IMS コマンドの応答"],
-  ["AUTH", "権限の確認"],
-  ["INIT", "状態の初期化"],
+  ["CHKP", msg("チェックポイント（同期点）")],
+  ["XRST", msg("再起動")],
+  ["ROLB", msg("ロールバック")],
+  ["ROLL", msg("ロールバック")],
+  ["ROLS", msg("ロールバック")],
+  ["SETS", msg("セーブポイント")],
+  ["LOG", msg("ログ書き出し")],
+  ["STAT", msg("統計取得")],
+  ["SNAP", msg("スナップ出力")],
+  ["GSCD", msg("システム領域の取得")],
+  ["APSB", msg("PSB の割り当て")],
+  ["DPSB", msg("PSB の解放")],
+  ["CHNG", msg("送り先の変更（代替 PCB）")],
+  ["SETO", msg("出力オプション")],
+  ["CMD", msg("IMS コマンド")],
+  ["GCMD", msg("IMS コマンドの応答")],
+  ["AUTH", msg("権限の確認")],
+  ["INIT", msg("状態の初期化")],
 ]);
 
 const OK = "  ";
@@ -144,7 +145,7 @@ export class TmRuntime {
     const code = func.trim().toUpperCase();
     const unsupported = KNOWN_UNSUPPORTED.get(code);
     if (unsupported !== undefined) {
-      throw new TmUnsupported(`${code}（${unsupported}）は未実装です`);
+      throw new TmUnsupported(m`${code}（${tr(unsupported)}）は未実装です`);
     }
     switch (code) {
       case "GU":
@@ -163,7 +164,7 @@ export class TmRuntime {
         // I/O 領域を渡す形（次のメッセージの第 1 セグメントにする）は未実装
         if (segment !== undefined) {
           throw new TmUnsupported(
-            "PURG に I/O 領域を渡す形（次のメッセージの第 1 セグメントにする）は未実装です",
+            m`PURG に I/O 領域を渡す形（次のメッセージの第 1 セグメントにする）は未実装です`,
           );
         }
         this.finish();

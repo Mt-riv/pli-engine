@@ -42,11 +42,11 @@ export type {
  */
 export { IMS_NAME } from "./macro.js";
 
-export { SNIPPETS, plainText, toVscodeSnippets } from "./snippets.js";
+export { SNIPPETS, plainText, snippetBody, toVscodeSnippets } from "./snippets.js";
 export type { Snippet, VscodeSnippet } from "./snippets.js";
 
 export {
-  ASSERT_PRELUDE,
+  assertPrelude,
   ASSERT_PROCEDURES,
   discover,
   isTestFileName,
@@ -113,3 +113,25 @@ export { Session, firstWord } from "./tm/session.js";
 export type { SessionOptions, SessionStep } from "./tm/session.js";
 export { KeyScriptError, parseKeys, playKeys, transcript } from "./tm/keys.js";
 export type { KeyScript, KeyStep, Playback } from "./tm/keys.js";
+
+/**
+ * 多言語化。利用者に見せる文字列はすべてここを通る。
+ *
+ * 既定は日本語で、`setLocale("en")` か `RunOptions.locale` で英語になる。
+ * `m` / `msg` / `tr` を公開しているのは、VSCode 拡張のように
+ * この外で文字列を作るところも同じ表を使えるようにするため。
+ */
+export {
+  addCatalog,
+  DEFAULT_LOCALE,
+  getLocale,
+  keyOf,
+  LOCALES,
+  m,
+  msg,
+  normalizeLocale,
+  setLocale,
+  tr,
+  withLocale,
+} from "./i18n/index.js";
+export type { Catalog, Locale } from "./i18n/index.js";

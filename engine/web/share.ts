@@ -3,6 +3,8 @@
  * ハッシュ（#s=...）に Base64URL で埋め込む。
  */
 
+
+import { m } from "../src/i18n/index.js";
 /** UTF-8 を Base64URL にする。 */
 export function encodeSource(text: string): string {
   const bytes = new TextEncoder().encode(text);
@@ -139,7 +141,7 @@ export async function share(
   if (clipboard) {
     try {
       await clipboard.writeText(url);
-      return { copied: true, url, message: "URLをコピーしました" };
+      return { copied: true, url, message: m`URLをコピーしました` };
     } catch {
       // 権限が無いなどで失敗した場合もハッシュへ落とす
     }
@@ -148,6 +150,6 @@ export async function share(
   return {
     copied: false,
     url,
-    message: "URLを更新しました（アドレスバーからコピーしてください）",
+    message: m`URLを更新しました（アドレスバーからコピーしてください）`,
   };
 }

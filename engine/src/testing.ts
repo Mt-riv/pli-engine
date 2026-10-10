@@ -19,6 +19,7 @@
  * 持たない。守れない約束を用意する方が害が大きいと考えた。
  */
 
+import { m, msg, tr, withLocale } from "./i18n/index.js";
 import type { PliHost } from "./host.js";
 import { parse } from "./parser.js";
 import { runProgram, type Diagnostic, type ProgramOptions } from "./run.js";
@@ -33,8 +34,13 @@ const MARK = "__PLITEST:";
  * ERROR は再開可能でないため、実行器が仕掛けた ON 単位が走ったあと
  * プログラムが終わる。これで「表明の失敗でテストを中断しつつ
  * TEARDOWN は実行する」という形になる。
+ *
+ * 定数ではなく関数なのは、失敗の報告に出る言葉（「期待」「実際」など）が
+ * 言語の設定で変わるため。import のときに固めると、あとから
+ * `setLocale` しても日本語のままになる。
  */
-export const ASSERT_PRELUDE = `
+export function assertPrelude(): string {
+  return `
   /* ---- テストフレームワーク（自動挿入） ---- */
   __REPORT: proc(kind, msg);
     dcl kind char(8) varying;
@@ -105,13 +111,13 @@ export const ASSERT_PRELUDE = `
   ASSERT_TRUE: proc(cond, msg);
     dcl cond bit(1);
     dcl msg  char(200) varying;
-    if ^cond then call FAIL(msg || ' : 真であるべきところが偽');
+    if ^cond then call FAIL(msg || ' : ${m`真であるべきところが偽`}');
   end ASSERT_TRUE;
 
   ASSERT_FALSE: proc(cond, msg);
     dcl cond bit(1);
     dcl msg  char(200) varying;
-    if cond then call FAIL(msg || ' : 偽であるべきところが真');
+    if cond then call FAIL(msg || ' : ${m`偽であるべきところが真`}');
   end ASSERT_FALSE;
 
   /* 数値の比較は FIXED DEC(15,5) で行う。この処理系の 10 進精度の上限が
@@ -124,7 +130,7 @@ export const ASSERT_PRELUDE = `
     dcl actual   fixed dec(15,5);
     dcl msg      char(200) varying;
     if expected ^= actual then
-      call FAIL(msg || ' : 期待 ' || __NUM(expected) || ' / 実際 ' || __NUM(actual));
+      call FAIL(msg || ' : ${m`期待`} ' || __NUM(expected) || ' / ${m`実際`} ' || __NUM(actual));
   end ASSERT_EQUALS;
 
   /* 許容差を自分で決めて比べる。小数 6 桁目以降を見たいときに使う。 */
@@ -137,8 +143,8 @@ export const ASSERT_PRELUDE = `
     diff = expected - actual;
     if diff < 0 then diff = -diff;
     if diff > tol then
-      call FAIL(msg || ' : 期待 ' || __NUMW(expected) || ' / 実際 ' || __NUMW(actual)
-                || ' / 許容差 ' || __NUMW(tol));
+      call FAIL(msg || ' : ${m`期待`} ' || __NUMW(expected) || ' / ${m`実際`} ' || __NUMW(actual)
+                || ' / ${m`許容差`} ' || __NUMW(tol));
   end ASSERT_NEAR;
 
   ASSERT_NOT_EQUALS: proc(unexpected, actual, msg);
@@ -146,7 +152,7 @@ export const ASSERT_PRELUDE = `
     dcl actual     fixed dec(15,5);
     dcl msg        char(200) varying;
     if unexpected = actual then
-      call FAIL(msg || ' : ' || __NUM(actual) || ' と異なるべきところが同じ');
+      call FAIL(msg || ' : ' || __NUM(actual) || ' ${m`と異なるべきところが同じ`}');
   end ASSERT_NOT_EQUALS;
 
   ASSERT_EQUALS_CHAR: proc(expected, actual, msg);
@@ -154,10 +160,11 @@ export const ASSERT_PRELUDE = `
     dcl actual   char(200) varying;
     dcl msg      char(200) varying;
     if expected ^= actual then
-      call FAIL(msg || ' : 期待 ''' || expected || ''' / 実際 ''' || actual || '''');
+      call FAIL(msg || ' : ${m`期待`} ''' || expected || ''' / ${m`実際`} ''' || actual || '''');
   end ASSERT_EQUALS_CHAR;
   /* ---- ここまで ---- */
 `;
+}
 
 /**
  * フレームワークが注入する手続きの名前。
@@ -317,7 +324,7 @@ function buildDriver(source: string, testName: string, d: Discovery): Driver {
     "__PLITEST_RUNNER: proc options(main);\n" +
     "  dcl __INTD bit(1);\n" +
     "  __INTD = '0'b;\n" +
-    `${ASSERT_PRELUDE}\n`;
+    `${assertPrelude()}\n`;
   const tail =
     "  on error\n" +
     "    begin;\n" +
@@ -401,6 +408,12 @@ export interface TestOptions extends ProgramOptions {}
 
 /** テストファイルの中身を実行して結果をまとめる。 */
 export function runTestSource(source: string, opts: TestOptions = {}): TestReport {
+  // 表明の失敗の文（前置きが出す「期待」「実際」）も報告の中の言葉も
+  // 走らせている間に作るので、まるごと包む
+  return withLocale(opts.locale, () => runTestsIn(source, opts));
+}
+
+function runTestsIn(source: string, opts: TestOptions): TestReport {
   const started = Date.now();
   const d = discover(source, opts.host);
 
@@ -416,9 +429,9 @@ export function runTestSource(source: string, opts: TestOptions = {}): TestRepor
     note,
   });
 
-  if (d.error) return empty(`テストファイルを解析できません: ${d.error}`);
+  if (d.error) return empty(m`テストファイルを解析できません: ${d.error}`);
   if (d.tests.length === 0 && d.disabled.length === 0) {
-    return empty("テストが見つかりません。TEST_ で始まる引数なしの手続きを定義してください。");
+    return empty(m`テストが見つかりません。TEST_ で始まる引数なしの手続きを定義してください。`);
   }
 
   const results: TestResult[] = [];
@@ -427,7 +440,7 @@ export function runTestSource(source: string, opts: TestOptions = {}): TestRepor
     results.push({
       name,
       status: "skipped",
-      message: "DISABLED_ が付いているため実行しません",
+      message: m`DISABLED_ が付いているため実行しません`,
       stdout: "",
       durationMs: 0,
     });
@@ -517,16 +530,16 @@ export function runTestSource(source: string, opts: TestOptions = {}): TestRepor
     ok: failures === 0 && errors === 0,
     durationMs: Date.now() - started,
     ...(ranNothing && results.length > 0
-      ? { note: `実行されたテストが 0 件です（省略 ${skipped} 件）` }
+      ? { note: m`実行されたテストが 0 件です（省略 ${skipped} 件）` }
       : {}),
   };
 }
 
 const STATUS_LABEL: Record<TestStatus, string> = {
-  passed: "成功",
-  failed: "失敗",
-  error: "異常",
-  skipped: "省略",
+  passed: msg("成功"),
+  failed: msg("失敗"),
+  error: msg("異常"),
+  skipped: msg("省略"),
 };
 
 export interface FormatOptions {
@@ -540,7 +553,7 @@ export interface FormatOptions {
 /** コンソール向けの報告を作る。 */
 export function formatReport(
   report: TestReport,
-  title = "テスト",
+  title = m`テスト`,
   opts: FormatOptions = {},
 ): string {
   const lines: string[] = [`--- ${title} ---`];
@@ -555,23 +568,22 @@ export function formatReport(
     lines.push(`  ${mark} ${r.name} (${r.durationMs}ms)`);
     // 行番号は分かったときだけ添える。前置きの中で起きて
     // 呼び出し元もたどれない場合は黙って省く（嘘の行を出さない）
-    const where = r.line === undefined ? "" : ` (${r.line} 行)`;
+    const where = r.line === undefined ? "" : m` (${r.line} 行)`;
     if (r.message) {
-      lines.push(`       ${STATUS_LABEL[r.status]}${where}: ${r.message}`);
+      lines.push(`       ${tr(STATUS_LABEL[r.status])}${where}: ${r.message}`);
     }
   }
 
   lines.push(
     "",
-    `テスト ${report.total} / 成功 ${report.passed} / 失敗 ${report.failures} / ` +
-      `異常 ${report.errors} / 省略 ${report.skipped} / ${report.durationMs}ms`,
+    m`テスト ${report.total} / 成功 ${report.passed} / 失敗 ${report.failures} / 異常 ${report.errors} / 省略 ${report.skipped} / ${report.durationMs}ms`,
   );
 
   if (opts.failedOutput) {
     for (const r of report.results) {
       if (r.status === "passed" || r.status === "skipped") continue;
       const body = r.stdout.trim();
-      if (body !== "") lines.push("", `--- ${r.name} の出力 ---`, body);
+      if (body !== "") lines.push("", m`--- ${r.name} の出力 ---`, body);
     }
   }
   return lines.join("\n");
@@ -615,7 +627,7 @@ export function toXmlReport(
       `<testsuite name="${escapeXml(suiteName)}" tests="1"` +
         ` failures="0" errors="1" skipped="0"` +
         ` time="${(report.durationMs / 1000).toFixed(3)}">`,
-      `    <testcase name="(読み込み)" classname="${escapeXml(suiteName)}" time="0.000">`,
+      m`    <testcase name="(読み込み)" classname="${escapeXml(suiteName)}" time="0.000">`,
       `      <error message="${msg}">${msg}</error>`,
       "    </testcase>",
       "</testsuite>",

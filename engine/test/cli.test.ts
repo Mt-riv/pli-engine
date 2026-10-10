@@ -133,7 +133,7 @@ describe("pli", () => {
   it("読めないソースはスタックトレースではなく 1 行で報告する", () => {
     const r = run("pli.ts", [join(dir, "nope.pli")]);
     expect(r.code).toBe(2);
-    expect(r.stderr).toMatch(/ソースを読めません/);
+    expect(r.stderr).toMatch(/ソースファイルを読めません/);
     expect(r.stderr).not.toMatch(/at /);
   });
 

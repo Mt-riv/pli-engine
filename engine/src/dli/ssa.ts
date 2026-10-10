@@ -16,6 +16,7 @@
  * `AJ` としてプログラムに返るもので、処理系が止まる種類の誤りではない。
  */
 
+import { m } from "../i18n/index.js";
 import type { DbdDef, FieldDef } from "./types.js";
 
 export type RelOp = "EQ" | "NE" | "GT" | "LT" | "GE" | "LE";
@@ -101,10 +102,10 @@ function fail(reason: string): SsaParse {
 
 export function parseSsa(text: string, dbd: DbdDef): SsaParse {
   const segment = text.slice(0, NAME_WIDTH).trim().toUpperCase();
-  if (segment === "") return fail("SSA にセグメント名がありません");
+  if (segment === "") return fail(m`SSA にセグメント名がありません`);
   const seg = dbd.segments.get(segment);
   if (seg === undefined) {
-    return fail(`セグメント ${segment} は DBD ${dbd.name} にありません`);
+    return fail(m`セグメント ${segment} は DBD ${dbd.name} にありません`);
   }
 
   let pos = NAME_WIDTH;
@@ -115,7 +116,7 @@ export function parseSsa(text: string, dbd: DbdDef): SsaParse {
       const c = text[pos]!.toUpperCase();
       if (c === "(" || c === " ") break;
       if (c === "-") continue; // null コマンドコード
-      if (!COMMAND_CODES.has(c)) return fail(`${text[pos]} はコマンドコードではありません`);
+      if (!COMMAND_CODES.has(c)) return fail(m`${text[pos]} はコマンドコードではありません`);
       commands.push(c);
     }
   }
@@ -125,10 +126,10 @@ export function parseSsa(text: string, dbd: DbdDef): SsaParse {
     return { ok: true, ssa: { segment, commands, conditions: [], qualified: false, source: text } };
   }
   if (!rest.startsWith("(")) {
-    return fail(`SSA の ${pos + 1} 桁目に ( か空白が要ります（${text.trim()}）`);
+    return fail(m`SSA の ${pos + 1} 桁目に ( か空白が要ります（${text.trim()}）`);
   }
   const close = rest.lastIndexOf(")");
-  if (close < 0) return fail(`SSA の括弧が閉じていません（${text.trim()}）`);
+  if (close < 0) return fail(m`SSA の括弧が閉じていません（${text.trim()}）`);
   const inner = rest.slice(1, close);
 
   // C コマンドコードは項目ではなく連結キーで修飾する
@@ -151,17 +152,17 @@ export function parseSsa(text: string, dbd: DbdDef): SsaParse {
   let join: "AND" | "OR" | "IAND" | undefined;
   while (i < inner.length) {
     if (i + FIELD_WIDTH + OP_WIDTH > inner.length) {
-      return fail(`修飾が短すぎます（${text.trim()}）`);
+      return fail(m`修飾が短すぎます（${text.trim()}）`);
     }
     const fieldName = inner.slice(i, i + FIELD_WIDTH).trim().toUpperCase();
     const field: FieldDef | undefined = seg.fields.find((f) => f.name === fieldName);
     if (field === undefined) {
-      return fail(`項目 ${fieldName} はセグメント ${segment} にありません`);
+      return fail(m`項目 ${fieldName} はセグメント ${segment} にありません`);
     }
     i += FIELD_WIDTH;
     const op = relOp(inner.slice(i, i + OP_WIDTH));
     if (op === undefined) {
-      return fail(`${inner.slice(i, i + OP_WIDTH)} は関係演算子ではありません（${text.trim()}）`);
+      return fail(m`${inner.slice(i, i + OP_WIDTH)} は関係演算子ではありません（${text.trim()}）`);
     }
     i += OP_WIDTH;
     // 値の終わりは「論理記号まで」と「項目長」の短い方
@@ -175,7 +176,7 @@ export function parseSsa(text: string, dbd: DbdDef): SsaParse {
     const limit = i + field.bytes;
     if (limit < end) {
       return fail(
-        `項目 ${fieldName} の値が ${field.bytes} 桁に収まっていません（${text.trim()}）`,
+        m`項目 ${fieldName} の値が ${field.bytes} 桁に収まっていません（${text.trim()}）`,
       );
     }
     const value = inner.slice(i, end);
@@ -184,9 +185,9 @@ export function parseSsa(text: string, dbd: DbdDef): SsaParse {
     if (i < inner.length) {
       join = JOINS[inner[i]!];
       i++;
-      if (i >= inner.length) return fail(`論理記号の後に条件がありません（${text.trim()}）`);
+      if (i >= inner.length) return fail(m`論理記号の後に条件がありません（${text.trim()}）`);
     }
   }
-  if (conditions.length === 0) return fail(`修飾が空です（${text.trim()}）`);
+  if (conditions.length === 0) return fail(m`修飾が空です（${text.trim()}）`);
   return { ok: true, ssa: { segment, commands, conditions, qualified: true, source: text } };
 }

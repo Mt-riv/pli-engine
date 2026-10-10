@@ -9,6 +9,7 @@
  * 画面像の桁は定義した桁数と一致するが、等幅で表示すると見た目はずれる。
  */
 
+import { m } from "../i18n/index.js";
 import type { Attr } from "./blocks.js";
 import { cells, type Screen, type ScreenField } from "./device.js";
 
@@ -57,11 +58,10 @@ function padDisplay(text: string, width: number): string {
 }
 
 function fieldLine(f: ScreenField): string {
-  const name = padDisplay(f.name ?? "(固定)", 8);
+  const name = padDisplay(f.name ?? m`(固定)`, 8);
   const pos = `(${f.line},${f.col})`.padEnd(9);
   return (
-    `  ${name} ${pos} ${String(f.length).padStart(3)} 桁  ${attrText(f.attr)}` +
-    `${f.modified ? " 変更" : ""}  "${f.text.replace(/ +$/, "")}"`
+    m`  ${name} ${pos} ${String(f.length).padStart(3)} 桁  ${attrText(f.attr)}${f.modified ? ` ${m`変更`}` : ""}  "${f.text.replace(/ +$/, "")}"`
   );
 }
 
@@ -69,7 +69,7 @@ function fieldLine(f: ScreenField): string {
 export function renderScreen(screen: Screen, opts: RenderOptions = {}): string {
   const width = String(screen.rows).length;
   const out: string[] = [
-    `書式 ${screen.format}（${screen.rows} 行 × ${screen.cols} 桁）`,
+    m`書式 ${screen.format}（${screen.rows} 行 × ${screen.cols} 桁）`,
     `${" ".repeat(width)} |${ruler(screen.cols)}`,
   ];
   for (const [i, row] of allRows(screen).entries()) {
@@ -77,19 +77,19 @@ export function renderScreen(screen: Screen, opts: RenderOptions = {}): string {
     if (text === "" && opts.blankLines !== true) continue;
     out.push(`${String(i + 1).padStart(width)} |${text}`);
   }
-  out.push(`カーソル (${screen.cursor.line},${screen.cursor.col})`);
-  out.push(`警報 ${screen.dsca.alarm ? "鳴らす" : "なし"}`);
+  out.push(m`カーソル (${screen.cursor.line},${screen.cursor.col})`);
+  out.push(m`警報 ${screen.dsca.alarm ? m`鳴らす` : m`なし`}`);
   out.push(
-    `消去 ${
+    m`消去 ${
       screen.dsca.eraseAll
-        ? "画面全部"
+        ? m`画面全部`
         : screen.dsca.eraseUnprotected
-          ? "打ち込める項目"
-          : "なし"
+          ? m`打ち込める項目`
+          : m`なし`
     }`,
   );
   if (opts.fields !== false) {
-    out.push("項目");
+    out.push(m`項目`);
     for (const f of screen.fields) {
       if (f.generated) continue; // 隙間の項目は MFS が作ったもの
       out.push(fieldLine(f));

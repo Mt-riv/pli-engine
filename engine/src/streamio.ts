@@ -12,6 +12,7 @@
  * 宣言されていないファイル名には既定属性が割り当てられ、そのまま開ける。
  */
 
+import { m } from "./i18n/index.js";
 import { ListWriter, type WriterOptions } from "./format.js";
 import type { PliFile, PliHost } from "./host.js";
 
@@ -435,7 +436,7 @@ export function modeConflict(
     output: "OUTPUT",
     update: "UPDATE",
   };
-  return `${label[declared]} と宣言したファイルを ${label[want]} として使っています`;
+  return m`${label[declared]} と宣言したファイルを ${label[want]} として使っています`;
 }
 
 export class UndefinedFileError extends Error {
@@ -446,8 +447,8 @@ export class UndefinedFileError extends Error {
   ) {
     super(
       reason === undefined
-        ? `ファイル ${fileName} を開けません`
-        : `ファイル ${fileName} を開けません（${reason}）`,
+        ? m`ファイル ${fileName} を開けません`
+        : m`ファイル ${fileName} を開けません（${reason}）`,
     );
     this.name = "UndefinedFileError";
   }

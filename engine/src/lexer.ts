@@ -9,6 +9,8 @@
  * 字句解析は一律に "word" として返し、判断は構文解析に委ねる。
  */
 
+
+import { m } from "./i18n/index.js";
 export type TokenKind =
   | "word"
   | "number"
@@ -162,7 +164,7 @@ export function lex(source: string): Token[] {
       advance(2);
       for (;;) {
         if (i >= source.length) {
-          throw new LexError("コメントが閉じていません", sl, sc);
+          throw new LexError(m`コメントが閉じていません`, sl, sc);
         }
         if (source[i] === "*" && source[i + 1] === "/") {
           advance(2);
@@ -199,7 +201,7 @@ export function lex(source: string): Token[] {
         advance();
       }
       if (!closed) {
-        throw new LexError("文字列が閉じていません", startLine, startCol);
+        throw new LexError(m`文字列が閉じていません`, startLine, startCol);
       }
       const body = raw.join("");
 
@@ -209,7 +211,7 @@ export function lex(source: string): Token[] {
         advance();
         if (!/^[01]*$/.test(body)) {
           throw new LexError(
-            `ビット定数に 0/1 以外が含まれています: '${body}'`,
+            m`ビット定数に 0/1 以外が含まれています: '${body}'`,
             startLine,
             startCol,
           );
@@ -221,7 +223,7 @@ export function lex(source: string): Token[] {
         advance();
         if (!/^[0-9A-Fa-f]*$/.test(body)) {
           throw new LexError(
-            `16進定数に16進数字以外が含まれています: '${body}'`,
+            m`16進定数に16進数字以外が含まれています: '${body}'`,
             startLine,
             startCol,
           );
@@ -283,7 +285,7 @@ export function lex(source: string): Token[] {
       continue;
     }
 
-    throw new LexError(`解釈できない文字です: ${JSON.stringify(c)}`, startLine, startCol);
+    throw new LexError(m`解釈できない文字です: ${JSON.stringify(c)}`, startLine, startCol);
   }
 
   push("eof", "", line, col);

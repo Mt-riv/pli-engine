@@ -11,6 +11,7 @@
  * 各コードの意味は仕様の記述をテストに引用して担保している。
  */
 
+import { m, msg, tr } from "../i18n/index.js";
 import { Database, type Occurrence } from "./store.js";
 import { parseSsa, type Ssa, type SsaCondition } from "./ssa.js";
 import type { DbdDef, PcbDef, PsbDef, SegmentDef } from "./types.js";
@@ -35,24 +36,24 @@ const UPDATE_FUNCTIONS = new Set(["ISRT", "DLET", "REPL"]);
  * 黙って AD を返すと「書き間違い」と区別が付かないので、名指しで断る。
  */
 const KNOWN_UNSUPPORTED = new Map<string, string>([
-  ["CHKP", "チェックポイント"],
-  ["XRST", "再起動"],
-  ["ROLB", "ロールバック"],
-  ["ROLL", "ロールバック"],
-  ["ROLS", "ロールバック"],
-  ["SETS", "セーブポイント"],
-  ["LOG", "ログ書き出し"],
-  ["STAT", "統計取得"],
-  ["CHNG", "メッセージ送信先の変更"],
-  ["PURG", "メッセージの送出"],
-  ["SETO", "出力オプション"],
-  ["CMD", "IMS コマンド"],
-  ["GCMD", "IMS コマンド応答"],
-  ["INIT", "状態の初期化"],
-  ["SNAP", "スナップ出力"],
-  ["GSCD", "システム領域の取得"],
-  ["APSB", "PSB の割り当て"],
-  ["DPSB", "PSB の解放"],
+  ["CHKP", msg("チェックポイント")],
+  ["XRST", msg("再起動")],
+  ["ROLB", msg("ロールバック")],
+  ["ROLL", msg("ロールバック")],
+  ["ROLS", msg("ロールバック")],
+  ["SETS", msg("セーブポイント")],
+  ["LOG", msg("ログ書き出し")],
+  ["STAT", msg("統計取得")],
+  ["CHNG", msg("メッセージ送信先の変更")],
+  ["PURG", msg("メッセージの送出")],
+  ["SETO", msg("出力オプション")],
+  ["CMD", msg("IMS コマンド")],
+  ["GCMD", msg("IMS コマンド応答")],
+  ["INIT", msg("状態の初期化")],
+  ["SNAP", msg("スナップ出力")],
+  ["GSCD", msg("システム領域の取得")],
+  ["APSB", msg("PSB の割り当て")],
+  ["DPSB", msg("PSB の解放")],
 ]);
 
 /** 引き受けるコマンドコード。 */
@@ -107,13 +108,13 @@ export class DliRuntime {
 
   pcb(index: number): PcbState {
     const s = this.states[index];
-    if (s === undefined) throw new DliUnsupported(`PCB ${index + 1} は PSB にありません`);
+    if (s === undefined) throw new DliUnsupported(m`PCB ${index + 1} は PSB にありません`);
     return s;
   }
 
   database(name: string): Database {
     const db = this.databases.get(name.toUpperCase());
-    if (db === undefined) throw new DliUnsupported(`データベース ${name} が読めません`);
+    if (db === undefined) throw new DliUnsupported(m`データベース ${name} が読めません`);
     return db;
   }
 
@@ -130,12 +131,12 @@ export class DliRuntime {
       // 評価器は入出力 PCB を TmRuntime へ回すので、ここには来ない。
       // 残してあるのは DL/I 層を直に呼ぶ場合の守り
       throw new DliUnsupported(
-        "入出力 PCB への呼び出しは DL/I 層では扱いません（IMS TM の層に回します）",
+        m`入出力 PCB への呼び出しは DL/I 層では扱いません（IMS TM の層に回します）`,
       );
     }
     const unsupported = KNOWN_UNSUPPORTED.get(code);
     if (unsupported !== undefined) {
-      throw new DliUnsupported(`${code}（${unsupported}）は未実装です`);
+      throw new DliUnsupported(m`${code}（${tr(unsupported)}）は未実装です`);
     }
     if (!GET_FUNCTIONS.has(code) && !UPDATE_FUNCTIONS.has(code)) {
       // AD — 機能コードが正しくない
@@ -158,7 +159,7 @@ export class DliRuntime {
       if (!parsed.ok) return this.done(pcb, parsed.status);
       for (const c of parsed.ssa.commands) {
         if (!SUPPORTED_COMMANDS.has(c)) {
-          throw new DliUnsupported(`コマンドコード ${c} は未実装です`);
+          throw new DliUnsupported(m`コマンドコード ${c} は未実装です`);
         }
       }
       const senseg = pcb.def.senseg.get(parsed.ssa.segment);
@@ -481,8 +482,7 @@ export class DliRuntime {
     // 名指しの実行時誤りにする
     if (/[\r\n\t\0]/.test(ioArea.slice(0, target.seg.bytes))) {
       throw new DliUnsupported(
-        "セグメントに改行・タブ・NUL を入れることはできません" +
-          "（この処理系はデータベースを 1 行 1 セグメントのテキストで持つため）",
+        m`セグメントに改行・タブ・NUL を入れることはできません（この処理系はデータベースを 1 行 1 セグメントのテキストで持つため）`,
       );
     }
     const data = ioArea.padEnd(target.seg.bytes).slice(0, target.seg.bytes);
@@ -571,8 +571,7 @@ export class DliRuntime {
     // （IMS の状態コードではなく、この処理系の記憶形式の制約）
     if (/[\r\n\t\0]/.test(ioArea.slice(0, seg.bytes))) {
       throw new DliUnsupported(
-        "セグメントに改行・タブ・NUL を入れることはできません" +
-          "（この処理系はデータベースを 1 行 1 セグメントのテキストで持つため）",
+        m`セグメントに改行・タブ・NUL を入れることはできません（この処理系はデータベースを 1 行 1 セグメントのテキストで持つため）`,
       );
     }
     const data = ioArea.padEnd(seg.bytes).slice(0, seg.bytes);

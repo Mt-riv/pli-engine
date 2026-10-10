@@ -12,6 +12,7 @@
  * （実機の OPT=1 の規定）。
  */
 
+import { m } from "../i18n/index.js";
 import {
   MfsBlockError,
   type Fill,
@@ -80,7 +81,7 @@ export function formatInput(
   const dif = lib.dif(mid.sor);
   const lpage = mid.lpages[0];
   if (lpage === undefined) {
-    throw new MfsBlockError(`${mid.name} に項目の定義がありません`);
+    throw new MfsBlockError(m`${mid.name} に項目の定義がありません`);
   }
   const data = new Map(input.fields);
   if (input.aid.kind === "pf") {
@@ -102,7 +103,7 @@ export function formatInput(
           break;
         case "system":
           // 読んだ時点で断っている
-          throw new MfsBlockError(`${mid.name} の MFLD に出力専用の定数があります`);
+          throw new MfsBlockError(m`${mid.name} の MFLD に出力専用の定数があります`);
         case "dfld":
         case "dfld-literal": {
           const got = data.get(mfld.source.name);

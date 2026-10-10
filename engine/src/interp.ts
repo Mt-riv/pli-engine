@@ -5,6 +5,7 @@
  * PUT LIST・SKIP / IF / DO の3形態 / CALL / RETURN / 組込関数。
  */
 
+import { m, type Locale } from "./i18n/index.js";
 import type {
   Bound,
   DataAttr,
@@ -81,22 +82,35 @@ import {
  */
 function clip(v: string, max = 60): string {
   const t = JSON.stringify(v);
-  return t.length <= max ? t : `${t.slice(0, max)}…(${v.length} 文字)`;
+  return t.length <= max ? t : m`${t.slice(0, max)}…(${v.length} 文字)`;
 }
 
 export class RuntimeError extends Error {
-  constructor(
-    message: string,
-    readonly line?: number,
-  ) {
-    super(line === undefined ? message : `${line}行: ${message}`);
+  /**
+   * 行の接頭辞を付けない本文。
+   *
+   * `Error.message` には「3行: …」を付ける（投げたものをそのまま
+   * ログに出しても場所が分かるように）が、診断に載せるのは本文だけ。
+   * **接頭辞を文字列から正規表現で剥がすと、言語ごとに形が違うので
+   * 英語では剥がし損ねる。** だから剥がさずに別に持つ。
+   */
+  readonly plain: string;
+
+  constructor(message: string, readonly line?: number) {
+    super(line === undefined ? message : m`${line}行: ${message}`);
+    this.plain = message;
     this.name = "RuntimeError";
   }
 }
 
 export class Unsupported extends Error {
-  constructor(message: string, readonly line?: number) {
-    super(line === undefined ? message : `${line}行: ${message}（未実装）`);
+  /** 行の接頭辞を付けない本文（`RuntimeError.plain` と同じ考え）。 */
+  readonly plain: string;
+
+  constructor(what: string, readonly line?: number) {
+    const plain = m`${what}（未実装）`;
+    super(line === undefined ? plain : m`${line}行: ${plain}`);
+    this.plain = plain;
     this.name = "Unsupported";
   }
 }
@@ -162,9 +176,8 @@ export class FinishSignal extends Error {
       file === undefined
         ? condition
         : detail !== undefined
-          ? `${condition}（ファイル ${file}）。${detail}`
-          : `${condition}（ファイル ${file}）。ON ${condition}(${file}) を置くか、` +
-            "ファイル名と TITLE を確認してください",
+          ? m`${condition}（ファイル ${file}）。${detail}`
+          : m`${condition}（ファイル ${file}）。ON ${condition}(${file}) を置くか、ファイル名と TITLE を確認してください`,
     );
     this.name = "FinishSignal";
   }
@@ -360,6 +373,13 @@ export interface RunOptions {
   /** 主手続きの引数（コマンドライン引数相当）。 */
   args?: string[];
   /**
+   * メッセージと診断の言語。省略すると今の設定のまま
+   * （既定は日本語。`setLocale` / `withLocale` でも変えられる）。
+   *
+   * 1 回の実行の間だけ切り替えるので、呼び出し側の設定は戻る。
+   */
+  locale?: Locale;
+  /**
    * 外界への差し込み口。`%INCLUDE` とファイル入出力に使う。
    * 渡さなければ取り込みもファイル入出力も「できない」として扱う。
    */
@@ -426,7 +446,7 @@ export class StorageLimitExceeded extends Error {
 /** 出力上限に達したことを表す内部例外。 */
 export class OutputLimitExceeded extends Error {
   constructor(readonly line = 1) {
-    super("出力が上限に達しました");
+    super(m`出力が上限に達しました`);
     this.name = "OutputLimitExceeded";
   }
 }
@@ -434,7 +454,7 @@ export class OutputLimitExceeded extends Error {
 /** 文数の上限に達したことを表す内部例外。 */
 export class StepLimitExceeded extends Error {
   constructor(limit: number, readonly line = 1) {
-    super(`実行した文の数が上限(${limit})に達しました。無限ループの可能性があります`);
+    super(m`実行した文の数が上限(${limit})に達しました。無限ループの可能性があります`);
     this.name = "StepLimitExceeded";
   }
 }
@@ -543,7 +563,7 @@ export class Interpreter {
     const limit = this.opts.maxStorageCells ?? DEFAULT_MAX_STORAGE_CELLS;
     if (n > limit) {
       throw new StorageLimitExceeded(
-        `${what}の要素数 ${n} が上限(${limit})を超えています`,
+        m`${what}の要素数 ${n} が上限(${limit})を超えています`,
         line,
       );
     }
@@ -559,7 +579,7 @@ export class Interpreter {
    */
   private checkSpan(n: number, what: string, line: number): void {
     if (!Number.isFinite(n)) {
-      throw new RuntimeError(`${what}が数になりません`, line);
+      throw new RuntimeError(m`${what}が数になりません`, line);
     }
     this.checkLength(Math.max(0, Math.trunc(n)), line);
   }
@@ -569,7 +589,7 @@ export class Interpreter {
     const limit = this.opts.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH;
     if (n > limit) {
       throw new StorageLimitExceeded(
-        `文字列の長さ ${n} が上限(${limit})を超えています`,
+        m`文字列の長さ ${n} が上限(${limit})を超えています`,
         line,
       );
     }
@@ -590,23 +610,23 @@ export class Interpreter {
       // 行番号も 1 固定になる
       if (e instanceof GotoSignal) {
         throw new RuntimeError(
-          `ラベル ${e.label} が見つかりません（GOTO の飛び先は同じ並びの中に要ります）`,
+          m`ラベル ${e.label} が見つかりません（GOTO の飛び先は同じ並びの中に要ります）`,
           this.currentLine,
         );
       }
       if (e instanceof LeaveSignal) {
         throw new RuntimeError(
           e.label === undefined
-            ? "LEAVE はループの中でしか使えません"
-            : `LEAVE ${e.label} に対応するループがありません`,
+            ? m`LEAVE はループの中でしか使えません`
+            : m`LEAVE ${e.label} に対応するループがありません`,
           this.currentLine,
         );
       }
       if (e instanceof IterateSignal) {
         throw new RuntimeError(
           e.label === undefined
-            ? "ITERATE はループの中でしか使えません"
-            : `ITERATE ${e.label} に対応するループがありません`,
+            ? m`ITERATE はループの中でしか使えません`
+            : m`ITERATE ${e.label} に対応するループがありません`,
           this.currentLine,
         );
       }
@@ -614,8 +634,7 @@ export class Interpreter {
         // 再帰が深すぎて JS のスタックを使い切った。
         // そのまま出すと行番号の無い英語のメッセージになる
         throw new RuntimeError(
-          "再帰が深すぎます（この処理系は JavaScript のスタックを使うので、" +
-            "数百段で尽きます）",
+          m`再帰が深すぎます（この処理系は JavaScript のスタックを使うので、数百段で尽きます）`,
           this.currentLine,
         );
       }
@@ -636,7 +655,7 @@ export class Interpreter {
       program.body.find((s) => s.kind === "procedure" && s.isMain) ??
       program.body.find((s) => s.kind === "procedure");
     if (!main || main.kind !== "procedure") {
-      throw new RuntimeError("OPTIONS(MAIN) を持つ手続きがありません");
+      throw new RuntimeError(m`OPTIONS(MAIN) を持つ手続きがありません`);
     }
     // 主手続きが引数を取る場合はコマンドライン引数を渡す。
     // numwrd.pli の `NUMWRD: proc(parm) options(main)` がこれに依存する。
@@ -757,7 +776,7 @@ export class Interpreter {
     def.stmt.params.forEach((p, i) => {
       const a = args[i];
       if (a === undefined) {
-        throw new RuntimeError(`引数 ${p} が渡されていません`, def.stmt.line);
+        throw new RuntimeError(m`引数 ${p} が渡されていません`, def.stmt.line);
       }
       const b: ArgBinding =
         isArgBinding(a) ? a : { attr: attrOfValue(a), cells: [a], shared: false };
@@ -824,12 +843,12 @@ export class Interpreter {
       case "CBLTDLI":
       case "ASMTDLI":
         throw new RuntimeError(
-          `${s.name} は COBOL / アセンブラ向けの入口です。PL/I では PLITDLI を使います`,
+          m`${s.name} は COBOL / アセンブラ向けの入口です。PL/I では PLITDLI を使います`,
           s.line,
         );
       case "AIBTDLI":
         throw new RuntimeError(
-          "AIB インタフェース（AIBTDLI）は未実装です。PLITDLI を使ってください",
+          m`AIB インタフェース（AIBTDLI）は未実装です。PLITDLI を使ってください`,
           s.line,
         );
       default:
@@ -851,7 +870,7 @@ export class Interpreter {
     const args = s.args;
     if (args.length < 3) {
       throw new RuntimeError(
-        "CALL PLITDLI には 引数個数・機能コード・PCB の 3 つが最低限必要です",
+        m`CALL PLITDLI には 引数個数・機能コード・PCB の 3 つが最低限必要です`,
         s.line,
       );
     }
@@ -860,14 +879,14 @@ export class Interpreter {
     const declared = Number(render(asFixed(this.eval(args[0]!, scope, s.line), s.line)));
     if (declared !== args.length - 1) {
       throw new RuntimeError(
-        `CALL PLITDLI の第 1 引数は ${declared} ですが、後ろに渡した引数は ${args.length - 1} 個です`,
+        m`CALL PLITDLI の第 1 引数は ${declared} ですが、後ろに渡した引数は ${args.length - 1} 個です`,
         s.line,
       );
     }
     const func = this.asText(this.eval(args[1]!, scope, s.line));
     const pcbRef = args[2]!;
     if (pcbRef.kind !== "ref") {
-      throw new RuntimeError("PLITDLI の第 3 引数は PCB マスクの変数です", s.line);
+      throw new RuntimeError(m`PLITDLI の第 3 引数は PCB マスクの変数です`, s.line);
     }
     const index = this.pcbIndexFor(dli, pcbRef, scope, s.line);
     const ioRef = args[3];
@@ -878,7 +897,7 @@ export class Interpreter {
     const ioArea =
       ioRef === undefined || ioRef.kind !== "ref"
         ? ""
-        : this.gatherLeaves(ioRef, scope, s.line, "セグメント I/O 領域");
+        : this.gatherLeaves(ioRef, scope, s.line, m`セグメント I/O 領域`);
     // SSA は構造体で組み立てるのが PL/I の IMS プログラムの典型形
     // （SSA_NAME / '(' / FIELD / OP / VALUE / ')' を並べた構造体）。
     // 値として評価すると構造体はスカラにならないので、
@@ -897,7 +916,7 @@ export class Interpreter {
       throw e;
     }
     if (result.ioArea !== undefined && ioRef !== undefined && ioRef.kind === "ref") {
-      this.scatterLeaves(ioRef, result.ioArea, scope, s.line, "セグメント I/O 領域");
+      this.scatterLeaves(ioRef, result.ioArea, scope, s.line, m`セグメント I/O 領域`);
     }
     this.writePcb(pcbRef, scope, dli.pcb(index), s.line);
   }
@@ -921,8 +940,7 @@ export class Interpreter {
     const tm = this.opts.tm;
     if (tm === undefined) {
       throw new RuntimeError(
-        "入出力 PCB への呼び出しにはメッセージキューが必要です" +
-          "（実行するときに MFS の書式と入力を与えてください）",
+        m`入出力 PCB への呼び出しにはメッセージキューが必要です（実行するときに MFS の書式と入力を与えてください）`,
         s.line,
       );
     }
@@ -932,13 +950,13 @@ export class Interpreter {
     let segment: string | undefined;
     if (isInsert) {
       if (area === undefined) {
-        throw new RuntimeError("ISRT には I/O 領域が必要です", s.line);
+        throw new RuntimeError(m`ISRT には I/O 領域が必要です`, s.line);
       }
       segment = this.readMessageArea(area, scope, s.line);
     } else if (["GU", "GHU", "GN", "GHN"].includes(code) && area === undefined) {
       // 領域が無いと取ったメッセージを誰も受け取れない。
       // 以前は成功を返してキューを 1 件進めていたので、入力が消えていた
-      throw new RuntimeError(`${code} には I/O 領域が必要です`, s.line);
+      throw new RuntimeError(m`${code} には I/O 領域が必要です`, s.line);
     } else if (code === "PURG" && area !== undefined) {
       // PURG に I/O 領域を渡す形は tm 側が断る。読んで渡す
       segment = this.readMessageArea(area, scope, s.line);
@@ -975,13 +993,13 @@ export class Interpreter {
     const ll = this.messageLength(leaves, ref, line);
     let text = "";
     for (const l of leaves.slice(2)) {
-      const w = this.widthOfAttr(l.attr, l.key, line, "メッセージ I/O 領域");
+      const w = this.widthOfAttr(l.attr, l.key, line, m`メッセージ I/O 領域`);
       const cell = l.cells[l.index];
       text += (cell === undefined ? "" : this.asText(cell)).padEnd(w).slice(0, w);
     }
     if (ll <= 4) {
       throw new RuntimeError(
-        `ISRT のセグメント長 LL が ${ll} です。LL には LL ZZ の 4 バイトを含めた長さを入れてください`,
+        m`ISRT のセグメント長 LL が ${ll} です。LL には LL ZZ の 4 バイトを含めた長さを入れてください`,
         line,
       );
     }
@@ -990,8 +1008,7 @@ export class Interpreter {
     // 上限も診断する
     if (ll - 4 > text.length) {
       throw new RuntimeError(
-        `ISRT のセグメント長 LL が ${ll} ですが、${ref.name} の項目は` +
-          `${text.length + 4} 桁ぶんしかありません`,
+        m`ISRT のセグメント長 LL が ${ll} ですが、${ref.name} の項目は${text.length + 4} 桁ぶんしかありません`,
         line,
       );
     }
@@ -1008,7 +1025,7 @@ export class Interpreter {
     zz.cells[zz.index] = this.coerce(makeFixed("bin", MAX_BIN, 0, 0n), zz.attr, line);
     let pos = 0;
     for (const l of leaves.slice(2)) {
-      const w = this.widthOfAttr(l.attr, l.key, line, "メッセージ I/O 領域");
+      const w = this.widthOfAttr(l.attr, l.key, line, m`メッセージ I/O 領域`);
       const piece = segment.slice(pos, pos + w).padEnd(w);
       pos += w;
       l.cells[l.index] = this.coerce(makeChar(piece, piece.length, true), l.attr, line);
@@ -1022,8 +1039,7 @@ export class Interpreter {
     line: number,
   ): number {
     const shape =
-      `${ref.name} はメッセージ I/O 領域として使えません。` +
-      "DCL 1 名前, 2 LL FIXED BIN(15), 2 ZZ FIXED BIN(15), 2 … の形で宣言してください";
+      m`${ref.name} はメッセージ I/O 領域として使えません。DCL 1 名前, 2 LL FIXED BIN(15), 2 ZZ FIXED BIN(15), 2 … の形で宣言してください`;
     if (leaves.length < 3) throw new RuntimeError(shape, line);
     const ll = leaves[0]!;
     const zz = leaves[1]!;
@@ -1037,14 +1053,14 @@ export class Interpreter {
     if (this.dli !== undefined) return this.dli;
     if (this.opts.psb === undefined) {
       throw new RuntimeError(
-        "PSB が指定されていません。DL/I を使うには実行するときに PSB の名前を与えてください",
+        m`PSB が指定されていません。DL/I を使うには実行するときに PSB の名前を与えてください`,
         line,
       );
     }
     const read = this.opts.host?.openFile;
     if (read === undefined) {
       throw new RuntimeError(
-        "DL/I を使うには、DBD・PSB・データを読めるホストが必要です",
+        m`DL/I を使うには、DBD・PSB・データを読めるホストが必要です`,
         line,
       );
     }
@@ -1063,8 +1079,8 @@ export class Interpreter {
     // そのままファイル名になるので、IMS の名前の形を強制する
     if (!IMS_NAME.test(psbName.toUpperCase())) {
       throw new DliDefError(
-        `PSB 名 ${psbName} は IMS の名前として使えません（1〜8 桁の英数字と $ # @ だけ）`,
-        "(PSB の指定)",
+        m`PSB 名 ${psbName} は IMS の名前として使えません（1〜8 桁の英数字と $ # @ だけ）`,
+        m`(PSB の指定)`,
         1,
       );
     }
@@ -1073,7 +1089,7 @@ export class Interpreter {
     const psbFile = `${psbName}.psb`;
     const psbText = text(psbFile) ?? text(psbName);
     if (psbText === undefined) {
-      throw new DliDefError("PSB が見つかりません", psbFile, 1);
+      throw new DliDefError(m`PSB が見つかりません`, psbFile, 1);
     }
     const dbds = new Map<string, DbdDef>();
     const resolve = (name: string): DbdDef | undefined => {
@@ -1117,8 +1133,7 @@ export class Interpreter {
     }
     if (pointers.length > 0) {
       throw new RuntimeError(
-        `主手続きの引数 ${pointers.join(", ")} はポインタで宣言されています。` +
-          "PCB を受け取る IMS のプログラムなので、実行するときに PSB の名前を与えてください",
+        m`主手続きの引数 ${pointers.join(", ")} はポインタで宣言されています。PCB を受け取る IMS のプログラムなので、実行するときに PSB の名前を与えてください`,
         main.line,
       );
     }
@@ -1139,7 +1154,7 @@ export class Interpreter {
     const dli = this.requireDli(line);
     if (count > dli.pcbCount) {
       throw new RuntimeError(
-        `PSB ${dli.psb.name} の PCB は ${dli.pcbCount} 個ですが、主手続きは ${count} 個受け取っています`,
+        m`PSB ${dli.psb.name} の PCB は ${dli.pcbCount} 個ですが、主手続きは ${count} 個受け取っています`,
         line,
       );
     }
@@ -1178,7 +1193,7 @@ export class Interpreter {
       .filter(({ p }) => p.kind === "db");
     if (dbPcbs.length === 1) return dbPcbs[0]!.i;
     throw new RuntimeError(
-      `${ref.name} がどの PCB かを決められません。主手続きの引数で受けたポインタに BASED で宣言してください`,
+      m`${ref.name} がどの PCB かを決められません。主手続きの引数で受けたポインタに BASED で宣言してください`,
       line,
     );
   }
@@ -1248,15 +1263,14 @@ export class Interpreter {
     const leaves = this.leafCells(ref, scope, line);
     if (leaves.length === 0) {
       throw new RuntimeError(
-        `${ref.name} は PCB マスクとして使えません。` +
-          "DCL 1 名前, 2 DBNAME CHAR(8), 2 SEG_LEVEL CHAR(2), … の形の構造体で宣言してください",
+        m`${ref.name} は PCB マスクとして使えません。DCL 1 名前, 2 DBNAME CHAR(8), 2 SEG_LEVEL CHAR(2), … の形の構造体で宣言してください`,
         line,
       );
     }
     const slots = pcbLayout(pcb, this.opts.tm?.state);
     if (leaves.length < slots.length) {
       throw new RuntimeError(
-        `PCB マスクの項目が ${leaves.length} 個しかありません（${slots.length} 個必要です）`,
+        m`PCB マスクの項目が ${leaves.length} 個しかありません（${slots.length} 個必要です）`,
         line,
       );
     }
@@ -1448,8 +1462,7 @@ export class Interpreter {
             // 「後ろの要素が更新されていない」ことに気づけない
             if (values.length !== lhs.cells.length) {
               throw new RuntimeError(
-                `配列式の要素数が合いません（${s.target.name} は ` +
-                  `${lhs.cells.length} 要素、右辺は ${values.length} 要素）`,
+                m`配列式の要素数が合いません（${s.target.name} は ${lhs.cells.length} 要素、右辺は ${values.length} 要素）`,
                 s.line,
               );
             }
@@ -1526,7 +1539,7 @@ export class Interpreter {
         // 利用者が同じ名前の手続きを書いたらそちらが勝つので、
         // 探すのはユーザー定義の解決が空振りした後。
         if (this.callBuiltinSub(s, scope)) return;
-        throw new RuntimeError(`手続き ${s.name} が見つかりません`, s.line);
+        throw new RuntimeError(m`手続き ${s.name} が見つかりません`, s.line);
       }
       case "beginBlock": {
         // BEGIN ブロックは独自の名前の有効範囲を持つ
@@ -1574,7 +1587,7 @@ export class Interpreter {
             attrs.title = this.asText(this.eval(f.attrs.title, scope, s.line)).trim();
           }
           if (this.files.isOpen(f.name)) {
-            throw new RuntimeError(`${f.name} は既に開かれています`, s.line);
+            throw new RuntimeError(m`${f.name} は既に開かれています`, s.line);
           }
           this.openForUse(f.name, attrs, s.line);
         }
@@ -1587,19 +1600,19 @@ export class Interpreter {
         const group = s.name.toUpperCase();
         const tmpl = this.basedTemplates.get(group);
         if (tmpl === undefined) {
-          throw new RuntimeError(`${s.name} は BASED で宣言されていません`, s.line);
+          throw new RuntimeError(m`${s.name} は BASED で宣言されていません`, s.line);
         }
         const allocLimit = this.opts.maxAllocations ?? DEFAULT_MAX_ALLOCATIONS;
         if (++this.allocations > allocLimit) {
           throw new StorageLimitExceeded(
-            `ALLOCATE の回数が上限(${allocLimit})を超えています`,
+            m`ALLOCATE の回数が上限(${allocLimit})を超えています`,
             s.line,
           );
         }
         const storage: Storage = { cells: new Map(), freed: false, group };
         for (const leaf of tmpl) {
           const n = elementCount(leaf.dims);
-          this.checkCells(n, `${leaf.name} の ALLOCATE`, s.line);
+          this.checkCells(n, m`${leaf.name} の ALLOCATE`, s.line);
           const cells: Value[] = [];
           for (let k = 0; k < n; k++) cells.push(zeroOf(leaf.attr));
           storage.cells.set(leaf.name, cells);
@@ -1609,7 +1622,7 @@ export class Interpreter {
           s.set ?? scope.lookupVar(tmpl[0]!.name)?.based?.pointer;
         if (target === undefined) {
           throw new RuntimeError(
-            `ALLOCATE ${s.name} には SET(ポインタ) が必要です（宣言に based(p) がありません）`,
+            m`ALLOCATE ${s.name} には SET(ポインタ) が必要です（宣言に based(p) がありません）`,
             s.line,
           );
         }
@@ -1632,18 +1645,18 @@ export class Interpreter {
             if (leaf !== undefined) v = leaf;
           }
           if (!v?.based) {
-            throw new RuntimeError(`${ref.name} は BASED で宣言されていません`, s.line);
+            throw new RuntimeError(m`${ref.name} は BASED で宣言されていません`, s.line);
           }
           const locator = ref.locator ?? v.based.pointer;
           if (locator === undefined) {
-            throw new RuntimeError(`FREE にはポインタの指定が必要です`, s.line);
+            throw new RuntimeError(m`FREE にはポインタの指定が必要です`, s.line);
           }
           const pv = this.eval(locator, scope, s.line);
           if (pv.t !== "pointer" || pv.target === undefined) {
-            throw new RuntimeError("NULL のポインタは解放できません", s.line);
+            throw new RuntimeError(m`NULL のポインタは解放できません`, s.line);
           }
           if (pv.target.freed) {
-            throw new RuntimeError("解放済みの記憶域をもう一度解放しています", s.line);
+            throw new RuntimeError(m`解放済みの記憶域をもう一度解放しています`, s.line);
           }
           // 解放の印だけ付ける。これで解放後の参照を必ず検出できる
           pv.target.freed = true;
@@ -1740,7 +1753,7 @@ export class Interpreter {
       return;
     }
     const n = elementCount(item.dims);
-    this.checkCells(n, `${item.names[0] ?? "配列"} の宣言`, line);
+    this.checkCells(n, m`${item.names[0] ?? m`配列`} の宣言`, line);
     // 型を書いていない宣言（`dcl x;`）は、名前の先頭文字で属性が決まる。
     // 名前ごとに違う属性になりうるので、ここで解決する
     if (item.attr.type === "implicit") {
@@ -1898,7 +1911,7 @@ export class Interpreter {
           const n = opt.count === undefined
             ? 1
             : Number(render(asFixed(this.eval(opt.count, scope, s.line), s.line)));
-          this.checkSpan(n, "SKIP の行数", s.line);
+          this.checkSpan(n, m`SKIP の行数`, s.line);
           w.skip(n);
           break;
         }
@@ -1908,7 +1921,7 @@ export class Interpreter {
         case "line": {
           // LINE(n): その行まで送る。既に過ぎていれば改ページする
           const at = Number(render(asFixed(this.eval(opt.at, scope, s.line), s.line)));
-          this.checkSpan(at, "LINE の行", s.line);
+          this.checkSpan(at, m`LINE の行`, s.line);
           if (w.lineNumber() > at) w.page();
           while (w.lineNumber() < at) w.skip();
           break;
@@ -1989,12 +2002,12 @@ export class Interpreter {
     for (const f of items) {
       if (f.kind === "repeat") {
         const n = Number(render(asFixed(this.eval(f.count, scope, line), line)));
-        this.checkSpan(n, "書式の反復係数", line);
+        this.checkSpan(n, m`書式の反復係数`, line);
         const inner = this.flattenFormat(f.items, scope, line);
         for (let k = 0; k < n; k++) {
           // 展開後の個数も数える。`((5000000) x(1), f(1))` は
           // 反復係数 1 つでも 1000 万項目の配列になる
-          this.checkSpan(out.length + inner.length, "展開後の書式項目の数", line);
+          this.checkSpan(out.length + inner.length, m`展開後の書式項目の数`, line);
           out.push(...inner);
         }
         continue;
@@ -2061,19 +2074,19 @@ export class Interpreter {
     switch (f.kind) {
       case "x": {
         const n = num(f.width);
-        this.checkSpan(n, "X 書式の幅", line);
+        this.checkSpan(n, m`X 書式の幅`, line);
         w.editX(n);
         return;
       }
       case "column": {
         const at = num(f.at);
-        this.checkSpan(at, "COLUMN 書式の桁", line);
+        this.checkSpan(at, m`COLUMN 書式の桁`, line);
         w.column(at);
         return;
       }
       case "fskip": {
         const n = f.count === undefined ? 1 : num(f.count);
-        this.checkSpan(n, "SKIP 書式の行数", line);
+        this.checkSpan(n, m`SKIP 書式の行数`, line);
         w.skip(n);
         return;
       }
@@ -2117,13 +2130,13 @@ export class Interpreter {
       }
       case "e": {
         const width = num(f.width);
-        this.checkSpan(width, "E 書式の幅", line);
+        this.checkSpan(width, m`E 書式の幅`, line);
         const p = f.decimals === undefined ? 6 : num(f.decimals) + 1;
         // 仮数の桁は 10 進の最大精度までにする。これを超えると
         // `toExponential` の生の RangeError が診断になっていた
         if (p < 1 || p > MAX_DEC + 1) {
           throw new RuntimeError(
-            `E 書式の小数桁は 0 から ${MAX_DEC} までです（${p - 1}）`,
+            m`E 書式の小数桁は 0 から ${MAX_DEC} までです（${p - 1}）`,
             line,
           );
         }
@@ -2142,7 +2155,7 @@ export class Interpreter {
     if (name === undefined) return this.out;
     const f = this.openForUse(name, { mode: "output" }, line);
     if (!f.writer) {
-      throw new RuntimeError(`${name} は入力用に開かれています`, line);
+      throw new RuntimeError(m`${name} は入力用に開かれています`, line);
     }
     return f.writer;
   }
@@ -2151,7 +2164,7 @@ export class Interpreter {
   private cursorFor(name: string, line: number): InputCursor {
     const f = this.openForUse(name, { mode: "input" }, line);
     if (!f.cursor) {
-      throw new RuntimeError(`${name} は出力用に開かれています`, line);
+      throw new RuntimeError(m`${name} は出力用に開かれています`, line);
     }
     return f.cursor;
   }
@@ -2289,7 +2302,7 @@ export class Interpreter {
       const text = texts[i];
       if (text === undefined) return;
       const v = scope.lookupVar(slot.ref.name.toUpperCase());
-      if (!v) throw new RuntimeError(`変数 ${slot.ref.name} が見つかりません`, s.line);
+      if (!v) throw new RuntimeError(m`変数 ${slot.ref.name} が見つかりません`, s.line);
       const parsed = this.parseInput(text, v.attr, s.line);
       if (slot.index >= 0) v.cells[slot.index] = parsed;
       else this.assign(slot.ref, parsed, scope, s.line);
@@ -2315,13 +2328,13 @@ export class Interpreter {
     // FLOAT 変数へ読むのは PL/I でふつうの書き方なので、
     // 受け付けないと「数値として読めません」で止まる
     if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(t)) {
-      this.raiseChecked("CONVERSION", `数値として読めません: ${clip(text)}`, line);
+      this.raiseChecked("CONVERSION", m`数値として読めません: ${clip(text)}`, line);
     }
     if (/[eE]/.test(t)) {
       // 指数表記は FLOAT として受ける。FIXED へ代入するなら coerce が丸める
       const n = Number(t);
       if (!Number.isFinite(n)) {
-        this.raiseChecked("CONVERSION", `数値として読めません: ${clip(text)}`, line);
+        this.raiseChecked("CONVERSION", m`数値として読めません: ${clip(text)}`, line);
       }
       return this.coerce(
         { t: "float", base: "dec", p: 6, v: n },
@@ -2374,7 +2387,7 @@ export class Interpreter {
     const file = this.openForUse(s.file, { record: true, mode }, s.line);
     if (!file.attrs.record) {
       throw new RuntimeError(
-        `${s.file} は STREAM です。READ / WRITE には RECORD の宣言が要ります`,
+        m`${s.file} は STREAM です。READ / WRITE には RECORD の宣言が要ります`,
         s.line,
       );
     }
@@ -2391,22 +2404,22 @@ export class Interpreter {
         const storage: Storage = {
           cells: new Map([["", [makeChar(rec, rec.length, true)]]]),
           freed: false,
-          group: `${s.file} のレコード`,
+          group: m`${s.file} のレコード`,
         };
         this.assign(s.set, makePointer(storage), scope, s.line);
         return;
       }
       if (!s.into) {
-        throw new RuntimeError("READ には INTO か SET が必要です", s.line);
+        throw new RuntimeError(m`READ には INTO か SET が必要です`, s.line);
       }
-      this.scatterLeaves(s.into, rec, scope, s.line, "RECORD 入出力");
+      this.scatterLeaves(s.into, rec, scope, s.line, m`RECORD 入出力`);
       return;
     }
 
     if (!s.from) {
-      throw new RuntimeError(`${s.op.toUpperCase()} には FROM が必要です`, s.line);
+      throw new RuntimeError(m`${s.op.toUpperCase()} には FROM が必要です`, s.line);
     }
-    const text = this.gatherLeaves(s.from, scope, s.line, "RECORD 入出力");
+    const text = this.gatherLeaves(s.from, scope, s.line, m`RECORD 入出力`);
     if (s.op === "write") {
       file.writeRecord(text);
       // レコード出力も出力上限で打ち切る。ブラウザには別プロセスが
@@ -2415,7 +2428,7 @@ export class Interpreter {
       return;
     }
     if (!file.rewriteRecord(text)) {
-      throw new RuntimeError("REWRITE の前に READ が必要です", s.line);
+      throw new RuntimeError(m`REWRITE の前に READ が必要です`, s.line);
     }
     this.checkOutput();
   }
@@ -2434,11 +2447,11 @@ export class Interpreter {
     const dest = scope.lookupGroup(target.name.toUpperCase());
     if (dest === undefined) return false;
     if (target.subscripts.length > 0) {
-      throw new Unsupported("構造体配列の要素への代入", line);
+      throw new Unsupported(m`構造体配列の要素への代入`, line);
     }
     if (value.kind !== "ref" || value.subscripts.length > 0) {
       throw new RuntimeError(
-        `${target.name} は構造体です。構造体に代入できるのは同じ形の構造体だけです`,
+        m`${target.name} は構造体です。構造体に代入できるのは同じ形の構造体だけです`,
         line,
       );
     }
@@ -2446,14 +2459,13 @@ export class Interpreter {
     const src = scope.lookupGroup(srcKey);
     if (src === undefined) {
       throw new RuntimeError(
-        `${value.name} は構造体ではありません（${target.name} は構造体です）`,
+        m`${value.name} は構造体ではありません（${target.name} は構造体です）`,
         line,
       );
     }
     if (src.length !== dest.length) {
       throw new RuntimeError(
-        `構造体の形が違います: ${target.name} は項目 ${dest.length} 個、` +
-          `${value.name} は ${src.length} 個`,
+        m`構造体の形が違います: ${target.name} は項目 ${dest.length} 個、${value.name} は ${src.length} 個`,
         line,
       );
     }
@@ -2461,7 +2473,7 @@ export class Interpreter {
       const to = scope.lookupVar(destKey);
       const from = scope.lookupVar(src[i]!);
       if (to === undefined || from === undefined) {
-        throw new RuntimeError(`構造体の項目 ${destKey} が見つかりません`, line);
+        throw new RuntimeError(m`構造体の項目 ${destKey} が見つかりません`, line);
       }
       // 配列の葉は要素ごとに写す
       to.cells = from.cells.map((c) => this.coerce(c, to.attr, line));
@@ -2501,8 +2513,7 @@ export class Interpreter {
       // 黙ってずらすより断る
       if (attr.varying === true) {
         throw new RuntimeError(
-          `${key} は VARYING なので${purpose}で扱えません` +
-            "（長さ前置きを持たないため桁がずれます。CHAR(n) で宣言してください）",
+          m`${key} は VARYING なので${purpose}で扱えません（長さ前置きを持たないため桁がずれます。CHAR(n) で宣言してください）`,
           line,
         );
       }
@@ -2510,7 +2521,7 @@ export class Interpreter {
     }
     if (attr.type === "picture") return parsePicture(attr.picture).width;
     throw new RuntimeError(
-      `${key} は${purpose}で扱えません（文字か PICTURE の項目にしてください）`,
+      m`${key} は${purpose}で扱えません（文字か PICTURE の項目にしてください）`,
       line,
     );
   }
@@ -2533,20 +2544,20 @@ export class Interpreter {
     const locator = ref.locator ?? v.based.pointer;
     if (locator === undefined) {
       throw new RuntimeError(
-        `${ref.name} は BASED です。p -> ${ref.name} の形か、宣言で based(p) を指定してください`,
+        m`${ref.name} は BASED です。p -> ${ref.name} の形か、宣言で based(p) を指定してください`,
         line,
       );
     }
     const pv = this.eval(locator, scope, line);
     if (pv.t !== "pointer") {
-      throw new RuntimeError(`${locator.name} はポインタではありません`, line);
+      throw new RuntimeError(m`${locator.name} はポインタではありません`, line);
     }
     const storage = pv.target;
     if (storage === undefined) {
-      throw new RuntimeError(`NULL のポインタをたどりました（${ref.name}）`, line);
+      throw new RuntimeError(m`NULL のポインタをたどりました（${ref.name}）`, line);
     }
     if (storage.freed) {
-      throw new RuntimeError(`解放済みの記憶域をたどりました（${ref.name}）`, line);
+      throw new RuntimeError(m`解放済みの記憶域をたどりました（${ref.name}）`, line);
     }
     const key = ref.name.toUpperCase();
     const cells = storage.cells.get(key);
@@ -2562,12 +2573,12 @@ export class Interpreter {
       const slot = at < 0 ? undefined : slots[at];
       if (slot !== undefined) return slot;
       throw new RuntimeError(
-        `${ref.name} は PCB マスクの ${slots.length} 項目に収まりません`,
+        m`${ref.name} は PCB マスクの ${slots.length} 項目に収まりません`,
         line,
       );
     }
     throw new RuntimeError(
-      `${ref.name} はこの記憶域にありません（確保したのは ${storage.group}）`,
+      m`${ref.name} はこの記憶域にありません（確保したのは ${storage.group}）`,
       line,
     );
   }
@@ -2622,7 +2633,7 @@ export class Interpreter {
     const base = scope.lookupVar(v.defined.name.toUpperCase());
     if (!base) {
       throw new RuntimeError(
-        `DEFINED の基底変数 ${v.defined.name} が見つかりません`,
+        m`DEFINED の基底変数 ${v.defined.name} が見つかりません`,
         line,
       );
     }
@@ -2633,7 +2644,7 @@ export class Interpreter {
         const idx = aliasSubs[e.dim - 1];
         if (idx === undefined) {
           throw new RuntimeError(
-            `iSUB ${e.dim} に対応する添字がありません`,
+            m`iSUB ${e.dim} に対応する添字がありません`,
             line,
           );
         }
@@ -2654,12 +2665,12 @@ export class Interpreter {
     let idx = 0;
     v.dims.forEach((d, i) => {
       const n = subs[i];
-      if (n === undefined) throw new RuntimeError("添字の数が合いません", line);
+      if (n === undefined) throw new RuntimeError(m`添字の数が合いません`, line);
       if (n < d.lo || n > d.hi) {
         // SUBSCRIPTRANGE 条件。ON 単位が置かれていればそこへ回る。
         // 上げないと `ON SUBSCRIPTRANGE` を書いても実行されない
         // （PL/I の既定は無検査だが、この処理系は常に検査する方を採る）
-        this.raiseChecked("SUBSCRIPTRANGE", `添字が範囲外です: ${n}`, line);
+        this.raiseChecked("SUBSCRIPTRANGE", m`添字が範囲外です: ${n}`, line);
       }
       idx = idx * (d.hi - d.lo + 1) + (n - d.lo);
     });
@@ -2675,7 +2686,7 @@ export class Interpreter {
   ): void {
     const dest = target.subscripts[0];
     if (dest === undefined || dest.kind !== "ref") {
-      throw new RuntimeError("SUBSTR 疑似変数の第1引数は変数でなければなりません", line);
+      throw new RuntimeError(m`SUBSTR 疑似変数の第1引数は変数でなければなりません`, line);
     }
     const num = (e: Expr) => Number(render(asFixed(this.eval(e, scope, line), line)));
     const start = num(target.subscripts[1]!);
@@ -2694,7 +2705,7 @@ export class Interpreter {
     if (!v.dims) {
       // 添字を黙って捨てると、`x(7)` と `x(99)` が同じ 1 個の箱を指して
       // 嘘の値を返す。配列でないものへの添字は断る
-      throw new RuntimeError(`${ref.name} は配列ではありません`, line);
+      throw new RuntimeError(m`${ref.name} は配列ではありません`, line);
     }
     return this.flatIndex(
       v,
@@ -2714,7 +2725,7 @@ export class Interpreter {
           return this.coerce(value, implicitAttr("X"), line);
         case "pointer": {
           if (value.t !== "pointer") {
-            throw new RuntimeError("ポインタにはポインタしか代入できません", line);
+            throw new RuntimeError(m`ポインタにはポインタしか代入できません`, line);
           }
           return value;
         }
@@ -2754,7 +2765,7 @@ export class Interpreter {
         }
         case "bit": {
           if (value.t === "pointer") {
-            throw new RuntimeError("ポインタは BIT に変換できません", line);
+            throw new RuntimeError(m`ポインタは BIT に変換できません`, line);
           }
           // 数値から BIT への変換は 2 進表現にする。
           // 以前は空文字に落としていたので `b = 1;` が '0'B になっていた
@@ -2780,19 +2791,19 @@ export class Interpreter {
 
   private toFixed(v: Value, line: number): FixedVal {
     if (v.t === "pointer") {
-      throw new RuntimeError("ポインタは数値として扱えません", line);
+      throw new RuntimeError(m`ポインタは数値として扱えません`, line);
     }
     if (v.t === "fixed") return v;
     if (v.t === "float") {
       if (!Number.isFinite(v.v)) {
-        this.raiseChecked("CONVERSION", `FIXED にできません: ${v.v}`, line);
+        this.raiseChecked("CONVERSION", m`FIXED にできません: ${v.v}`, line);
       }
       return fixedFromFloat(v.v);
     }
     if (v.t === "bit") return makeFixed("bin", Math.max(1, v.v.length), 0, BigInt(parseInt(v.v || "0", 2)));
     const s = v.v.trim();
     if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(s)) {
-      this.raiseChecked("CONVERSION", `数値に変換できません: ${clip(v.v)}`, line);
+      this.raiseChecked("CONVERSION", m`数値に変換できません: ${clip(v.v)}`, line);
     }
     return fixedFromLiteral(s);
   }
@@ -2808,7 +2819,7 @@ export class Interpreter {
         if (/[eE]/.test(e.text)) {
           const n = Number(e.text);
           if (!Number.isFinite(n)) {
-            this.raiseChecked("CONVERSION", `浮動小数点定数が大きすぎます: ${e.text}`, line);
+            this.raiseChecked("CONVERSION", m`浮動小数点定数が大きすぎます: ${e.text}`, line);
           }
           return { t: "float", base: "dec", p: 6, v: n };
         }
@@ -2817,7 +2828,7 @@ export class Interpreter {
         // iSUB は DEFINED の解決時に実際の添字へ置き換えられる。
         // 通常の式評価で現れたら使い方が誤っている。
         throw new RuntimeError(
-          "iSUB は DEFINED の基底参照の中でのみ使えます",
+          m`iSUB は DEFINED の基底参照の中でのみ使えます`,
           line,
         );
       case "str":
@@ -2830,7 +2841,7 @@ export class Interpreter {
         const arr = this.evalArray(e, scope, line);
         if (arr !== undefined) {
           const first = arr[0];
-          if (first === undefined) throw new RuntimeError("空の配列式です", line);
+          if (first === undefined) throw new RuntimeError(m`空の配列式です`, line);
           return first;
         }
         return this.applyUnary(e.op, this.eval(e.operand, scope, line), line);
@@ -2885,7 +2896,7 @@ export class Interpreter {
     if (!la && !ra) return undefined;
     const n = la?.length ?? ra!.length;
     if (la && ra && la.length !== ra.length) {
-      throw new RuntimeError("配列式の要素数が一致しません", line);
+      throw new RuntimeError(m`配列式の要素数が一致しません`, line);
     }
     const out: Value[] = [];
     for (let i = 0; i < n; i++) {
@@ -2906,7 +2917,7 @@ export class Interpreter {
       // 単独の値として使われた場合は先頭要素を返す。
       // 代入文では assign 側が配列として扱う。
       const first = arr[0];
-      if (first === undefined) throw new RuntimeError("空の配列式です", line);
+      if (first === undefined) throw new RuntimeError(m`空の配列式です`, line);
       return first;
     }
     const a = this.eval(e.left, scope, line);
@@ -2992,7 +3003,7 @@ export class Interpreter {
           if (!powFitsFixed(x, y)) return floatArith("**", a, b, line);
           return pow(x, y);
         default:
-          throw new Unsupported(`演算子 ${op}`, line);
+          throw new Unsupported(m`演算子 ${op}`, line);
       }
     } catch (err) {
       if (err instanceof FixedOverflow) this.raise("FIXEDOVERFLOW", this.currentScope, line);
@@ -3040,7 +3051,7 @@ export class Interpreter {
     if (a.t === "pointer" || b.t === "pointer") {
       // ポインタは等しいかどうかだけを見る（順序は無い）
       if (a.t !== "pointer" || b.t !== "pointer") {
-        throw new RuntimeError("ポインタと他の型は比較できません", line);
+        throw new RuntimeError(m`ポインタと他の型は比較できません`, line);
       }
       return a.target === b.target ? 0 : 1;
     }
@@ -3074,7 +3085,7 @@ export class Interpreter {
     if (v.t === "bit") return v.v.includes("1");
     if (v.t === "fixed") return v.v !== 0n;
     if (v.t === "float") return v.v !== 0;
-    throw new RuntimeError("条件として評価できません", line);
+    throw new RuntimeError(m`条件として評価できません`, line);
   }
 
   /** 変数参照・配列要素・組込関数・ユーザー手続きの呼び出し。 */
@@ -3087,7 +3098,7 @@ export class Interpreter {
       if (alias) {
         const cell = alias.target.cells[alias.index];
         if (cell === undefined) {
-          throw new RuntimeError(`${ref.name} は未初期化です`, line);
+          throw new RuntimeError(m`${ref.name} は未初期化です`, line);
         }
         return cell;
       }
@@ -3095,7 +3106,7 @@ export class Interpreter {
       const cells = based ?? v.cells;
       const idx = this.indexOf(v, ref, scope, line);
       const cell = cells[idx];
-      if (cell === undefined) throw new RuntimeError(`${ref.name} は未初期化です`, line);
+      if (cell === undefined) throw new RuntimeError(m`${ref.name} は未初期化です`, line);
       return cell;
     }
 
@@ -3103,8 +3114,7 @@ export class Interpreter {
     const group = scope.lookupGroup(key);
     if (group !== undefined) {
       throw new RuntimeError(
-        `${ref.name} は構造体です。値として使うには項目を指定してください` +
-          `（例: ${ref.name}.${(group[0] ?? "").split(".").pop() ?? "項目"}）`,
+        m`${ref.name} は構造体です。値として使うには項目を指定してください（例: ${ref.name}.${(group[0] ?? "").split(".").pop() ?? m`項目名`}）`,
         line,
       );
     }
@@ -3114,7 +3124,7 @@ export class Interpreter {
       // 関数としての呼び出しも引数は参照渡し（PL/I の規定）
       const r = this.callProcedure(proc, this.bindArgs(ref.subscripts, scope, line), scope);
       if (r === undefined) {
-        throw new RuntimeError(`手続き ${ref.name} は値を返しません`, line);
+        throw new RuntimeError(m`手続き ${ref.name} は値を返しません`, line);
       }
       return r;
     }
@@ -3130,21 +3140,20 @@ export class Interpreter {
       // 知っている組込関数なら「未実装」と言う。
       // 「未知の関数」だと綴り間違いと区別が付かない
       if (UNIMPLEMENTED_BUILTINS.has(key)) {
-        throw new Unsupported(`組込関数 ${ref.name}`, line);
+        throw new Unsupported(m`組込関数 ${ref.name}`, line);
       }
       if (this.externalEntries.has(ref.name.toUpperCase())) {
         throw new RuntimeError(
-          `${ref.name} は ENTRY で宣言された外部手続きです。` +
-            "この処理系は 1 ファイル完結なので呼び出せません",
+          m`${ref.name} は ENTRY で宣言された外部手続きです。この処理系は 1 ファイル完結なので呼び出せません`,
           line,
         );
       }
-      throw new RuntimeError(`${ref.name} は未知の関数です`, line);
+      throw new RuntimeError(m`${ref.name} は未知の関数です`, line);
     }
     // 知っている組込関数で未実装のものは名指しで断る。
     // 暗黙宣言に落とすと 0 を返して無言で間違う
     if (UNIMPLEMENTED_BUILTINS.has(key)) {
-      throw new Unsupported(`組込関数 ${ref.name}`, line);
+      throw new Unsupported(m`組込関数 ${ref.name}`, line);
     }
     // 未宣言のスカラ参照は暗黙宣言の初期値（PL/I の規定）
     return zeroOf(implicitAttr(ref.name));
@@ -3170,10 +3179,10 @@ export class Interpreter {
         // ポインタ越しの書き込みが元の変数に反映される
         const ref = argRefs?.[0];
         if (ref === undefined || ref.kind !== "ref") {
-          throw new RuntimeError("ADDR の引数は変数でなければなりません", line);
+          throw new RuntimeError(m`ADDR の引数は変数でなければなりません`, line);
         }
         const v = scope.lookupVar(ref.name.toUpperCase());
-        if (!v) throw new RuntimeError(`変数 ${ref.name} が見つかりません`, line);
+        if (!v) throw new RuntimeError(m`変数 ${ref.name} が見つかりません`, line);
         const based = this.basedCells(v, ref, scope, line);
         const cells = based ?? v.cells;
         return makePointer({
@@ -3296,7 +3305,7 @@ export class Interpreter {
         const q = args.length > 3 ? int(3) : 0;
         if (q > p) {
           throw new RuntimeError(
-            `DIVIDE の尺度 ${q} が精度 ${p} を超えています`,
+            m`DIVIDE の尺度 ${q} が精度 ${p} を超えています`,
             line,
           );
         }
@@ -3330,15 +3339,15 @@ export class Interpreter {
         // 出力幅 14 なので FIXED BIN(31,0)
         const target = argRefs?.[0];
         if (target?.kind !== "ref") {
-          throw new RuntimeError(`${name} の第1引数は配列でなければなりません`, line);
+          throw new RuntimeError(m`${name} の第1引数は配列でなければなりません`, line);
         }
         const v = scope.lookupVar(target.name.toUpperCase());
         if (!v?.dims) {
-          throw new RuntimeError(`${target.name} は配列ではありません`, line);
+          throw new RuntimeError(m`${target.name} は配列ではありません`, line);
         }
         const dim = args.length > 1 ? int(1) : 1;
         const b = v.dims[dim - 1];
-        if (!b) throw new RuntimeError(`次元 ${dim} がありません`, line);
+        if (!b) throw new RuntimeError(m`次元 ${dim} がありません`, line);
         const r =
           name === "LBOUND" ? b.lo : name === "HBOUND" ? b.hi : b.hi - b.lo + 1;
         return makeFixed("bin", 31, 0, BigInt(r));
@@ -3407,7 +3416,7 @@ function numberOfValue(v: Value, line: number): number {
   if (v.t === "float") return v.v;
   if (v.t === "fixed") return Number(render(v));
   if (v.t === "bit") return parseInt(v.v || "0", 2);
-  throw new RuntimeError("数値として扱えません", line);
+  throw new RuntimeError(m`数値として扱えません`, line);
 }
 
 function floatArith(op: string, a: Value, b: Value, line: number): Value {
@@ -3437,13 +3446,13 @@ function floatArith(op: string, a: Value, b: Value, line: number): Value {
       break;
     case "**": v = x ** y; break;
     default:
-      throw new Unsupported(`FLOAT に対する演算子 ${op}`, line);
+      throw new Unsupported(m`FLOAT に対する演算子 ${op}`, line);
   }
   // Infinity / NaN をそのまま返すと `render` が "Infinity" を出す。
   // 数でないものを数として扱わない
   if (!Number.isFinite(v)) {
     throw new RuntimeError(
-      Number.isNaN(v) ? "計算結果が数になりません" : "浮動小数点の桁あふれです",
+      Number.isNaN(v) ? m`計算結果が数になりません` : m`浮動小数点の桁あふれです`,
       line,
     );
   }
@@ -3468,7 +3477,7 @@ function* enumerateSubscripts(dims: Bound[]): Generator<number[]> {
 const numExpr = (n: number): Expr => ({ kind: "num", text: String(n) });
 
 function missing(name: string, i: number, line: number): never {
-  throw new RuntimeError(`${name} の第${i + 1}引数がありません`, line);
+  throw new RuntimeError(m`${name} の第${i + 1}引数がありません`, line);
 }
 
 /** 2 つのデータ属性が同じか。参照渡しにできるかの判定に使う。 */
@@ -3502,12 +3511,12 @@ function attrOfValue(v: Value): DataAttr {
 
 function asFixed(v: Value, line: number): FixedVal {
   if (v.t === "pointer") {
-    throw new RuntimeError("ポインタは数値として扱えません", line);
+    throw new RuntimeError(m`ポインタは数値として扱えません`, line);
   }
   if (v.t === "fixed") return v;
   if (v.t === "float") {
     if (!Number.isFinite(v.v)) {
-      throw new RuntimeError(`FIXED にできません: ${v.v}`, line);
+      throw new RuntimeError(m`FIXED にできません: ${v.v}`, line);
     }
     return fixedFromFloat(v.v);
   }
@@ -3516,7 +3525,7 @@ function asFixed(v: Value, line: number): FixedVal {
   }
   const s = v.v.trim();
   if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(s)) {
-    throw new RuntimeError(`数値として扱えません: ${clip(v.v)}`, line);
+    throw new RuntimeError(m`数値として扱えません: ${clip(v.v)}`, line);
   }
   return fixedFromLiteral(s);
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { SAMPLES } from "../web/samples.js";
+import { samples } from "../web/samples.js";
 import { MemoryHost, isTestSource, loadMfs, runProgram, runTestSource } from "../src/index.js";
 import { parseKeys, playKeys } from "../src/tm/keys.js";
 import { parseFiles, psbNames } from "../web/files.js";
@@ -25,10 +25,10 @@ function optionsFor(aux: string | undefined): { host?: MemoryHost; psb?: string 
  */
 describe("ブラウザ版のサンプル", () => {
   it("12 本以上ある", () => {
-    expect(SAMPLES.length).toBeGreaterThanOrEqual(10);
+    expect(samples().length).toBeGreaterThanOrEqual(10);
   });
 
-  for (const s of SAMPLES) {
+  for (const s of samples()) {
     if (s.keys !== undefined) {
       // 画面入出力のサンプルは、台本どおりに打たないと何も起きない。
       // 1 回の入力 = 1 回の実行なので、台本を流して全ての往復を見る
@@ -72,7 +72,7 @@ describe("ブラウザ版のサンプル", () => {
   }
 
   it("名前が重複していない", () => {
-    const names = SAMPLES.map((s) => s.name);
+    const names = samples().map((s) => s.name);
     expect(new Set(names).size).toBe(names.length);
   });
 });
@@ -190,14 +190,20 @@ describe("ビルド成果物（単一ファイル）", () => {
      * 大きさの上限。
      *
      * 守りたいのは「1 枚を添付して渡せば、どこでも開いて動く」こと。
-     * 圧縮して配られる前提ではないので、素のバイト数で見る。
-     * 中身は処理系・Linter・テストフレームワーク・DL/I・MFS・端末と
-     * サンプル。これらを入れて 300KB（gzip で 75KB 前後）に収める。
-     * 超えたら、まず何が増えたかを確かめる（遅延読み込みに逃げると
-     * HTML 1 枚で完結する形が壊れるので、安易に上限を上げない）。
+     * 圧縮して配られる前提ではないので、**素のバイト数**で見る
+     * （`html.length` は UTF-16 の単位なので、日本語の分だけ
+     * バイト数より小さく出る。以前はそれで測っていた）。
+     *
+     * 中身は処理系・Linter・テストフレームワーク・DL/I・MFS・端末・
+     * サンプルと、**日本語と英語の両方のメッセージ**。
+     * 英語の表（`src/i18n/en.ts`）で 60KB ほど増えている。
+     * 言語ごとに読み込みを分ければ減るが、HTML 1 枚で完結する形が
+     * 壊れるので入れたままにしている。
+     *
+     * 超えたら、まず何が増えたかを確かめる。安易に上限を上げない。
      */
-    it("単一ファイルでも 300KB 未満に収まる", () => {
-      expect(html.length).toBeLessThan(300_000);
+    it("単一ファイルでも 350KB 未満に収まる", () => {
+      expect(Buffer.byteLength(html)).toBeLessThan(350_000);
     });
   });
 });

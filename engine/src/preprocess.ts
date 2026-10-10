@@ -20,6 +20,7 @@
  * 診断が嘘になる（Linter も VSCode の問題タブも行番号で動いている）。
  */
 
+import { m } from "./i18n/index.js";
 import { lex, type Token } from "./lexer.js";
 import type { PliHost } from "./host.js";
 
@@ -86,7 +87,7 @@ function readIncludeNames(
       }
       names.push({ name, token: t });
     } else {
-      throw new PreprocessError("%INCLUDE には取り込む名前が必要です", t.line, t.col, t.file);
+      throw new PreprocessError(m`%INCLUDE には取り込む名前が必要です`, t.line, t.col, t.file);
     }
     if (tokens[i]?.kind === "comma") {
       i++;
@@ -96,7 +97,7 @@ function readIncludeNames(
   }
   if (names.length === 0) {
     const t = tokens[start] ?? tokens[Math.max(0, start - 1)]!;
-    throw new PreprocessError("%INCLUDE には取り込む名前が必要です", t.line, t.col, t.file);
+    throw new PreprocessError(m`%INCLUDE には取り込む名前が必要です`, t.line, t.col, t.file);
   }
   if (tokens[i]?.kind === "semi") i++;
   return { names, next: i };
@@ -138,7 +139,7 @@ function includeOne(
 
   if (stack.length >= MAX_INCLUDE_DEPTH) {
     throw new PreprocessError(
-      `%INCLUDE の入れ子が深すぎます（上限 ${MAX_INCLUDE_DEPTH}）: ${name}`,
+      m`%INCLUDE の入れ子が深すぎます（上限 ${MAX_INCLUDE_DEPTH}）: ${name}`,
       at.line,
       at.col,
       at.file,
@@ -147,7 +148,7 @@ function includeOne(
   if (stack.some((s) => s.toUpperCase() === key)) {
     // 放っておくと止まらないので、必ず誤りにする
     throw new PreprocessError(
-      `%INCLUDE が循環しています: ${[...stack, name].join(" -> ")}`,
+      m`%INCLUDE が循環しています: ${[...stack, name].join(" -> ")}`,
       at.line,
       at.col,
       at.file,
@@ -156,7 +157,7 @@ function includeOne(
 
   const source = host?.readInclude?.(name);
   if (source === undefined) {
-    throw new PreprocessError(`%INCLUDE の ${name} が見つかりません`, at.line, at.col, at.file);
+    throw new PreprocessError(m`%INCLUDE の ${name} が見つかりません`, at.line, at.col, at.file);
   }
 
   let inner: Token[];
@@ -203,7 +204,7 @@ function substitute(tokens: readonly Token[]): Token[] {
     if (t.kind === "percent") {
       const kw = tokens[i + 1];
       if (kw?.kind !== "word") {
-        throw new PreprocessError("% の後にプリプロセッサ文が必要です", t.line, t.col, t.file);
+        throw new PreprocessError(m`% の後にプリプロセッサ文が必要です`, t.line, t.col, t.file);
       }
       if (kw.upper === "REPLACE") {
         // %REPLACE <識別子> BY <定数>;
@@ -217,7 +218,7 @@ function substitute(tokens: readonly Token[]): Token[] {
           value === undefined
         ) {
           throw new PreprocessError(
-            "%REPLACE の書式は %REPLACE <識別子> BY <定数>; です",
+            m`%REPLACE の書式は %REPLACE <識別子> BY <定数>; です`,
             kw.line,
             kw.col,
             kw.file,
@@ -235,7 +236,7 @@ function substitute(tokens: readonly Token[]): Token[] {
         continue;
       }
       throw new PreprocessError(
-        `%${kw.text.toUpperCase()} は未対応です（%INCLUDE・%REPLACE と一覧制御文のみ対応）`,
+        m`%${kw.text.toUpperCase()} は未対応です（%INCLUDE・%REPLACE と一覧制御文のみ対応）`,
         kw.line,
         kw.col,
         kw.file,

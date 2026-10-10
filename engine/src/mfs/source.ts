@@ -10,6 +10,7 @@
  * 書いたとおりに動いていないことに気づけない。
  */
 
+import { m } from "../i18n/index.js";
 import { IMS_NAME, listOf, readMacros, type MacroStmt } from "../macro.js";
 import { validateLayout } from "./device.js";
 import {
@@ -110,7 +111,7 @@ function opt(s: MacroStmt, key: string): string | undefined {
 function name(c: Context, s: MacroStmt, key: string, value: string): string {
   const up = value.toUpperCase();
   if (!IMS_NAME.test(up)) {
-    fail(c, s, `${s.op} 文の ${key}=${value} は名前として使えません（1〜8 桁の英数字と $ # @）`);
+    fail(c, s, m`${s.op} 文の ${key}=${value} は名前として使えません（1〜8 桁の英数字と $ # @）`);
   }
   return up;
 }
@@ -124,9 +125,9 @@ function name(c: Context, s: MacroStmt, key: string, value: string): string {
  */
 function int(c: Context, s: MacroStmt, what: string, value: string): number {
   const t = value.trim();
-  if (!/^\d+$/.test(t)) fail(c, s, `${what} の ${value} は正の整数ではありません`);
+  if (!/^\d+$/.test(t)) fail(c, s, m`${what} の ${value} は正の整数ではありません`);
   const n = Number(t);
-  if (n <= 0) fail(c, s, `${what} の ${value} は正の整数ではありません`);
+  if (n <= 0) fail(c, s, m`${what} の ${value} は正の整数ではありません`);
   return n;
 }
 
@@ -146,11 +147,11 @@ function fillOf(c: Context, s: MacroStmt, value: string): Fill {
   const up = t.toUpperCase();
   if (up === "NULL" || up === "NONE") return { kind: "null" };
   if (up === "PT") {
-    fail(c, s, "FILL=PT（プログラムタブ）は未実装です（X'hh' / C'c' / NULL を使ってください）");
+    fail(c, s, m`FILL=PT（プログラムタブ）は未実装です（X'hh' / C'c' / NULL を使ってください）`);
   }
   if (up.startsWith("X'") && t.endsWith("'")) {
     const hex = t.slice(2, -1);
-    if (!/^[0-9A-Fa-f]{2}$/.test(hex)) fail(c, s, `FILL=${t} は 2 桁の 16 進ではありません`);
+    if (!/^[0-9A-Fa-f]{2}$/.test(hex)) fail(c, s, m`FILL=${t} は 2 桁の 16 進ではありません`);
     // この処理系の画面は文字の面しか持たないので、EBCDIC の符号を
     // そのまま文字コードとして使うと別の字になる（X'5C' は EBCDIC の
     // `*` だが Unicode では `\`）。X'00' は生の NUL が画面像と
@@ -162,16 +163,15 @@ function fillOf(c: Context, s: MacroStmt, value: string): Fill {
     fail(
       c,
       s,
-      `FILL=${t} は未実装です（EBCDIC と文字の対応表を持たないため、` +
-        `X'40'（空白）と X'00'（埋めない）だけを扱う。文字で書くなら C'c'）`,
+      m`FILL=${t} は未実装です（EBCDIC と文字の対応表を持たないため、X'40'（空白）と X'00'（埋めない）だけを扱う。文字で書くなら C'c'）`,
     );
   }
   if (up.startsWith("C'") && t.endsWith("'")) {
     const ch = t.slice(2, -1).replace(/''/g, "'");
-    if (ch.length !== 1) fail(c, s, `FILL=${t} は 1 文字ではありません`);
+    if (ch.length !== 1) fail(c, s, m`FILL=${t} は 1 文字ではありません`);
     return { kind: "char", c: ch };
   }
-  fail(c, s, `FILL=${t} は読めません（X'hh' / C'c' / NULL）`);
+  fail(c, s, m`FILL=${t} は読めません（X'hh' / C'c' / NULL）`);
 }
 
 /** `ATTR=(NUM,PROT,HI)` を読む。 */
@@ -191,12 +191,12 @@ function attrOf(c: Context, s: MacroStmt, value: string): Attr {
       case "DET":
       case "IDET":
       case "NODET":
-        fail(c, s, `ATTR=${raw.trim().toUpperCase()}（選択ペン）は未実装です`);
+        fail(c, s, m`ATTR=${raw.trim().toUpperCase()}（選択ペン）は未実装です`);
       case "STRIP":
       case "NOSTRIP":
-        fail(c, s, `ATTR=${raw.trim().toUpperCase()}（EGCS / DBCS）は未実装です`);
+        fail(c, s, m`ATTR=${raw.trim().toUpperCase()}（EGCS / DBCS）は未実装です`);
       default:
-        fail(c, s, `ATTR=${raw.trim()} は読めません`);
+        fail(c, s, m`ATTR=${raw.trim()} は読めません`);
     }
   }
   return attr;
@@ -210,8 +210,8 @@ function eattrOf(c: Context, s: MacroStmt, value: string): Eattr {
     if (COLORS.has(v)) out.color = v;
     else if (HIGHLIGHTS.has(v)) out.highlight = v;
     else if (v.startsWith("PX") || v.startsWith("PC") || v.startsWith("EGCS")) {
-      fail(c, s, `EATTR=${v}（プログラムシンボル / EGCS）は未実装です`);
-    } else fail(c, s, `EATTR=${raw.trim()} は読めません（色と強調だけ）`);
+      fail(c, s, m`EATTR=${v}（プログラムシンボル / EGCS）は未実装です`);
+    } else fail(c, s, m`EATTR=${raw.trim()} は読めません（色と強調だけ）`);
   }
   return out;
 }
@@ -219,11 +219,11 @@ function eattrOf(c: Context, s: MacroStmt, value: string): Eattr {
 /** `POS=(行,桁)` / `POS=(行,桁,ページ)` を読む。 */
 function posOf(c: Context, s: MacroStmt, value: string): { line: number; col: number } {
   const parts = listOf(value);
-  if (parts.length < 2 || parts.length > 3) fail(c, s, `POS=${value} は (行,桁) の形ではありません`);
-  const line = int(c, s, "POS の行", parts[0]!);
-  const col = int(c, s, "POS の桁", parts[1]!);
-  if (parts.length === 3 && int(c, s, "POS のページ", parts[2]!) !== 1) {
-    fail(c, s, "POS= の物理ページ指定（2 ページ目以降）は未実装です");
+  if (parts.length < 2 || parts.length > 3) fail(c, s, m`POS=${value} は (行,桁) の形ではありません`);
+  const line = int(c, s, m`POS の行`, parts[0]!);
+  const col = int(c, s, m`POS の桁`, parts[1]!);
+  if (parts.length === 3 && int(c, s, m`POS のページ`, parts[2]!) !== 1) {
+    fail(c, s, m`POS= の物理ページ指定（2 ページ目以降）は未実装です`);
   }
   return { line, col };
 }
@@ -231,13 +231,13 @@ function posOf(c: Context, s: MacroStmt, value: string): { line: number; col: nu
 /** `CURSOR=((行,桁))` を読む。 */
 function cursorOf(c: Context, s: MacroStmt, value: string): { line: number; col: number } {
   const first = listOf(value)[0];
-  if (first === undefined) fail(c, s, `CURSOR=${value} は ((行,桁)) の形ではありません`);
+  if (first === undefined) fail(c, s, m`CURSOR=${value} は ((行,桁)) の形ではありません`);
   const parts = listOf(first);
-  if (parts.length < 2) fail(c, s, `CURSOR=${value} は ((行,桁)) の形ではありません`);
-  if (parts.length > 2) fail(c, s, "CURSOR= に項目名を添える書き方は未実装です");
+  if (parts.length < 2) fail(c, s, m`CURSOR=${value} は ((行,桁)) の形ではありません`);
+  if (parts.length > 2) fail(c, s, m`CURSOR= に項目名を添える書き方は未実装です`);
   return {
-    line: int(c, s, "CURSOR の行", parts[0]!),
-    col: int(c, s, "CURSOR の桁", parts[1]!),
+    line: int(c, s, m`CURSOR の行`, parts[0]!),
+    col: int(c, s, m`CURSOR の桁`, parts[1]!),
   };
 }
 
@@ -247,7 +247,7 @@ function dscaOf(c: Context, s: MacroStmt, value: string): Dsca {
   let n: number;
   if (t.startsWith("X'") && t.endsWith("'")) {
     const hex = t.slice(2, -1);
-    if (!/^[0-9A-F]{1,4}$/.test(hex)) fail(c, s, `DSCA=${value} は 16 進ではありません`);
+    if (!/^[0-9A-F]{1,4}$/.test(hex)) fail(c, s, m`DSCA=${value} は 16 進ではありません`);
     n = parseInt(hex, 16);
   } else {
     n = int(c, s, "DSCA", t);
@@ -262,9 +262,7 @@ function dscaOf(c: Context, s: MacroStmt, value: string): Dsca {
     fail(
       c,
       s,
-      `DSCA=${value} のうち X'${rest.toString(16).toUpperCase().padStart(4, "0")}' の` +
-        `ビットは未実装です（扱うのは X'40' 書式書き出し / X'20' 打ち込める項目の消去 / ` +
-        `X'10' 警報だけ）`,
+      m`DSCA=${value} のうち X'${rest.toString(16).toUpperCase().padStart(4, "0")}' のビットは未実装です（扱うのは X'40' 書式書き出し / X'20' 打ち込める項目の消去 / X'10' 警報だけ）`,
     );
   }
   return {
@@ -291,14 +289,14 @@ function pfkOf(c: Context, s: MacroStmt, value: string): { field?: string; keys:
     let keyNo = next;
     let body = item;
     if (eq > 0 && literal(item.slice(0, eq)) === undefined) {
-      keyNo = int(c, s, "PFK のキー番号", item.slice(0, eq));
+      keyNo = int(c, s, m`PFK のキー番号`, item.slice(0, eq));
       body = item.slice(eq + 1).trim();
     }
     const text = literal(body);
     if (text === undefined) {
-      fail(c, s, `PFK の ${body} は未実装です（固定文字 '…' だけを扱う）`);
+      fail(c, s, m`PFK の ${body} は未実装です（固定文字 '…' だけを扱う）`);
     }
-    if (keyNo < 1 || keyNo > 24) fail(c, s, `PFK のキー番号 ${keyNo} は 1〜24 の外です`);
+    if (keyNo < 1 || keyNo > 24) fail(c, s, m`PFK のキー番号 ${keyNo} は 1〜24 の外です`);
     keys.set(keyNo, { ...(field === undefined ? {} : { dfld: field }), literal: text });
     next = keyNo + 1;
   }
@@ -310,8 +308,7 @@ function pfkOf(c: Context, s: MacroStmt, value: string): { field?: string; keys:
     fail(
       c,
       s,
-      "PFK= に固定文字を入れる項目名がありません" +
-        "（PFK=(項目名,3='/FOR MENU.') の形で書いてください）",
+      m`PFK= に固定文字を入れる項目名がありません（PFK=(項目名,3='/FOR MENU.') の形で書いてください）`,
     );
   }
   return { ...(field === undefined ? {} : { field }), keys };
@@ -320,9 +317,9 @@ function pfkOf(c: Context, s: MacroStmt, value: string): { field?: string; keys:
 // ---- DEV / DIV / DPAGE / DFLD ----
 
 function startFormat(c: Context, s: MacroStmt): void {
-  if (s.label === undefined) fail(c, s, "FMT 文にラベル（書式の名前）がありません");
+  if (s.label === undefined) fail(c, s, m`FMT 文にラベル（書式の名前）がありません`);
   c.fmt = {
-    name: name(c, s, "ラベル", s.label),
+    name: name(c, s, m`ラベル`, s.label),
     deviceType: "3270-A2",
     rows: 24,
     cols: 80,
@@ -338,23 +335,23 @@ function startFormat(c: Context, s: MacroStmt): void {
 }
 
 function applyDev(c: Context, s: MacroStmt): void {
-  const fmt = c.fmt ?? fail(c, s, "DEV 文が FMT の外にあります");
+  const fmt = c.fmt ?? fail(c, s, m`DEV 文が FMT の外にあります`);
   // 実機の FMT は装置ごとに DEV を並べられるが、ここは後の DEV が
   // 行数・桁数・PFK を上書きし、DFLD は全部同じ DPAGE に積まれる。
   // DPAGE が無いと「最後の装置の大きさを持つ 1 つの書式」に
   // 黙って混ざるので断る
   if (c.devSeen) {
-    fail(c, s, "複数装置の書式（DEV を並べる形）は未実装です（DEV は 1 つだけ）");
+    fail(c, s, m`複数装置の書式（DEV を並べる形）は未実装です（DEV は 1 つだけ）`);
   }
   c.devSeen = true;
-  const typeText = opt(s, "TYPE") ?? fail(c, s, "DEV 文に TYPE= がありません");
+  const typeText = opt(s, "TYPE") ?? fail(c, s, m`DEV 文に TYPE= がありません`);
   const key = listOf(typeText).join(",").toUpperCase();
   const size = SCREEN_SIZE.get(key);
   if (size === undefined) {
     fail(
       c,
       s,
-      `DEV TYPE=${typeText} は未実装です（扱えるのは ${[...SCREEN_SIZE.keys()].join(" / ")}）`,
+      m`DEV TYPE=${typeText} は未実装です（扱えるのは ${[...SCREEN_SIZE.keys()].join(" / ")}）`,
     );
   }
   fmt.deviceType = key;
@@ -365,7 +362,7 @@ function applyDev(c: Context, s: MacroStmt): void {
   if (feat !== undefined) {
     const items = listOf(feat).map((x) => x.trim().toUpperCase());
     if (items.length !== 1 || items[0] !== "IGNORE") {
-      fail(c, s, `DEV FEAT=${feat} は未実装です（FEAT=IGNORE だけを扱う）`);
+      fail(c, s, m`DEV FEAT=${feat} は未実装です（FEAT=IGNORE だけを扱う）`);
     }
   }
   const pfk = opt(s, "PFK");
@@ -378,29 +375,29 @@ function applyDev(c: Context, s: MacroStmt): void {
   const sysmsg = opt(s, "SYSMSG");
   if (sysmsg !== undefined) fmt.sysmsg = name(c, s, "SYSMSG", sysmsg);
   for (const key2 of ["WIDTH", "PAGE", "SUBSTR", "MODE", "CARD", "FTAB", "HTAB", "VT", "VTAB"]) {
-    if (s.operands.has(key2)) fail(c, s, `DEV ${key2}= は未実装です（印刷装置・カードは対象外）`);
+    if (s.operands.has(key2)) fail(c, s, m`DEV ${key2}= は未実装です（印刷装置・カードは対象外）`);
   }
 }
 
 function applyDiv(c: Context, s: MacroStmt): void {
-  const fmt = c.fmt ?? fail(c, s, "DIV 文が FMT の外にあります");
+  const fmt = c.fmt ?? fail(c, s, m`DIV 文が FMT の外にあります`);
   const type = (opt(s, "TYPE") ?? "INOUT").toUpperCase();
   if (type !== "INPUT" && type !== "OUTPUT" && type !== "INOUT") {
-    fail(c, s, `DIV TYPE=${type} は読めません（INPUT / OUTPUT / INOUT）`);
+    fail(c, s, m`DIV TYPE=${type} は読めません（INPUT / OUTPUT / INOUT）`);
   }
   if (s.operands.has("COMPR") || s.operands.has("OPTIONS") || s.operands.has("RCDCT")) {
-    fail(c, s, "DIV の COMPR= / OPTIONS= / RCDCT= は未実装です");
+    fail(c, s, m`DIV の COMPR= / OPTIONS= / RCDCT= は未実装です`);
   }
   fmt.div = type;
 }
 
 function applyDpage(c: Context, s: MacroStmt): void {
-  const fmt = c.fmt ?? fail(c, s, "DPAGE 文が FMT の外にあります");
+  const fmt = c.fmt ?? fail(c, s, m`DPAGE 文が FMT の外にあります`);
   if (opt(s, "MULT")?.toUpperCase() === "YES") {
-    fail(c, s, "DPAGE MULT=YES（複数物理ページの入力）は未実装です");
+    fail(c, s, m`DPAGE MULT=YES（複数物理ページの入力）は未実装です`);
   }
   if (s.operands.has("COND") || s.operands.has("ACTVPID") || s.operands.has("ORIGIN")) {
-    fail(c, s, "DPAGE の COND= / ACTVPID= / ORIGIN= は未実装です");
+    fail(c, s, m`DPAGE の COND= / ACTVPID= / ORIGIN= は未実装です`);
   }
   const cursor = opt(s, "CURSOR");
   const fill = opt(s, "FILL");
@@ -414,35 +411,35 @@ function applyDpage(c: Context, s: MacroStmt): void {
 }
 
 function applyDfld(c: Context, s: MacroStmt, suffix: string, lineInc: number, colInc: number): void {
-  const fmt = c.fmt ?? fail(c, s, "DFLD 文が FMT の外にあります");
+  const fmt = c.fmt ?? fail(c, s, m`DFLD 文が FMT の外にあります`);
   if (c.dpage === undefined) {
     // DPAGE を書かない定義も通る（1 画面として扱う）
     const dpage: Dpage = { dflds: [] };
     fmt.dpages.push(dpage);
     c.dpage = dpage;
   }
-  if (s.flags.includes("PASSWORD")) fail(c, s, "DFLD の PASSWORD は未実装です");
+  if (s.flags.includes("PASSWORD")) fail(c, s, m`DFLD の PASSWORD は未実装です`);
   for (const key of ["OPCTL", "EXIT", "SCA", "EXTATT", "PEN"]) {
-    if (s.operands.has(key)) fail(c, s, `DFLD ${key}= は未実装です`);
+    if (s.operands.has(key)) fail(c, s, m`DFLD ${key}= は未実装です`);
   }
 
   const text = s.positional[0] === undefined ? undefined : literal(s.positional[0]);
   if (s.positional[0] !== undefined && text === undefined) {
-    fail(c, s, `DFLD の ${s.positional[0]} は読めません（固定文字は '…' で囲む）`);
+    fail(c, s, m`DFLD の ${s.positional[0]} は読めません（固定文字は '…' で囲む）`);
   }
-  const posText = opt(s, "POS") ?? fail(c, s, "DFLD 文に POS= がありません");
+  const posText = opt(s, "POS") ?? fail(c, s, m`DFLD 文に POS= がありません`);
   const pos = posOf(c, s, posText);
   const lthText = opt(s, "LTH");
   const length =
     lthText !== undefined
       ? int(c, s, "LTH", listOf(lthText)[0]!)
-      : (text?.length ?? fail(c, s, "DFLD に LTH= も固定文字もありません"));
+      : (text?.length ?? fail(c, s, m`DFLD に LTH= も固定文字もありません`));
 
   const attrText = opt(s, "ATTR");
   const eattrText = opt(s, "EATTR");
-  const label = s.label === undefined ? undefined : name(c, s, "ラベル", s.label) + suffix;
+  const label = s.label === undefined ? undefined : name(c, s, m`ラベル`, s.label) + suffix;
   if (label !== undefined && label.length > 8) {
-    fail(c, s, `ラベル ${label} が 8 桁を超えます（DO で繰り返す項目のラベルは 6 桁まで）`);
+    fail(c, s, m`ラベル ${label} が 8 桁を超えます（DO で繰り返す項目のラベルは 6 桁まで）`);
   }
   const dfld: Dfld = {
     ...(label === undefined ? {} : { name: label }),
@@ -457,21 +454,20 @@ function applyDfld(c: Context, s: MacroStmt, suffix: string, lineInc: number, co
   if (dfld.line === 1 && dfld.col === 1) {
     // 属性バイトが 1 つ前の位置に入るので、画面の先頭には置けない
     // （実機も 3270 では POS=(1,1) を書いてはならないと規定している）
-    fail(c, s, "POS=(1,1) は 3270 では使えません（属性バイトの置き場所が無い）");
+    fail(c, s, m`POS=(1,1) は 3270 では使えません（属性バイトの置き場所が無い）`);
   }
   if (dfld.line < 1 || dfld.line > fmt.rows || dfld.col < 1 || dfld.col > fmt.cols) {
     fail(
       c,
       s,
-      `POS=(${dfld.line},${dfld.col}) は画面（${fmt.rows} 行 × ${fmt.cols} 桁）の外です`,
+      m`POS=(${dfld.line},${dfld.col}) は画面（${fmt.rows} 行 × ${fmt.cols} 桁）の外です`,
     );
   }
   if (dfld.col + dfld.length - 1 > fmt.cols) {
     fail(
       c,
       s,
-      `${dfld.name ?? "固定文字"} は ${dfld.col} 桁から ${dfld.length} 桁で、` +
-        `画面の右端（${fmt.cols} 桁）を越えます`,
+      m`${dfld.name ?? m`固定文字`} は ${dfld.col} 桁から ${dfld.length} 桁で、画面の右端（${fmt.cols} 桁）を越えます`,
     );
   }
   c.dpage.dflds.push(dfld);
@@ -480,32 +476,32 @@ function applyDfld(c: Context, s: MacroStmt, suffix: string, lineInc: number, co
 // ---- MSG / LPAGE / SEG / MFLD ----
 
 function startMessage(c: Context, s: MacroStmt): void {
-  if (s.label === undefined) fail(c, s, "MSG 文にラベル（メッセージ記述の名前）がありません");
+  if (s.label === undefined) fail(c, s, m`MSG 文にラベル（メッセージ記述の名前）がありません`);
   const type = (opt(s, "TYPE") ?? "INPUT").toUpperCase();
   if (type !== "INPUT" && type !== "OUTPUT") {
-    fail(c, s, `MSG TYPE=${type} は読めません（INPUT / OUTPUT）`);
+    fail(c, s, m`MSG TYPE=${type} は読めません（INPUT / OUTPUT）`);
   }
   const optText = opt(s, "OPT");
   if (optText !== undefined && optText.trim() !== "1") {
-    fail(c, s, `MSG OPT=${optText.trim()} は未実装です（OPT=1 だけを扱う）`);
+    fail(c, s, m`MSG OPT=${optText.trim()} は未実装です（OPT=1 だけを扱う）`);
   }
   if (opt(s, "PAGE")?.toUpperCase() === "YES") {
-    fail(c, s, "MSG PAGE=YES（論理ページング）は未実装です");
+    fail(c, s, m`MSG PAGE=YES（論理ページング）は未実装です`);
   }
   for (const key of ["COMPT", "DPM", "FILL1", "NXTMSG"]) {
-    if (s.operands.has(key)) fail(c, s, `MSG ${key}= は未実装です`);
+    if (s.operands.has(key)) fail(c, s, m`MSG ${key}= は未実装です`);
   }
-  const sorText = opt(s, "SOR") ?? fail(c, s, "MSG 文に SOR= がありません");
+  const sorText = opt(s, "SOR") ?? fail(c, s, m`MSG 文に SOR= がありません`);
   const sorItems = listOf(sorText);
   const sor = name(c, s, "SOR", sorItems[0] ?? "");
   const rest = sorItems.slice(1).map((x) => x.trim().toUpperCase());
   for (const r of rest) {
-    if (r !== "IGNORE") fail(c, s, `MSG SOR= の ${r} は未実装です（IGNORE だけを扱う）`);
+    if (r !== "IGNORE") fail(c, s, m`MSG SOR= の ${r} は未実装です（IGNORE だけを扱う）`);
   }
   const next = opt(s, "NXT");
   const fill = opt(s, "FILL");
   c.msg = {
-    name: name(c, s, "ラベル", s.label),
+    name: name(c, s, m`ラベル`, s.label),
     type,
     sor,
     sorIgnore: rest.includes("IGNORE"),
@@ -520,10 +516,10 @@ function startMessage(c: Context, s: MacroStmt): void {
 }
 
 function applyLpage(c: Context, s: MacroStmt): void {
-  const msg = c.msg ?? fail(c, s, "LPAGE 文が MSG の外にあります");
-  if (s.operands.has("COND")) fail(c, s, "LPAGE COND= は未実装です");
+  const msg = c.msg ?? fail(c, s, m`LPAGE 文が MSG の外にあります`);
+  if (s.operands.has("COND")) fail(c, s, m`LPAGE COND= は未実装です`);
   if (s.operands.has("SOR") || s.operands.has("PROMPT")) {
-    fail(c, s, "LPAGE の SOR= / PROMPT= は未実装です");
+    fail(c, s, m`LPAGE の SOR= / PROMPT= は未実装です`);
   }
   const lpage: Lpage = { segs: [] };
   msg.lpages.push(lpage);
@@ -532,7 +528,7 @@ function applyLpage(c: Context, s: MacroStmt): void {
 }
 
 function currentLpage(c: Context, s: MacroStmt): Lpage {
-  const msg = c.msg ?? fail(c, s, `${s.op} 文が MSG の外にあります`);
+  const msg = c.msg ?? fail(c, s, m`${s.op} 文が MSG の外にあります`);
   if (c.lpage === undefined) {
     const lpage: Lpage = { segs: [] };
     msg.lpages.push(lpage);
@@ -543,7 +539,7 @@ function currentLpage(c: Context, s: MacroStmt): Lpage {
 
 function applySeg(c: Context, s: MacroStmt): void {
   for (const key of ["EXIT", "GRAPHIC"]) {
-    if (s.operands.has(key)) fail(c, s, `SEG ${key}= は未実装です`);
+    if (s.operands.has(key)) fail(c, s, m`SEG ${key}= は未実装です`);
   }
   const lpage = currentLpage(c, s);
   const seg: MsgSeg = { mflds: [] };
@@ -561,7 +557,7 @@ function mfldSource(c: Context, s: MacroStmt, suffix: string): MfldSource {
 
   const items = listOf(raw);
   if (items.length !== 2) {
-    fail(c, s, `MFLD の ${raw} は (項目,'固定文字') / (項目,システム定数) の形ではありません`);
+    fail(c, s, m`MFLD の ${raw} は (項目,'固定文字') / (項目,システム定数) の形ではありません`);
   }
   const field = name(c, s, "MFLD", items[0]!.trim()) + suffix;
   const second = items[1]!.trim();
@@ -572,8 +568,7 @@ function mfldSource(c: Context, s: MacroStmt, suffix: string): MfldSource {
       fail(
         c,
         s,
-        `MFLD の ${second} は未実装です（固定文字 '…' か ` +
-          `${[...SYSTEM_LITERALS.keys()].join(" / ")}）`,
+        m`MFLD の ${second} は未実装です（固定文字 '…' か ${[...SYSTEM_LITERALS.keys()].join(" / ")}）`,
       );
     }
     return { kind: "system", name: field, which };
@@ -582,9 +577,9 @@ function mfldSource(c: Context, s: MacroStmt, suffix: string): MfldSource {
 }
 
 function applyMfld(c: Context, s: MacroStmt, suffix: string): void {
-  const msg = c.msg ?? fail(c, s, "MFLD 文が MSG の外にあります");
+  const msg = c.msg ?? fail(c, s, m`MFLD 文が MSG の外にあります`);
   for (const key of ["EXIT", "HDRCTL", "SCA", "DFLD"]) {
-    if (s.operands.has(key)) fail(c, s, `MFLD ${key}= は未実装です`);
+    if (s.operands.has(key)) fail(c, s, m`MFLD ${key}= は未実装です`);
   }
   if (c.seg === undefined) {
     applySeg(c, {
@@ -601,11 +596,11 @@ function applyMfld(c: Context, s: MacroStmt, suffix: string): void {
 
   const lthText = opt(s, "LTH");
   if (lthText !== undefined && listOf(lthText).length > 1) {
-    fail(c, s, `MFLD LTH=${lthText} は未実装です（長さは 1 つだけ）`);
+    fail(c, s, m`MFLD LTH=${lthText} は未実装です（長さは 1 つだけ）`);
   }
   const attrText = (opt(s, "ATTR") ?? "NO").toUpperCase();
   if (attrText !== "YES" && attrText !== "NO") {
-    fail(c, s, `MFLD ATTR=${attrText} は読めません（YES / NO）`);
+    fail(c, s, m`MFLD ATTR=${attrText} は読めません（YES / NO）`);
   }
   const attrBytes = attrText === "YES";
   let length: number;
@@ -619,10 +614,10 @@ function applyMfld(c: Context, s: MacroStmt, suffix: string): void {
   } else if (source.kind === "dfld-literal") {
     length = source.text.length;
   } else {
-    fail(c, s, "MFLD に LTH= がありません");
+    fail(c, s, m`MFLD に LTH= がありません`);
   }
   const just = (opt(s, "JUST") ?? "L").toUpperCase();
-  if (just !== "L" && just !== "R") fail(c, s, `MFLD JUST=${just} は読めません（L / R）`);
+  if (just !== "L" && just !== "R") fail(c, s, m`MFLD JUST=${just} は読めません（L / R）`);
   const fill = opt(s, "FILL");
   const mfld: Mfld = {
     source,
@@ -640,7 +635,7 @@ function applyMfld(c: Context, s: MacroStmt, suffix: string): void {
 function startDo(c: Context, s: MacroStmt): void {
   const bound = opt(s, "BOUND");
   if (bound !== undefined && bound.toUpperCase() !== "LINE") {
-    fail(c, s, `DO BOUND=${bound} は未実装です（BOUND=LINE だけを扱う）`);
+    fail(c, s, m`DO BOUND=${bound} は未実装です（BOUND=LINE だけを扱う）`);
   }
   // 位置オペランドは**穴を残した並び**から取る。`DO 3,,5` は
   // 「回数 3 / 行の増分は既定 / 桁の増分 5」。空を落とすと 5 が
@@ -651,14 +646,14 @@ function startDo(c: Context, s: MacroStmt): void {
     return v === undefined || v === "" ? undefined : v;
   };
   const countText = at(0) ?? opt(s, "COUNT");
-  if (countText === undefined) fail(c, s, "DO 文に繰り返し回数がありません");
-  const count = int(c, s, "DO の回数", countText);
-  if (count > 99) fail(c, s, `DO の回数 ${count} は 99 を超えます`);
+  if (countText === undefined) fail(c, s, m`DO 文に繰り返し回数がありません`);
+  const count = int(c, s, m`DO の回数`, countText);
+  if (count > 99) fail(c, s, m`DO の回数 ${count} は 99 を超えます`);
   if (ops.length > 3) {
-    fail(c, s, `DO の位置オペランドは 3 つまでです（回数, 行の増分, 桁の増分）`);
+    fail(c, s, m`DO の位置オペランドは 3 つまでです（回数, 行の増分, 桁の増分）`);
   }
   const suffixText = opt(s, "SUF") ?? "01";
-  const suffix = int(c, s, "DO の SUF", suffixText);
+  const suffix = int(c, s, m`DO の SUF`, suffixText);
   c.loop = {
     count,
     lineInc: at(1) === undefined ? 0 : Number(at(1)),
@@ -668,16 +663,16 @@ function startDo(c: Context, s: MacroStmt): void {
     srcLine: s.line,
   };
   if (!Number.isInteger(c.loop.lineInc) || !Number.isInteger(c.loop.colInc)) {
-    fail(c, s, "DO の増分は整数で書いてください");
+    fail(c, s, m`DO の増分は整数で書いてください`);
   }
 }
 
 function endDo(c: Context, s: MacroStmt): void {
-  const loop = c.loop ?? fail(c, s, "ENDDO に対応する DO がありません");
+  const loop = c.loop ?? fail(c, s, m`ENDDO に対応する DO がありません`);
   c.loop = undefined;
   for (let i = 0; i < loop.count; i++) {
     const suffix = String(loop.suffix + i).padStart(2, "0");
-    if (suffix.length > 2) fail(c, s, `DO の通し番号 ${suffix} が 2 桁を超えます`);
+    if (suffix.length > 2) fail(c, s, m`DO の通し番号 ${suffix} が 2 桁を超えます`);
     for (const inner of loop.stmts) {
       if (inner.op === "DFLD") {
         applyDfld(c, inner, suffix, loop.lineInc * i, loop.colInc * i);
@@ -685,9 +680,9 @@ function endDo(c: Context, s: MacroStmt): void {
         applyMfld(c, inner, suffix);
       } else if (inner.op === "DO") {
         // DO の中の DO はここまで来る（中身はためられている）
-        fail(c, inner, "DO の入れ子は未実装です");
+        fail(c, inner, m`DO の入れ子は未実装です`);
       } else {
-        fail(c, inner, `DO の中に ${inner.op} 文は書けません（DFLD / MFLD だけ）`);
+        fail(c, inner, m`DO の中に ${inner.op} 文は書けません（DFLD / MFLD だけ）`);
       }
     }
   }
@@ -720,8 +715,8 @@ export function parseMfs(
     }
     switch (s.op) {
       case "FMT":
-        if (c.fmt !== undefined) fail(c, s, "前の FMT が FMTEND で閉じていません");
-        if (c.msg !== undefined) fail(c, s, "前の MSG が MSGEND で閉じていません");
+        if (c.fmt !== undefined) fail(c, s, m`前の FMT が FMTEND で閉じていません`);
+        if (c.msg !== undefined) fail(c, s, m`前の MSG が MSGEND で閉じていません`);
         startFormat(c, s);
         break;
       case "DEV": applyDev(c, s); break;
@@ -729,25 +724,25 @@ export function parseMfs(
       case "DPAGE": applyDpage(c, s); break;
       case "DFLD": applyDfld(c, s, "", 0, 0); break;
       case "FMTEND": {
-        const fmt = c.fmt ?? fail(c, s, "FMTEND に対応する FMT がありません");
-        if (fmt.dpages.length === 0) fail(c, s, `書式 ${fmt.name} に DFLD が 1 つもありません`);
+        const fmt = c.fmt ?? fail(c, s, m`FMTEND に対応する FMT がありません`);
+        if (fmt.dpages.length === 0) fail(c, s, m`書式 ${fmt.name} に DFLD が 1 つもありません`);
         c.formats.push(fmt);
         c.fmt = undefined;
         c.dpage = undefined;
         break;
       }
       case "MSG":
-        if (c.fmt !== undefined) fail(c, s, "前の FMT が FMTEND で閉じていません");
-        if (c.msg !== undefined) fail(c, s, "前の MSG が MSGEND で閉じていません");
+        if (c.fmt !== undefined) fail(c, s, m`前の FMT が FMTEND で閉じていません`);
+        if (c.msg !== undefined) fail(c, s, m`前の MSG が MSGEND で閉じていません`);
         startMessage(c, s);
         break;
       case "LPAGE": applyLpage(c, s); break;
       case "SEG": applySeg(c, s); break;
       case "MFLD": applyMfld(c, s, ""); break;
       case "MSGEND": {
-        const msg = c.msg ?? fail(c, s, "MSGEND に対応する MSG がありません");
+        const msg = c.msg ?? fail(c, s, m`MSGEND に対応する MSG がありません`);
         if (msg.lpages.length === 0 || msg.lpages.every((l) => l.segs.length === 0)) {
-          fail(c, s, `メッセージ記述 ${msg.name} に MFLD が 1 つもありません`);
+          fail(c, s, m`メッセージ記述 ${msg.name} に MFLD が 1 つもありません`);
         }
         c.messages.push(msg);
         c.msg = undefined;
@@ -758,25 +753,25 @@ export function parseMfs(
       case "DO": startDo(c, s); break;
       case "ENDDO": endDo(c, s); break;
       case "PASSWORD":
-        fail(c, s, "PASSWORD 文は未実装です");
+        fail(c, s, m`PASSWORD 文は未実装です`);
       case "TABLE":
       case "PDB":
       case "PPAGE":
       case "COPY":
       case "EQU":
       case "IF":
-        fail(c, s, `${s.op} 文は未実装です`);
+        fail(c, s, m`${s.op} 文は未実装です`);
       default:
-        fail(c, s, `${s.op} は MFS の定義文ではありません`);
+        fail(c, s, m`${s.op} は MFS の定義文ではありません`);
     }
   }
   if (c.loop !== undefined) {
     // 開始行を持たせないと行番号が常に 1 になる。
     // FMT / MSG の閉じ忘れは正しい行を出しているので、ここだけ揃えていなかった
-    throw new MfsDefError("DO が ENDDO で閉じていません", file, c.loop.srcLine);
+    throw new MfsDefError(m`DO が ENDDO で閉じていません`, file, c.loop.srcLine);
   }
-  if (c.fmt !== undefined) throw new MfsDefError("FMT が FMTEND で閉じていません", file, c.fmt.srcLine);
-  if (c.msg !== undefined) throw new MfsDefError("MSG が MSGEND で閉じていません", file, c.msg.srcLine);
+  if (c.fmt !== undefined) throw new MfsDefError(m`FMT が FMTEND で閉じていません`, file, c.fmt.srcLine);
+  if (c.msg !== undefined) throw new MfsDefError(m`MSG が MSGEND で閉じていません`, file, c.msg.srcLine);
   return { formats: c.formats, messages: c.messages };
 }
 
@@ -799,27 +794,26 @@ export function loadMfs(files: Record<string, string>): MfsLibrary {
     for (const f of parsed.formats) {
       const prev = formats.get(f.name);
       if (prev !== undefined) {
-        throw new MfsDefError(`書式 ${f.name} は ${prev.file} にもあります`, file, f.srcLine);
+        throw new MfsDefError(m`書式 ${f.name} は ${prev.file} にもあります`, file, f.srcLine);
       }
       formats.set(f.name, f);
     }
-    for (const m of parsed.messages) {
-      const prev = messages.get(m.name);
+    for (const desc of parsed.messages) {
+      const prev = messages.get(desc.name);
       if (prev !== undefined) {
         throw new MfsDefError(
-          `メッセージ記述 ${m.name} は ${prev.file} にもあります`,
+          m`メッセージ記述 ${desc.name} は ${prev.file} にもあります`,
           file,
-          m.srcLine,
+          desc.srcLine,
         );
       }
-      messages.set(m.name, m);
+      messages.set(desc.name, desc);
     }
   }
   for (const f of formats.values()) {
     if (f.dpages.length > 1) {
       throw new MfsDefError(
-        `書式 ${f.name} に DPAGE が ${f.dpages.length} 個あります` +
-          "（2 画面目を選ぶ仕掛け（ページング）が未実装なので 1 つだけ）",
+        m`書式 ${f.name} に DPAGE が ${f.dpages.length} 個あります（2 画面目を選ぶ仕掛け（ページング）が未実装なので 1 つだけ）`,
         f.file,
         f.srcLine,
       );
@@ -833,7 +827,7 @@ export function loadMfs(files: Record<string, string>): MfsLibrary {
       if (d.name === undefined) continue;
       if (seen.has(d.name)) {
         throw new MfsDefError(
-          `書式 ${f.name} に DFLD ${d.name} が 2 つあります（ラベルは書式の中で一意）`,
+          m`書式 ${f.name} に DFLD ${d.name} が 2 つあります（ラベルは書式の中で一意）`,
           f.file,
           d.srcLine,
         );
@@ -842,36 +836,35 @@ export function loadMfs(files: Record<string, string>): MfsLibrary {
     }
   }
   // 参照の食い違いは、使うときではなく読んだ時点で断る
-  for (const m of messages.values()) {
-    const fmt = formats.get(m.sor);
+  for (const desc of messages.values()) {
+    const fmt = formats.get(desc.sor);
     if (fmt === undefined) {
       throw new MfsDefError(
-        `MSG ${m.name} の SOR=${m.sor} にあたる FMT がありません`,
-        m.file,
-        m.srcLine,
+        m`MSG ${desc.name} の SOR=${desc.sor} にあたる FMT がありません`,
+        desc.file,
+        desc.srcLine,
       );
     }
-    if (m.next !== undefined && !messages.has(m.next)) {
+    if (desc.next !== undefined && !messages.has(desc.next)) {
       throw new MfsDefError(
-        `MSG ${m.name} の NXT=${m.next} にあたる MSG がありません`,
-        m.file,
-        m.srcLine,
+        m`MSG ${desc.name} の NXT=${desc.next} にあたる MSG がありません`,
+        desc.file,
+        desc.srcLine,
       );
     }
-    if (m.lpages.length > 1) {
+    if (desc.lpages.length > 1) {
       throw new MfsDefError(
-        `メッセージ記述 ${m.name} に LPAGE が ${m.lpages.length} 個あります` +
-          "（どれを使うかを決める LPAGE COND= が未実装なので 1 つだけ）",
-        m.file,
-        m.srcLine,
+        m`メッセージ記述 ${desc.name} に LPAGE が ${desc.lpages.length} 個あります（どれを使うかを決める LPAGE COND= が未実装なので 1 つだけ）`,
+        desc.file,
+        desc.srcLine,
       );
     }
     const named = new Set(
       fmt.dpages.flatMap((d) => d.dflds.map((x) => x.name).filter((x) => x !== undefined)),
     );
-    for (const seg of m.lpages.flatMap((l) => l.segs)) {
+    for (const seg of desc.lpages.flatMap((l) => l.segs)) {
       for (const f of seg.mflds) {
-        checkMfld(m, f, named);
+        checkMfld(desc, f, named);
       }
     }
   }
@@ -879,23 +872,23 @@ export function loadMfs(files: Record<string, string>): MfsLibrary {
 }
 
 /** `MFLD` が指す先と、向きに合った書き方かを見る。 */
-function checkMfld(m: MessageDesc, f: Mfld, named: Set<string>): void {
+function checkMfld(desc: MessageDesc, f: Mfld, named: Set<string>): void {
   const where = (text: string): never => {
-    throw new MfsDefError(`MSG ${m.name} の ${text}`, m.file, f.srcLine);
+    throw new MfsDefError(m`MSG ${desc.name} の ${text}`, desc.file, f.srcLine);
   };
-  if (m.type === "OUTPUT") {
+  if (desc.type === "OUTPUT") {
     if (f.source.kind === "literal") {
-      where("出力の MFLD に固定文字だけを書くことはできません（置く先の項目がありません）");
+      where(m`出力の MFLD に固定文字だけを書くことはできません（置く先の項目がありません）`);
     }
     if (f.source.kind === "dfld-literal") {
-      where("出力の MFLD に固定文字を添える書き方は未実装です（入力用の書き方）");
+      where(m`出力の MFLD に固定文字を添える書き方は未実装です（入力用の書き方）`);
     }
   } else {
     if (f.source.kind === "system") {
-      where(`システム定数 ${f.source.which} は出力専用です`);
+      where(m`システム定数 ${f.source.which} は出力専用です`);
     }
     if (f.attrBytes) {
-      where("入力の MFLD の ATTR=YES は未実装です（装置は属性を返さない）");
+      where(m`入力の MFLD の ATTR=YES は未実装です（装置は属性を返さない）`);
     }
   }
   const target =
@@ -903,6 +896,6 @@ function checkMfld(m: MessageDesc, f: Mfld, named: Set<string>): void {
       ? f.source.name
       : undefined;
   if (target !== undefined && !named.has(target)) {
-    where(`MFLD ${target} にあたる DFLD が ${m.sor} にありません`);
+    where(m`MFLD ${target} にあたる DFLD が ${desc.sor} にありません`);
   }
 }

@@ -11,7 +11,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { lint, formatLint, RULES, type LintMessage } from "../src/index.js";
 import { BUILTIN_NAMES, UNIMPLEMENTED_BUILTINS } from "../src/interp.js";
-import { SAMPLES } from "../web/samples.js";
+import { samples } from "../web/samples.js";
 
 /** その規則の指摘だけを取り出す。 */
 function only(messages: LintMessage[], rule: string): LintMessage[] {
@@ -371,7 +371,7 @@ describe("構文が壊れている場合", () => {
 
 describe("誤検出が無いこと", () => {
   it("ブラウザ版のサンプルには指摘が出ない", () => {
-    for (const s of SAMPLES) {
+    for (const s of samples()) {
       expect(lint(s.source).map((m) => `${s.name}: ${m.rule}`)).toEqual([]);
     }
   });

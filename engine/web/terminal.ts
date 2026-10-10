@@ -12,6 +12,7 @@
  * 動かなくなり「HTML 1 枚で配れる」形が壊れる。
  */
 
+import { m } from "../src/i18n/index.js";
 import { cells, type Screen, type ScreenField } from "../src/index.js";
 import type { Aid } from "../src/index.js";
 
@@ -76,7 +77,7 @@ export class Terminal {
     this.typed.clear();
     this.root.textContent = "";
     if (screen === undefined) {
-      this.root.textContent = "画面はまだありません。";
+      this.root.textContent = m`画面はまだありません。`;
       return;
     }
     const board = document.createElement("div");
@@ -146,7 +147,7 @@ export class Terminal {
     el.size = f.length;
     el.spellcheck = false;
     el.autocomplete = "off";
-    el.setAttribute("aria-label", `${f.name ?? ""}（${f.line} 行 ${f.col} 桁）`);
+    el.setAttribute("aria-label", m`${f.name ?? ""}（${f.line} 行 ${f.col} 桁）`);
     if (f.attr.numeric) el.inputMode = "numeric";
     el.style.left = `${f.col - 1}ch`;
     el.style.top = `${(f.line - 1) * CELL_H}px`;

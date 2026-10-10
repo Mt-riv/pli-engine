@@ -8,6 +8,7 @@
  * `lint.ts` は PL/I のソースを見る層なので、そちらには入れない。
  */
 
+import { m } from "../i18n/index.js";
 import { layout } from "./device.js";
 import type { MfsLibrary } from "./blocks.js";
 
@@ -19,7 +20,7 @@ export interface MfsWarning {
 
 /** 人が読める 1 行にする。 */
 export function formatWarning(w: MfsWarning): string {
-  return `${w.file} ${w.line} 行: ${w.message}`;
+  return m`${w.file} ${w.line} 行: ${w.message}`;
 }
 
 export function checkMfs(lib: MfsLibrary): MfsWarning[] {
@@ -52,8 +53,7 @@ export function checkMfs(lib: MfsLibrary): MfsWarning[] {
           file: fmt.file,
           line: fmt.srcLine,
           message:
-            `書式 ${fmt.name} は入力に使われていますが、打ち込める項目が 1 つもありません` +
-            "（すべて PROT です）",
+            m`書式 ${fmt.name} は入力に使われていますが、打ち込める項目が 1 つもありません（すべて PROT です）`,
         });
       }
 
@@ -65,14 +65,13 @@ export function checkMfs(lib: MfsLibrary): MfsWarning[] {
             file: fmt.file,
             line: fmt.srcLine,
             message:
-              `DPAGE CURSOR=((${cursor.line},${cursor.col})) の位置に項目がありません` +
-              "（項目の先頭を指してください）",
+              m`DPAGE CURSOR=((${cursor.line},${cursor.col})) の位置に項目がありません（項目の先頭を指してください）`,
           });
         } else if (at.attr.protect) {
           out.push({
             file: fmt.file,
             line: at.srcLine,
-            message: `DPAGE CURSOR= が保護された項目 ${at.name ?? "（固定文字）"} を指しています`,
+            message: m`DPAGE CURSOR= が保護された項目 ${at.name ?? m`（固定文字）`} を指しています`,
           });
         }
       }
@@ -86,8 +85,7 @@ export function checkMfs(lib: MfsLibrary): MfsWarning[] {
             file: fmt.file,
             line: f.srcLine,
             message:
-              `項目 ${f.name ?? "（固定文字）"} の EATTR= は画面像に出ません` +
-              "（色・下線などの拡張属性は再現しません）",
+              m`項目 ${f.name ?? m`（固定文字）`} の EATTR= は画面像に出ません（色・下線などの拡張属性は再現しません）`,
           });
         }
         if (f.name === undefined) continue;
@@ -97,8 +95,7 @@ export function checkMfs(lib: MfsLibrary): MfsWarning[] {
           file: fmt.file,
           line: f.srcLine,
           message:
-            `項目 ${f.name} はどの MFLD からも指されていません` +
-            "（名前の綴り違いか、要らない項目です）",
+            m`項目 ${f.name} はどの MFLD からも指されていません（名前の綴り違いか、要らない項目です）`,
         });
       }
     }

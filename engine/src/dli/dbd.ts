@@ -7,6 +7,7 @@
  * すべて論理層で決まるので、学習と検証の用には足りる。
  */
 
+import { m } from "../i18n/index.js";
 import { DliDefError, type DbdDef, type FieldDef, type SegmentDef } from "./types.js";
 import { listOf, numberOf, readMacros, required, requiredName, type MacroStmt } from "../macro.js";
 
@@ -23,13 +24,12 @@ function fieldType(text: string, s: MacroStmt, file: string): "C" {
   if (t === "C") return t;
   if (t === "P" || t === "X") {
     throw new DliDefError(
-      `FIELD の TYPE=${t} は未実装です（データファイルがテキストなので ` +
-        `文字として表せる TYPE=C だけを扱う）`,
+      m`FIELD の TYPE=${t} は未実装です（データファイルがテキストなので 文字として表せる TYPE=C だけを扱う）`,
       file,
       s.line,
     );
   }
-  throw new DliDefError(`FIELD の TYPE=${text} は扱えません（C のみ）`, file, s.line);
+  throw new DliDefError(m`FIELD の TYPE=${text} は扱えません（C のみ）`, file, s.line);
 }
 
 /** `PARENT=0` / `PARENT=STUDENT` / `PARENT=((STUDENT,SNGL))` を名前に直す。 */
@@ -49,7 +49,7 @@ const LOGICAL_POINTERS = new Set(["LTWIN", "LTWINBWD", "LPARNT", "LCHILD", "SNGL
 function checkUnsupportedSegm(s: MacroStmt, file: string): void {
   if (s.operands.has("SOURCE")) {
     throw new DliDefError(
-      "SOURCE= は未実装です（論理セグメントは再現しない）",
+      m`SOURCE= は未実装です（論理セグメントは再現しない）`,
       file,
       s.line,
     );
@@ -60,7 +60,7 @@ function checkUnsupportedSegm(s: MacroStmt, file: string): void {
     // `PARENT=((A,SNGL),(Z,PHYS,DB))` のように 2 段で 2 つ以上あれば二重親
     if (items.length > 1 && items.every((x) => x.startsWith("("))) {
       throw new DliDefError(
-        "PARENT= に親を 2 つ以上書くこと（論理関係）は未実装です",
+        m`PARENT= に親を 2 つ以上書くこと（論理関係）は未実装です`,
         file,
         s.line,
       );
@@ -69,7 +69,7 @@ function checkUnsupportedSegm(s: MacroStmt, file: string): void {
       for (const word of listOf(item.replace(/^\(|\)$/g, ""))) {
         if (LOGICAL_POINTERS.has(word.toUpperCase())) {
           throw new DliDefError(
-            `PARENT= の ${word.toUpperCase()} は未実装です（論理関係のポインタ）`,
+            m`PARENT= の ${word.toUpperCase()} は未実装です（論理関係のポインタ）`,
             file,
             s.line,
           );
@@ -82,7 +82,7 @@ function checkUnsupportedSegm(s: MacroStmt, file: string): void {
     for (const word of listOf(ptr)) {
       if (LOGICAL_POINTERS.has(word.toUpperCase())) {
         throw new DliDefError(
-          `POINTER=${word.toUpperCase()} は未実装です（論理関係のポインタ）`,
+          m`POINTER=${word.toUpperCase()} は未実装です（論理関係のポインタ）`,
           file,
           s.line,
         );
@@ -102,7 +102,7 @@ function parentOf(text: string | undefined): string | undefined {
 
 export function parseDbd(text: string, file: string): DbdDef {
   const stmts = readMacros(text, file);
-  if (stmts.length === 0) throw new DliDefError("DBD の記述が空です", file, 1);
+  if (stmts.length === 0) throw new DliDefError(m`DBD の記述が空です`, file, 1);
 
   let name: string | undefined;
   let access = "HDAM";
@@ -115,7 +115,7 @@ export function parseDbd(text: string, file: string): DbdDef {
     switch (s.op) {
       case "DBD": {
         if (name !== undefined) {
-          throw new DliDefError("DBD 文が 2 つあります", file, s.line);
+          throw new DliDefError(m`DBD 文が 2 つあります`, file, s.line);
         }
         name = requiredName(s, "NAME", file);
         const a = s.operands.get("ACCESS");
@@ -125,8 +125,7 @@ export function parseDbd(text: string, file: string): DbdDef {
           // DEDB（高速機能）と GSAM は構造からして違うので名指しで断る
           if (!SUPPORTED_ACCESS.has(want)) {
             throw new DliDefError(
-              `ACCESS=${want} は未実装です（HDAM / HIDAM / HISAM / HSAM のみ。` +
-                `これらは論理層が同じなので同じに扱う）`,
+              m`ACCESS=${want} は未実装です（HDAM / HIDAM / HISAM / HSAM のみ。これらは論理層が同じなので同じに扱う）`,
               file,
               s.line,
             );
@@ -139,23 +138,23 @@ export function parseDbd(text: string, file: string): DbdDef {
       case "AREA":
         // 物理の配置は再現しないので、受け取るだけで使わない
         if (name === undefined) {
-          throw new DliDefError(`${s.op} 文の前に DBD 文が必要です`, file, s.line);
+          throw new DliDefError(m`${s.op} 文の前に DBD 文が必要です`, file, s.line);
         }
         break;
       case "SEGM": {
         if (name === undefined) {
-          throw new DliDefError("SEGM 文の前に DBD 文が必要です", file, s.line);
+          throw new DliDefError(m`SEGM 文の前に DBD 文が必要です`, file, s.line);
         }
         const segName = requiredName(s, "NAME", file);
         if (segments.has(segName)) {
-          throw new DliDefError(`セグメント ${segName} が 2 回定義されています`, file, s.line);
+          throw new DliDefError(m`セグメント ${segName} が 2 回定義されています`, file, s.line);
         }
         checkUnsupportedSegm(s, file);
         const parent = parentOf(s.operands.get("PARENT"));
         if (parent === undefined) {
           if (root !== undefined) {
             throw new DliDefError(
-              `ルートセグメントは 1 つだけです（${root} と ${segName}）`,
+              m`ルートセグメントは 1 つだけです（${root} と ${segName}）`,
               file,
               s.line,
             );
@@ -165,7 +164,7 @@ export function parseDbd(text: string, file: string): DbdDef {
           const up = segments.get(parent);
           if (up === undefined) {
             throw new DliDefError(
-              `親セグメント ${parent} が定義されていません（SEGM NAME=${segName}）`,
+              m`親セグメント ${parent} が定義されていません（SEGM NAME=${segName}）`,
               file,
               s.line,
             );
@@ -186,12 +185,12 @@ export function parseDbd(text: string, file: string): DbdDef {
       }
       case "FIELD": {
         if (current === undefined) {
-          throw new DliDefError("FIELD 文の前に SEGM 文が必要です", file, s.line);
+          throw new DliDefError(m`FIELD 文の前に SEGM 文が必要です`, file, s.line);
         }
         const parts = listOf(required(s, "NAME", file));
         const fieldName = (parts[0] ?? "").toUpperCase();
         if (fieldName === "") {
-          throw new DliDefError("FIELD の NAME= が空です", file, s.line);
+          throw new DliDefError(m`FIELD の NAME= が空です`, file, s.line);
         }
         const rest = parts.slice(1).map((p) => p.toUpperCase());
         const field: FieldDef = {
@@ -202,7 +201,7 @@ export function parseDbd(text: string, file: string): DbdDef {
         };
         if (field.start + field.bytes - 1 > current.bytes) {
           throw new DliDefError(
-            `項目 ${fieldName} がセグメント ${current.name}（BYTES=${current.bytes}）に収まりません`,
+            m`項目 ${fieldName} がセグメント ${current.name}（BYTES=${current.bytes}）に収まりません`,
             file,
             s.line,
           );
@@ -211,7 +210,7 @@ export function parseDbd(text: string, file: string): DbdDef {
         if (rest.includes("SEQ")) {
           if (current.sequence !== undefined) {
             throw new DliDefError(
-              `セグメント ${current.name} に順序キーが 2 つあります`,
+              m`セグメント ${current.name} に順序キーが 2 つあります`,
               file,
               s.line,
             );
@@ -222,13 +221,13 @@ export function parseDbd(text: string, file: string): DbdDef {
       }
       case "LCHILD":
         throw new DliDefError(
-          "LCHILD（二次索引・論理関係）は未実装です。物理の階層だけで書いてください",
+          m`LCHILD（二次索引・論理関係）は未実装です。物理の階層だけで書いてください`,
           file,
           s.line,
         );
       case "XDFLD":
         throw new DliDefError(
-          "XDFLD（二次索引）は未実装です。物理の階層だけで書いてください",
+          m`XDFLD（二次索引）は未実装です。物理の階層だけで書いてください`,
           file,
           s.line,
         );
@@ -239,18 +238,18 @@ export function parseDbd(text: string, file: string): DbdDef {
       case "END":
         break;
       default:
-        throw new DliDefError(`${s.op} は DBD の文ではありません`, file, s.line);
+        throw new DliDefError(m`${s.op} は DBD の文ではありません`, file, s.line);
     }
   }
 
   if (name === undefined) {
-    throw new DliDefError("DBD 文で始まっていません", file, stmts[0]!.line);
+    throw new DliDefError(m`DBD 文で始まっていません`, file, stmts[0]!.line);
   }
   if (root === undefined) {
-    throw new DliDefError("ルートセグメント（PARENT=0）がありません", file, stmts[0]!.line);
+    throw new DliDefError(m`ルートセグメント（PARENT=0）がありません`, file, stmts[0]!.line);
   }
   if (!genSeen) {
-    throw new DliDefError("DBDGEN 文がありません", file, stmts[stmts.length - 1]!.line);
+    throw new DliDefError(m`DBDGEN 文がありません`, file, stmts[stmts.length - 1]!.line);
   }
   return { name, access, segments, root };
 }

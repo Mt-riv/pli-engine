@@ -11,6 +11,7 @@
  * 位置の精度について。式の節点は行を持たないため、指摘は**文の行**を指す。
  */
 
+import { m, msg } from "./i18n/index.js";
 import type { DataAttr, DeclItem, Expr, FormatItem, Program, Ref, Stmt } from "./ast.js";
 import { groupNames, qualifyDeclareItems } from "./declare.js";
 import {
@@ -59,149 +60,127 @@ export const RULES: readonly LintRule[] = [
     id: "implicit-declaration",
     category: "correctness",
     default: "warning",
-    summary: "宣言していない名前を使っている",
+    summary: msg("宣言していない名前を使っている"),
     rationale:
-      "PL/I は宣言の無い名前を暗黙に宣言する（I〜N は FIXED BIN(15,0)、" +
-      "それ以外は FLOAT DEC(6)）。綴り間違いが黙って別の変数になるため、" +
-      "気付けないまま誤った値で動き続ける。",
+      msg(`PL/I は宣言の無い名前を暗黙に宣言する（I〜N は FIXED BIN(15,0)、それ以外は FLOAT DEC(6)）。綴り間違いが黙って別の変数になるため、気付けないまま誤った値で動き続ける。`),
   },
   {
     id: "unqualified-member",
     category: "correctness",
     default: "error",
-    summary: "構造体の項目を名前だけで指している",
+    summary: msg("構造体の項目を名前だけで指している"),
     rationale:
-      "この処理系は構造体の項目を「親.項目」の名前で持つ。項目だけを書くと、" +
-      "宣言の無い名前として**別の変数が暗黙に宣言される**。止まらず、" +
-      "代入も読み出しも意図と違う変数に対して行われるので、" +
-      "気付かないまま誤った値で動き続ける。「親.項目」と書けば解決する。",
+      msg(`この処理系は構造体の項目を「親.項目」の名前で持つ。項目だけを書くと、宣言の無い名前として**別の変数が暗黙に宣言される**。止まらず、代入も読み出しも意図と違う変数に対して行われるので、気付かないまま誤った値で動き続ける。「親.項目」と書けば解決する。`),
   },
   {
     id: "undefined-procedure",
     category: "correctness",
     default: "error",
-    summary: "定義されていない手続きを呼んでいる",
-    rationale: "この処理系は 1 ファイル完結なので、実行時に必ず失敗する。",
+    summary: msg("定義されていない手続きを呼んでいる"),
+    rationale: msg("この処理系は 1 ファイル完結なので、実行時に必ず失敗する。"),
   },
   {
     id: "unused-variable",
     category: "correctness",
     default: "warning",
-    summary: "宣言したが一度も使っていない変数",
-    rationale: "消し忘れか、別の名前を使うつもりだった綴り間違いのどちらか。",
+    summary: msg("宣言したが一度も使っていない変数"),
+    rationale: msg("消し忘れか、別の名前を使うつもりだった綴り間違いのどちらか。"),
   },
   {
     id: "assigned-but-never-read",
     category: "correctness",
     default: "warning",
-    summary: "代入しているが一度も読んでいない変数",
+    summary: msg("代入しているが一度も読んでいない変数"),
     rationale:
-      "計算した結果を捨てている。出力し忘れか、読む側で別の名前を書いている。",
+      msg("計算した結果を捨てている。出力し忘れか、読む側で別の名前を書いている。"),
   },
   {
     id: "never-assigned",
     category: "correctness",
     default: "warning",
-    summary: "値を入れずに読んでいる変数",
+    summary: msg("値を入れずに読んでいる変数"),
     rationale:
-      "INITIAL も代入も無い変数を読むと、この処理系では 0 や空白になる。" +
-      "処理系によっては記憶域の内容に依存し、結果が環境で変わる。",
+      msg(`INITIAL も代入も無い変数を読むと、この処理系では 0 や空白になる。処理系によっては記憶域の内容に依存し、結果が環境で変わる。`),
   },
   {
     id: "unused-procedure",
     category: "correctness",
     default: "warning",
-    summary: "定義したが呼ばれていない手続き",
+    summary: msg("定義したが呼ばれていない手続き"),
     rationale:
-      "呼び忘れか、呼ぶ側の綴り間違い。テスト手続き（TEST_）と SETUP / TEARDOWN は" +
-      "フレームワークが呼ぶので対象にしない。",
+      msg(`呼び忘れか、呼ぶ側の綴り間違い。テスト手続き（TEST_）と SETUP / TEARDOWN はフレームワークが呼ぶので対象にしない。`),
   },
   {
     id: "shadows-builtin",
     category: "correctness",
     default: "warning",
-    summary: "組込関数と同じ名前を宣言している",
+    summary: msg("組込関数と同じ名前を宣言している"),
     rationale:
-      "PL/I には予約語が無いため宣言できてしまうが、そのブロックでは" +
-      "組込関数を呼べなくなる。SUBSTR や LENGTH で起きると原因が分かりにくい。",
+      msg(`PL/I には予約語が無いため宣言できてしまうが、そのブロックでは組込関数を呼べなくなる。SUBSTR や LENGTH で起きると原因が分かりにくい。`),
   },
   {
     id: "missing-main",
     category: "correctness",
     default: "warning",
-    summary: "OPTIONS(MAIN) を持つ手続きが無い",
+    summary: msg("OPTIONS(MAIN) を持つ手続きが無い"),
     rationale:
-      "実行の入口が無いので動かせない。テストファイル（TEST_ 手続きを持つもの）は" +
-      "主手続きを書かない決まりなので対象にしない。",
+      msg(`実行の入口が無いので動かせない。テストファイル（TEST_ 手続きを持つもの）は主手続きを書かない決まりなので対象にしない。`),
   },
   {
     id: "mixed-base-arithmetic",
     category: "correctness",
     default: "warning",
-    summary: "FIXED DECIMAL と FIXED BINARY を混ぜて計算している",
+    summary: msg("FIXED DECIMAL と FIXED BINARY を混ぜて計算している"),
     rationale:
-      "PL/I は基数が混ざると BINARY に変換して計算する。10 進で持っていた桁が" +
-      "2 進の精度に落ちる。13 の階乗のような計算は FIXEDOVERFLOW になる。" +
-      "どちらかに揃えるか、DIVIDE / 明示の宣言で意図を書く。",
+      msg(`PL/I は基数が混ざると BINARY に変換して計算する。10 進で持っていた桁が2 進の精度に落ちる。13 の階乗のような計算は FIXEDOVERFLOW になる。どちらかに揃えるか、DIVIDE / 明示の宣言で意図を書く。`),
   },
   {
     id: "file-not-declared",
     category: "correctness",
     default: "warning",
-    summary: "宣言していないファイルを使っている",
+    summary: msg("宣言していないファイルを使っている"),
     rationale:
-      "PL/I は宣言の無いファイル名に既定属性を割り当てて続行する。" +
-      "綴り間違いでも通ってしまい、別のファイルを開いたことに気付けない。" +
-      "SYSIN と SYSPRINT は既定で使えるので対象にしない。",
+      msg(`PL/I は宣言の無いファイル名に既定属性を割り当てて続行する。綴り間違いでも通ってしまい、別のファイルを開いたことに気付けない。SYSIN と SYSPRINT は既定で使えるので対象にしない。`),
   },
   {
     id: "on-never-raised",
     category: "correctness",
     default: "warning",
-    summary: "この処理系が起こさない条件に ON 単位を置いている",
+    summary: msg("この処理系が起こさない条件に ON 単位を置いている"),
     rationale:
-      "`ON` はどんな条件名でも構文として受けるが、処理系が起こすのは 8 つだけ。" +
-      "それ以外に ON 単位を置くと、構文も通り誤りも出ないまま**一度も実行されない**。" +
-      "`on endpage(sysprint) put page;` と書いて 70 行出しても何も起きない。" +
-      "README には書いてあるが、ソースを見て分かる形ではないので指摘する。",
+      msg(`\`ON\` はどんな条件名でも構文として受けるが、処理系が起こすのは 8 つだけ。それ以外に ON 単位を置くと、構文も通り誤りも出ないまま**一度も実行されない**。\`on endpage(sysprint) put page;\` と書いて 70 行出しても何も起きない。README には書いてあるが、ソースを見て分かる形ではないので指摘する。`),
   },
   {
     id: "dli-status-unchecked",
     category: "correctness",
     default: "warning",
-    summary: "DL/I を呼んだのにステータスコードを見ていない",
+    summary: msg("DL/I を呼んだのにステータスコードを見ていない"),
     rationale:
-      "DL/I は失敗しても例外を出さず、PCB のステータスコードで知らせる。" +
-      "見ないと「取れなかったセグメント」を取れたものとして処理してしまう。" +
-      "IMS のプログラムで最も多い誤りなので、一度も読んでいなければ指摘する。",
+      msg(`DL/I は失敗しても例外を出さず、PCB のステータスコードで知らせる。見ないと「取れなかったセグメント」を取れたものとして処理してしまう。IMS のプログラムで最も多い誤りなので、一度も読んでいなければ指摘する。`),
   },
   {
     id: "endfile-without-on",
     category: "correctness",
     default: "warning",
-    summary: "ON ENDFILE を置かずにファイルから読んでいる",
+    summary: msg("ON ENDFILE を置かずにファイルから読んでいる"),
     rationale:
-      "入力が尽きた時点で ENDFILE 条件が起き、ON 単位が無ければ ERROR へ連鎖して" +
-      "プログラムが終わる。読み終わりを自分で扱うなら ON ENDFILE が要る。",
+      msg(`入力が尽きた時点で ENDFILE 条件が起き、ON 単位が無ければ ERROR へ連鎖してプログラムが終わる。読み終わりを自分で扱うなら ON ENDFILE が要る。`),
   },
   {
     id: "free-then-use",
     category: "correctness",
     default: "warning",
-    summary: "FREE したポインタをそのまま使っている",
+    summary: msg("FREE したポインタをそのまま使っている"),
     rationale:
-      "解放した記憶域を指すポインタをたどると、この処理系は誤りとして止める。" +
-      "PL/I の規定では未定義動作で、たまたま動くこともあるぶん質が悪い。" +
-      "FREE のあとは NULL を入れ直すか、別のポインタを使う。",
+      msg(`解放した記憶域を指すポインタをたどると、この処理系は誤りとして止める。PL/I の規定では未定義動作で、たまたま動くこともあるぶん質が悪い。FREE のあとは NULL を入れ直すか、別のポインタを使う。`),
   },
   {
     id: "goto-outside-on-unit",
     category: "style",
     default: "info",
-    summary: "ON 単位の外で GOTO を使っている",
+    summary: msg("ON 単位の外で GOTO を使っている"),
     rationale:
-      "ON 単位からの脱出には GOTO が要るが、それ以外の場所では" +
-      "DO 群・LEAVE・ITERATE・SELECT で書ける。",
+      msg(`ON 単位からの脱出には GOTO が要るが、それ以外の場所ではDO 群・LEAVE・ITERATE・SELECT で書ける。`),
   },
 ];
 
@@ -453,7 +432,7 @@ class Linter {
         this.report(
           "missing-main",
           first && "line" in first ? first.line : 1,
-          "OPTIONS(MAIN) を持つ手続きがありません。このままでは実行できません。",
+          m`OPTIONS(MAIN) を持つ手続きがありません。このままでは実行できません。`,
         );
       }
     }
@@ -536,7 +515,7 @@ class Linter {
           this.report(
             "shadows-builtin",
             line,
-            `${name} は組込関数と同じ名前です。このブロックでは組込関数として呼べなくなります。`,
+            m`${name} は組込関数と同じ名前です。このブロックでは組込関数として呼べなくなります。`,
           );
         }
         const existing = scope.vars.get(key);
@@ -594,7 +573,7 @@ class Linter {
       this.report(
         "free-then-use",
         line,
-        `${ref.locator.name} は FREE 済みです。この参照は解放済みの記憶域をたどります。`,
+        m`${ref.locator.name} は FREE 済みです。この参照は解放済みの記憶域をたどります。`,
       );
     }
     const v = scope.lookupVar(key);
@@ -659,9 +638,7 @@ class Linter {
       this.report(
         "unqualified-member",
         line,
-        `${name} は構造体 ${owners.join(" / ")} の項目です。` +
-          `${owners.length === 1 ? `${owners[0]}.${name}` : "親.項目"} と書いてください` +
-          "（名前だけでは別の変数として暗黙に宣言されます）。",
+        m`${name} は構造体 ${owners.join(" / ")} の項目です。${owners.length === 1 ? `${owners[0]}.${name}` : m`親.項目`} と書いてください（名前だけでは別の変数として暗黙に宣言されます）。`,
       );
       return;
     }
@@ -671,8 +648,7 @@ class Linter {
       this.report(
         "implicit-declaration",
         line,
-        `${name} は PL/I の組込関数ですが、この処理系では未実装です。` +
-          "使うと実行時に止まります。",
+        m`${name} は PL/I の組込関数ですが、この処理系では未実装です。使うと実行時に止まります。`,
       );
       return;
     }
@@ -680,7 +656,7 @@ class Linter {
       this.report(
         "implicit-declaration",
         line,
-        `${name} は宣言されていません。関数として呼ぶと実行時に「未知の関数です」で止まります。`,
+        m`${name} は宣言されていません。関数として呼ぶと実行時に「未知の関数です」で止まります。`,
       );
       return;
     }
@@ -691,7 +667,7 @@ class Linter {
     this.report(
       "implicit-declaration",
       line,
-      `${name} は宣言されていません。暗黙に ${kind} として宣言されます。`,
+      m`${name} は宣言されていません。暗黙に ${kind} として宣言されます。`,
     );
   }
 
@@ -727,8 +703,7 @@ class Linter {
     this.report(
       "on-never-raised",
       line,
-      `ON ${name} は一度も実行されません（この処理系は ${name} を起こしません）。` +
-        `SIGNAL ${name} で明示的に起こすことはできます。`,
+      m`ON ${name} は一度も実行されません（この処理系は ${name} を起こしません）。SIGNAL ${name} で明示的に起こすことはできます。`,
     );
   }
 
@@ -776,8 +751,7 @@ class Linter {
       this.report(
         "mixed-base-arithmetic",
         line,
-        "FIXED DECIMAL と FIXED BINARY を混ぜて計算しています。" +
-          "結果は BINARY に変換され、10 進の桁が失われます。",
+        m`FIXED DECIMAL と FIXED BINARY を混ぜて計算しています。結果は BINARY に変換され、10 進の桁が失われます。`,
       );
     }
   }
@@ -974,7 +948,7 @@ class Linter {
           this.report(
             "undefined-procedure",
             s.line,
-            `${s.name} という手続きは定義されていません。`,
+            m`${s.name} という手続きは定義されていません。`,
           );
         }
         // `DCL PLITDLI ENTRY;` は外部手続きの宣言なので proc は立つ。
@@ -1014,7 +988,7 @@ class Linter {
           this.report(
             "goto-outside-on-unit",
             s.line,
-            "ON 単位の外の GOTO です。DO 群・LEAVE・ITERATE・SELECT で書けないか検討してください。",
+            m`ON 単位の外の GOTO です。DO 群・LEAVE・ITERATE・SELECT で書けないか検討してください。`,
           );
         }
         return;
@@ -1069,7 +1043,7 @@ class Linter {
       this.report(
         "file-not-declared",
         line,
-        `ファイル ${name} は宣言されていません。既定属性が割り当てられ、そのまま動いてしまいます。`,
+        m`ファイル ${name} は宣言されていません。既定属性が割り当てられ、そのまま動いてしまいます。`,
       );
     }
     if (
@@ -1081,8 +1055,7 @@ class Linter {
       this.report(
         "endfile-without-on",
         line,
-        `${name} を読んでいますが ON ENDFILE(${name}) がありません。` +
-          "入力が尽きるとプログラムが終わります。",
+        m`${name} を読んでいますが ON ENDFILE(${name}) がありません。入力が尽きるとプログラムが終わります。`,
       );
     }
   }
@@ -1115,7 +1088,7 @@ class Linter {
       this.report(
         "dli-status-unchecked",
         line,
-        `${status.name} を一度も読んでいません。DL/I の失敗はステータスコードでしか分かりません。`,
+        m`${status.name} を一度も読んでいません。DL/I の失敗はステータスコードでしか分かりません。`,
       );
     }
   }
@@ -1130,18 +1103,18 @@ class Linter {
       if (v.isBased) continue; // BASED は別の記憶域を見るための窓
       if (v.isDliPcb) continue; // PCB マスクは DL/I が埋める
       if (v.reads === 0 && v.writes === 0 && v.mentions === 0 && !v.hasInit) {
-        this.report("unused-variable", v.line, `${v.name} は宣言されていますが使われていません。`);
+        this.report("unused-variable", v.line, m`${v.name} は宣言されていますが使われていません。`);
       } else if (v.reads === 0 && (v.writes > 0 || v.hasInit)) {
         this.report(
           "assigned-but-never-read",
           v.line,
-          `${v.name} に値を入れていますが、一度も読んでいません。`,
+          m`${v.name} に値を入れていますが、一度も読んでいません。`,
         );
       } else if (v.writes === 0 && v.reads > 0 && !v.hasInit && !v.isAlias) {
         this.report(
           "never-assigned",
           v.line,
-          `${v.name} は値を入れる前に読まれています。INITIAL か代入が要ります。`,
+          m`${v.name} は値を入れる前に読まれています。INITIAL か代入が要ります。`,
         );
       }
     }
@@ -1152,8 +1125,8 @@ class Linter {
       if (fromOutside <= 0 && !p.isMain && !p.isExternal && !calledByFramework(p.name)) {
         const why =
           (p.selfCalls ?? 0) > 0
-            ? `手続き ${p.name} は自分自身からしか呼ばれていません。`
-            : `手続き ${p.name} は呼ばれていません。`;
+            ? m`手続き ${p.name} は自分自身からしか呼ばれていません。`
+            : m`手続き ${p.name} は呼ばれていません。`;
         this.report("unused-procedure", p.line, why);
       }
     }
@@ -1215,17 +1188,18 @@ export function isFragmentFileName(fileName: string): boolean {
 
 /** 人が読む形にまとめる。CLI 用。 */
 export function formatLint(messages: readonly LintMessage[], title: string): string {
-  if (messages.length === 0) return `--- ${title} ---\n  指摘はありません`;
+  if (messages.length === 0) return m`--- ${title} ---\n  指摘はありません`;
   const lines = [`--- ${title} ---`];
-  for (const m of messages) {
-    const where = m.col === undefined ? `${m.line}行` : `${m.line}行${m.col}桁`;
-    const mark = m.severity === "error" ? "ERR " : m.severity === "warning" ? "WARN" : "INFO";
-    lines.push(`  ${mark} ${where}: ${m.message} [${m.rule}]`);
+  for (const item of messages) {
+    const where = item.col === undefined ? m`${item.line}行` : m`${item.line}行${item.col}桁`;
+    const mark =
+      item.severity === "error" ? "ERR " : item.severity === "warning" ? "WARN" : "INFO";
+    lines.push(`  ${mark} ${where}: ${item.message} [${item.rule}]`);
   }
   const count = (s: LintSeverity) => messages.filter((m) => m.severity === s).length;
   lines.push(
     "",
-    `指摘 ${messages.length} / 誤り ${count("error")} / 警告 ${count("warning")} / 情報 ${count("info")}`,
+    m`指摘 ${messages.length} / 誤り ${count("error")} / 警告 ${count("warning")} / 情報 ${count("info")}`,
   );
   return lines.join("\n");
 }

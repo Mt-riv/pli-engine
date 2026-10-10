@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  ASSERT_PRELUDE,
+  assertPrelude,
   discover,
   formatReport,
   runTestSource,
@@ -78,7 +78,7 @@ end HELPER;
 
 describe("アサーションの前置き", () => {
   it("それ自体が解析でき、実行できる", () => {
-    const src = `t: proc options(main);\n${ASSERT_PRELUDE}\ncall ASSERT_TRUE('1'b, 'x');\nend t;\n`;
+    const src = `t: proc options(main);\n${assertPrelude()}\ncall ASSERT_TRUE('1'b, 'x');\nend t;\n`;
     const r = runProgram(src, { maxSteps: 100_000 });
     expect(r.diagnostics).toEqual([]);
   });

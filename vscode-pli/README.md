@@ -1,5 +1,7 @@
 # PL/I VSCode Extension
 
+**日本語** | [English](README.en.md)
+
 PL/I の構文強調・診断・実行・テスト・Snippet・Linter を VSCode に統合する。
 **処理系（`pli-engine`）を同梱している**ので、外部のコンパイラを必要としない。
 
@@ -70,6 +72,7 @@ end TEST_MOD;
 | `pli.lint.enabled` | `true` | 入力中に Linter をかける |
 | `pli.lint.rules` | `{}` | 規則ごとの上書き（`off` / `info` / `warning` / `error`） |
 | `pli.dli.psb` | `""` | IMS/DB（DL/I）で使う PSB の名前。入れると `<名前>.psb` を読み、主手続きの引数が PCB のポインタになる。空なら DL/I を使わない |
+| `pli.language` | `"auto"` | メッセージと診断の言語（`auto` / `ja` / `en`）。`auto` は VSCode の表示言語に合わせる。コマンド名と設定の説明は VSCode の表示言語で決まる |
 
 ## IMS/DB（DL/I）
 
@@ -161,7 +164,7 @@ npm run build   # esbuild で dist/extension.js にバンドル（エンジン�
 npx @vscode/vsce package
 ```
 
-生成された `.vsix` は `code --install-extension pli-lang-0.4.1.vsix` で導入できる。
+生成された `.vsix` は `code --install-extension pli-lang-0.5.0.vsix` で導入できる。
 
 ## ライセンス
 

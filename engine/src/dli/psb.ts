@@ -6,6 +6,7 @@
  * 主手続きの引数の並びになる。
  */
 
+import { m } from "../i18n/index.js";
 import {
   DliDefError,
   type DbdDef,
@@ -26,7 +27,7 @@ function checkProcopt(text: string, line: number, file: string): string {
   const opt = text.toUpperCase();
   for (const c of opt) {
     if (!PROCOPT_LETTERS.has(c)) {
-      throw new DliDefError(`PROCOPT=${text} の ${c} は扱えません`, file, line);
+      throw new DliDefError(m`PROCOPT=${text} の ${c} は扱えません`, file, line);
     }
   }
   return opt;
@@ -34,7 +35,7 @@ function checkProcopt(text: string, line: number, file: string): string {
 
 export function parsePsb(text: string, file: string, resolveDbd: DbdResolver): PsbDef {
   const stmts = readMacros(text, file);
-  if (stmts.length === 0) throw new DliDefError("PSB の記述が空です", file, 1);
+  if (stmts.length === 0) throw new DliDefError(m`PSB の記述が空です`, file, 1);
 
   const pcbs: PcbDef[] = [];
   let current: PcbDef | undefined;
@@ -52,13 +53,13 @@ export function parsePsb(text: string, file: string, resolveDbd: DbdResolver): P
           break;
         }
         if (type !== "DB") {
-          throw new DliDefError(`PCB の TYPE=${type} は扱えません（DB / TP）`, file, s.line);
+          throw new DliDefError(m`PCB の TYPE=${type} は扱えません（DB / TP）`, file, s.line);
         }
         const dbdName = requiredName(s, "DBDNAME", file);
         const dbd = resolveDbd(dbdName);
         if (dbd === undefined) {
           throw new DliDefError(
-            `DBD ${dbdName} が読めません（${dbdName}.dbd を置いてください）`,
+            m`DBD ${dbdName} が読めません（${dbdName}.dbd を置いてください）`,
             file,
             s.line,
           );
@@ -73,20 +74,20 @@ export function parsePsb(text: string, file: string, resolveDbd: DbdResolver): P
           senseg: new Map(),
         };
         if (keylen !== undefined && !Number.isInteger(current.keylen)) {
-          throw new DliDefError(`PCB の KEYLEN=${keylen} が数値ではありません`, file, s.line);
+          throw new DliDefError(m`PCB の KEYLEN=${keylen} が数値ではありません`, file, s.line);
         }
         pcbs.push(current);
         break;
       }
       case "SENSEG": {
         if (current === undefined || current.kind !== "db") {
-          throw new DliDefError("SENSEG 文の前に PCB TYPE=DB が必要です", file, s.line);
+          throw new DliDefError(m`SENSEG 文の前に PCB TYPE=DB が必要です`, file, s.line);
         }
         const segName = requiredName(s, "NAME", file);
         const seg = current.dbd!.segments.get(segName);
         if (seg === undefined) {
           throw new DliDefError(
-            `セグメント ${segName} は DBD ${current.dbdName} にありません`,
+            m`セグメント ${segName} は DBD ${current.dbdName} にありません`,
             file,
             s.line,
           );
@@ -97,7 +98,7 @@ export function parsePsb(text: string, file: string, resolveDbd: DbdResolver): P
           const expected = seg.parent ?? "0";
           if (parent !== expected) {
             throw new DliDefError(
-              `SENSEG ${segName} の PARENT=${parent} は DBD の親（${expected}）と違います`,
+              m`SENSEG ${segName} の PARENT=${parent} は DBD の親（${expected}）と違います`,
               file,
               s.line,
             );
@@ -115,7 +116,7 @@ export function parsePsb(text: string, file: string, resolveDbd: DbdResolver): P
       case "SENFLD":
         // 項目単位の感知。項目の隠蔽は再現しないので受け取るだけ
         if (current === undefined || current.kind !== "db") {
-          throw new DliDefError("SENFLD 文の前に PCB TYPE=DB が必要です", file, s.line);
+          throw new DliDefError(m`SENFLD 文の前に PCB TYPE=DB が必要です`, file, s.line);
         }
         break;
       case "PSBGEN":
@@ -126,15 +127,15 @@ export function parsePsb(text: string, file: string, resolveDbd: DbdResolver): P
       case "END":
         break;
       default:
-        throw new DliDefError(`${s.op} は PSB の文ではありません`, file, s.line);
+        throw new DliDefError(m`${s.op} は PSB の文ではありません`, file, s.line);
     }
   }
 
   if (name === undefined) {
-    throw new DliDefError("PSBGEN 文がありません", file, stmts[stmts.length - 1]!.line);
+    throw new DliDefError(m`PSBGEN 文がありません`, file, stmts[stmts.length - 1]!.line);
   }
   if (pcbs.length === 0) {
-    throw new DliDefError("PCB 文がありません", file, stmts[0]!.line);
+    throw new DliDefError(m`PCB 文がありません`, file, stmts[0]!.line);
   }
 
   // 感知セグメントを書かなかった PCB は、DBD の全セグメントに感知する。

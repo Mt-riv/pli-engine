@@ -6,6 +6,15 @@
  */
 
 import {
+  DEFAULT_LOCALE,
+  getLocale,
+  m,
+  normalizeLocale,
+  setLocale,
+  tr,
+  type Locale,
+} from "../src/i18n/index.js";
+import {
   lint,
   MemoryHost,
   runProgram,
@@ -13,6 +22,7 @@ import {
   formatReport,
   isTestSource,
   plainText,
+  snippetBody,
   SNIPPETS,
   VERSION,
   checkMfs,
@@ -23,7 +33,7 @@ import {
   type LintMessage,
   type SessionStep,
 } from "../src/index.js";
-import { SAMPLES } from "./samples.js";
+import { samples } from "./samples.js";
 import { decodePayload, share } from "./share.js";
 import { insertSnippet } from "./insert.js";
 import { parseFiles, psbNames, serializeFiles, splitAux } from "./files.js";
@@ -31,6 +41,69 @@ import { escapeHtml, functionKeys, Terminal } from "./terminal.js";
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
+
+// ---- 言語 ----
+//
+// 既定は日本語。`?lang=en` か頭の選択で英語になり、選んだものは
+// localStorage に覚える。**環境の言語（navigator.language）は見ない。**
+// 見ると同じ URL が人によって違う言葉で出るので、
+// 「この画面はこう見える」と説明できなくなる。
+const LANG_KEY = "pli-engine-lang";
+
+function storedLocale(): Locale | undefined {
+  try {
+    return normalizeLocale(localStorage.getItem(LANG_KEY) ?? undefined);
+  } catch {
+    // プライベートウィンドウなどで読めないときは既定でよい
+    return undefined;
+  }
+}
+
+setLocale(
+  normalizeLocale(new URLSearchParams(location.search).get("lang") ?? undefined) ??
+    storedLocale() ??
+    DEFAULT_LOCALE,
+);
+
+/**
+ * HTML に直書きした文字列を訳す。
+ *
+ * `data-i18n` を付けた要素の中身（`data-i18n-attr` があればその属性）が
+ * 鍵。HTML には日本語を書いたまま残せるので、JavaScript が動かない
+ * ときでも画面が壊れない。
+ */
+function applyStaticText(): void {
+  for (const el of document.querySelectorAll<HTMLElement>("[data-i18n]")) {
+    const attr = el.dataset.i18nAttr;
+    if (attr === undefined) {
+      const text = (el.textContent ?? "").trim();
+      if (text !== "") el.textContent = tr(text);
+      continue;
+    }
+    const value = el.getAttribute(attr);
+    if (value !== null) el.setAttribute(attr, tr(value));
+  }
+  document.documentElement.lang = getLocale();
+}
+
+applyStaticText();
+
+const langSel = $<HTMLSelectElement>("lang");
+langSel.value = getLocale();
+langSel.addEventListener("change", () => {
+  const next = normalizeLocale(langSel.value) ?? DEFAULT_LOCALE;
+  try {
+    localStorage.setItem(LANG_KEY, next);
+  } catch {
+    // 覚えられなくても、下の ?lang= で今回の表示は切り替わる
+  }
+  // 書いている内容を残してから読み直す。画面の文字列だけでなく、
+  // サンプルの注釈も出力の整形も作り直す必要がある
+  save();
+  const url = new URL(location.href);
+  url.searchParams.set("lang", next);
+  location.href = url.toString();
+});
 
 const src = $<HTMLTextAreaElement>("src");
 const gutter = $<HTMLDivElement>("gutter");
@@ -183,8 +256,7 @@ function dliOptions(): { psb?: string } {
   if (names.length === 1) return { psb: names[0]! };
   if (names.length > 1) {
     out.textContent =
-      `PSB が ${names.length} つあります（${names.join(", ")}）。` +
-      "使うものだけを付随ファイルに置いてください。\n\n";
+      m`PSB が ${names.length} つあります（${names.join(", ")}）。使うものだけを付随ファイルに置いてください。\n\n`;
   }
   return {};
 }
@@ -226,12 +298,12 @@ function updateDrawerHint(): void {
   if (!stdinBox.classList.contains("hidden")) {
     const lines = stdinBox.value === "" ? 0 : stdinBox.value.replace(/\n$/, "").split("\n").length;
     drawerHint.textContent =
-      lines === 0 ? "GET LIST / GET EDIT が読む内容" : `${lines} 行`;
+      lines === 0 ? m`GET LIST / GET EDIT が読む内容` : m`${lines} 行`;
   } else {
     drawerHint.textContent =
       names.length === 0
-        ? "「::: 名前」の行で区切って書く"
-        : `${names.length} 個: ${names.join(", ")}`;
+        ? m`「::: 名前」の行で区切って書く`
+        : m`${names.length} 個: ${names.join(", ")}`;
   }
   filesBtn.classList.toggle("on", names.length > 0 || stdinBox.value !== "");
 }
@@ -277,20 +349,20 @@ function runTests(): void {
   });
   syncFilesFromHost(testHost);
 
-  outTitle.textContent = "テストの結果";
-  out.textContent = formatReport(report, "テスト", { failedOutput: true }) + "\n";
+  outTitle.textContent = m`テストの結果`;
+  out.textContent = formatReport(report, m`テスト`, { failedOutput: true }) + "\n";
 
   const bits: string[] = [];
   bits.push(
     report.ok
-      ? '<span class="ok">成功</span>'
-      : '<span class="err">失敗</span>',
+      ? m`<span class="ok">成功</span>`
+      : m`<span class="err">失敗</span>`,
   );
-  bits.push(`テスト ${report.total}`);
-  bits.push(`成功 ${report.passed}`);
-  if (report.failures > 0) bits.push(`<span class="err">失敗 ${report.failures}</span>`);
-  if (report.errors > 0) bits.push(`<span class="err">異常 ${report.errors}</span>`);
-  if (report.skipped > 0) bits.push(`省略 ${report.skipped}`);
+  bits.push(m`テスト ${report.total}`);
+  bits.push(m`成功 ${report.passed}`);
+  if (report.failures > 0) bits.push(m`<span class="err">失敗 ${report.failures}</span>`);
+  if (report.errors > 0) bits.push(m`<span class="err">異常 ${report.errors}</span>`);
+  if (report.skipped > 0) bits.push(m`省略 ${report.skipped}`);
   bits.push(`${report.durationMs}ms`);
   status.innerHTML = bits.join(" / ");
 
@@ -310,7 +382,7 @@ function run(): void {
     runTests();
     return;
   }
-  outTitle.textContent = "出力";
+  outTitle.textContent = m`出力`;
 
   const host = buildHost();
   const dli = dliOptions();
@@ -340,10 +412,10 @@ function run(): void {
   }
 
   const bits: string[] = [];
-  bits.push(r.ok ? '<span class="ok">成功</span>' : '<span class="err">失敗</span>');
-  if (r.truncated) bits.push("出力打ち切り");
+  bits.push(r.ok ? m`<span class="ok">成功</span>` : m`<span class="err">失敗</span>`);
+  if (r.truncated) bits.push(m`出力打ち切り`);
   bits.push(`${r.durationMs}ms`);
-  bits.push(`${r.stdout.split("\n").length - 1}行出力`);
+  bits.push(m`${r.stdout.split("\n").length - 1}行出力`);
   status.innerHTML = bits.join(" / ");
 
   renderGutter();
@@ -375,7 +447,7 @@ function showTerminal(on: boolean): void {
   termPane.classList.toggle("hidden", !on);
   out.classList.toggle("hidden", on);
   termBtn.classList.toggle("on", on);
-  outTitle.textContent = on ? "端末（3270）" : "出力";
+  outTitle.textContent = on ? m`端末（3270）` : m`出力`;
   if (on && termMod.value === "") termMod.value = firstMod();
 }
 
@@ -405,20 +477,19 @@ function startSession(): void {
   const psbs = psbNames(files);
   if (psbs.length !== 1) {
     termScreen.textContent =
-      "入出力 PCB を含む PSB を 1 つだけ、付随ファイルに置いてください" +
-      `（いま ${psbs.length} 個）。`;
+      m`入出力 PCB を含む PSB を 1 つだけ、付随ファイルに置いてください（いま ${psbs.length} 個）。`;
     return;
   }
   let library;
   try {
     library = loadMfs(files);
   } catch (e) {
-    termScreen.textContent = `書式定義が読めません: ${(e as Error).message}`;
+    termScreen.textContent = m`書式定義が読めません: ${(e as Error).message}`;
     return;
   }
   if (library.empty) {
     termScreen.textContent =
-      "書式定義がありません。付随ファイルに「::: 名前.mfs」で FMT と MSG を書いてください。";
+      m`書式定義がありません。付随ファイルに「::: 名前.mfs」で FMT と MSG を書いてください。`;
     return;
   }
   // 止めるほどではないが、たぶん間違いというものを先に出す
@@ -437,7 +508,7 @@ function startSession(): void {
   const step = session.start();
   showStep(step, host);
   if (notes.length > 0) {
-    status.innerHTML = `${status.innerHTML} / <span class="warn">書式の指摘 ${notes.length} 件</span>`;
+    status.innerHTML = m`${status.innerHTML} / <span class="warn">書式の指摘 ${notes.length} 件</span>`;
     out.textContent = notes.join("\n") + "\n" + out.textContent;
   }
 }
@@ -463,14 +534,14 @@ function showStep(step: SessionStep, host: MemoryHost): void {
     renderGutter();
   }
   const bits: string[] = [];
-  bits.push(step.ok ? '<span class="ok">成功</span>' : '<span class="err">失敗</span>');
+  bits.push(step.ok ? m`<span class="ok">成功</span>` : m`<span class="err">失敗</span>`);
   // 通知と書式の名前はプログラムが決めた文字列なので、そのまま innerHTML に
   // 入れると注入になる（MOD 名は ISRT の第 4 引数で与えられる）
-  if (step.notice !== undefined) bits.push(`通知: ${escapeHtml(step.notice)}`);
-  if (step.queued > 0) bits.push(`未出力 ${step.queued} 件`);
-  if (session?.inConversation === true) bits.push("会話中");
+  if (step.notice !== undefined) bits.push(m`通知: ${escapeHtml(step.notice)}`);
+  if (step.queued > 0) bits.push(m`未出力 ${step.queued} 件`);
+  if (session?.inConversation === true) bits.push(m`会話中`);
   if (session?.inputFormat !== undefined) {
-    bits.push(`次の入力 ${escapeHtml(session.inputFormat)}`);
+    bits.push(m`次の入力 ${escapeHtml(session.inputFormat)}`);
   }
   status.innerHTML = bits.join(" / ");
 }
@@ -478,7 +549,7 @@ function showStep(step: SessionStep, host: MemoryHost): void {
 /** 送る。押したキーと、打ち込んだ値を渡す。 */
 function sendKey(aid: Aid, fields: Map<string, string>): void {
   if (session === undefined) {
-    status.textContent = "先に「開始」を押してください";
+    status.textContent = m`先に「開始」を押してください`;
     return;
   }
   const host = buildHost();
@@ -518,7 +589,7 @@ function showDiagnostics(entries: DiagEntry[]): void {
     const li = document.createElement("li");
     if (e.kind === "warning") li.className = "warn";
     if (e.kind === "info") li.className = "info";
-    const where = e.col === undefined ? `${e.line}行` : `${e.line}行${e.col}桁`;
+    const where = e.col === undefined ? m`${e.line}行` : m`${e.line}行${e.col}桁`;
     // 取り込んだ先の誤りは、どのファイルの何行目かを示す
     li.textContent = `${e.file ? `${e.file} ` : ""}${where}: ${e.text}`;
     if (e.rule) {
@@ -545,7 +616,7 @@ function runLint(): void {
   out.textContent = "";
   diags.classList.add("hidden");
   badLines = new Set();
-  outTitle.textContent = "出力";
+  outTitle.textContent = m`出力`;
 
   // 文を1つも実行させないことで解析だけを行う
   const host = buildHost();
@@ -562,13 +633,13 @@ function runLint(): void {
         kind: "error" as const,
       })),
     );
-    status.innerHTML = '<span class="err">構文に誤りがあります</span>';
+    status.innerHTML = m`<span class="err">構文に誤りがあります</span>`;
     return;
   }
 
   const messages: LintMessage[] = lint(src.value, { host });
   if (messages.length === 0) {
-    status.innerHTML = '<span class="ok">指摘はありません</span>';
+    status.innerHTML = m`<span class="ok">指摘はありません</span>`;
     renderGutter();
     return;
   }
@@ -583,8 +654,7 @@ function runLint(): void {
   );
   const n = (k: string) => messages.filter((m) => m.severity === k).length;
   status.innerHTML =
-    `<span class="err">指摘 ${messages.length}</span>` +
-    ` / 誤り ${n("error")} / 警告 ${n("warning")} / 情報 ${n("info")}`;
+    m`<span class="err">指摘 ${messages.length}</span> / 誤り ${n("error")} / 警告 ${n("warning")} / 情報 ${n("info")}`;
 }
 
 
@@ -603,11 +673,14 @@ function jumpTo(line: number): void {
 
 runBtn.addEventListener("click", run);
 lintBtn.addEventListener("click", () => runLint());
-lintBtn.title = "実行せずに検査する";
+lintBtn.title = m`実行せずに検査する`;
 
 // ---- 初期化 ----
 
-for (const [i, s] of SAMPLES.entries()) {
+// 一覧は言語が決まってから 1 度だけ作る（名前とソースの注釈が変わる）
+const SAMPLE_LIST = samples();
+
+for (const [i, s] of SAMPLE_LIST.entries()) {
   const o = document.createElement("option");
   o.value = String(i);
   o.textContent = s.name;
@@ -620,8 +693,8 @@ snippetSel.appendChild(snippetHead);
 for (const [i, sn] of SNIPPETS.entries()) {
   const o = document.createElement("option");
   o.value = String(i);
-  o.textContent = `${sn.name}  (${sn.prefix})`;
-  o.title = sn.description;
+  o.textContent = `${tr(sn.name)}  (${sn.prefix})`;
+  o.title = tr(sn.description);
   snippetSel.appendChild(o);
 }
 snippetSel.addEventListener("change", () => {
@@ -632,7 +705,7 @@ snippetSel.addEventListener("change", () => {
     src.value,
     src.selectionStart,
     src.selectionEnd,
-    plainText(sn.body),
+    plainText(snippetBody(sn)),
   );
   src.value = r.text;
   src.focus();
@@ -643,7 +716,7 @@ snippetSel.addEventListener("change", () => {
 });
 
 sampleSel.addEventListener("change", () => {
-  const s = SAMPLES[Number(sampleSel.value)];
+  const s = SAMPLE_LIST[Number(sampleSel.value)];
   if (s) {
     src.value = s.source;
     // 付随ファイルを持つサンプル（DL/I など）は、それが無いと動かない
@@ -680,7 +753,7 @@ try {
 } catch {
   saved = null;
 }
-src.value = shared?.source ?? saved ?? SAMPLES[0]!.source;
+src.value = shared?.source ?? saved ?? SAMPLE_LIST[0]!.source;
 if (shared !== undefined) {
   // 付随ファイルと標準入力も復元する。無ければ空にする
   // （受け取った側の内容が混ざると、動いているように見えて実は違う）
@@ -699,7 +772,7 @@ if (shared === undefined) {
   // 他人から受け取った URL を開くだけで、無限ループや
   // 記憶域の確保でタブを固められる。中身を見てから押してもらう。
   sharedBar.classList.remove("hidden");
-  status.textContent = "共有されたコードを読み込みました（まだ実行していません）";
+  status.textContent = m`共有されたコードを読み込みました（まだ実行していません）`;
   // ハッシュを消す。残すと、編集して読み込み直したときに
   // 保存した内容ではなく古いハッシュが優先される
   try {

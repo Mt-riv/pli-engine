@@ -13,6 +13,8 @@
  * ブラウザで手書きするとき 10 桁目に揃えるのは苦しいため。
  */
 
+
+import { m } from "./i18n/index.js";
 /**
  * 定義の記述の誤り。**どのファイルの何行目かを必ず持つ。**
  *
@@ -27,7 +29,7 @@ export class DefError extends Error {
     readonly line: number,
     name = "DefError",
   ) {
-    super(`${file} ${line} 行: ${message}`);
+    super(m`${file} ${line} 行: ${message}`);
     this.name = name;
   }
 }
@@ -168,7 +170,7 @@ function joinLines(text: string, file: string): { line: number; text: string }[]
     while (continuing) {
       const cont = raw[++i];
       if (cont === undefined) {
-        throw new DefError("継続の印が付いていますが、続きの行がありません", file, startLine);
+        throw new DefError(m`継続の印が付いていますが、続きの行がありません`, file, startLine);
       }
       body += cont.slice(CONTINUE_RESUME - 1, CONTINUE_COLUMN - 1).trimEnd();
       continuing = cont.length >= CONTINUE_COLUMN && cont[CONTINUE_COLUMN - 1] !== " ";
@@ -200,9 +202,7 @@ export function readMacros(text: string, file: string): MacroStmt[] {
     // **黙って消えて既定（打ち込める項目）になっていた**
     if (operandWord.word.endsWith(",") && body.slice(operandWord.next).trim() !== "") {
       throw new DefError(
-        `オペランドがカンマで終わっていますが、空白を挟んで続きがあります` +
-          `（${body.slice(operandWord.next).trim()}）。` +
-          `カンマの後に空白を入れず続けるか、72 桁目に継続の印を付けてください`,
+        m`オペランドがカンマで終わっていますが、空白を挟んで続きがあります（${body.slice(operandWord.next).trim()}）。カンマの後に空白を入れず続けるか、72 桁目に継続の印を付けてください`,
         file,
         line,
       );
@@ -237,7 +237,7 @@ export function readMacros(text: string, file: string): MacroStmt[] {
 export function required(s: MacroStmt, key: string, file: string): string {
   const v = s.operands.get(key);
   if (v === undefined) {
-    throw new DefError(`${s.op} 文に ${key}= がありません`, file, s.line);
+    throw new DefError(m`${s.op} 文に ${key}= がありません`, file, s.line);
   }
   return v;
 }
@@ -259,8 +259,7 @@ export function requiredName(s: MacroStmt, key: string, file: string): string {
   const name = raw.toUpperCase();
   if (!IMS_NAME.test(name)) {
     throw new DefError(
-      `${s.op} 文の ${key}=${raw} は IMS の名前として使えません` +
-        `（1〜8 桁の英数字と $ # @ だけ）`,
+      m`${s.op} 文の ${key}=${raw} は IMS の名前として使えません（1〜8 桁の英数字と $ # @ だけ）`,
       file,
       s.line,
     );
@@ -275,7 +274,7 @@ export function numberOf(s: MacroStmt, key: string, file: string): number {
   const text = required(s, key, file);
   const n = Number(listOf(text)[0]);
   if (!Number.isInteger(n) || n <= 0) {
-    throw new DefError(`${s.op} 文の ${key}=${text} は正の整数ではありません`, file, s.line);
+    throw new DefError(m`${s.op} 文の ${key}=${text} は正の整数ではありません`, file, s.line);
   }
   return n;
 }

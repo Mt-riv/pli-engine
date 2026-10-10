@@ -14,10 +14,11 @@ import {
   looksLikeTestFile,
   snippetCompletions,
   choosePsb,
+  chooseLocale,
   type EditorDiagnostic,
   type PsbChoice,
 } from "./core.js";
-import { isFragmentFileName, RULES } from "../../engine/src/index.js";
+import { addCatalog, isFragmentFileName, m, RULES, setLocale } from "../../engine/src/index.js";
 import type { FileMode, PliFile, PliHost, RuleSetting } from "../../engine/src/index.js";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -28,6 +29,7 @@ import {
   resolveName,
 } from "../../engine/scripts/safe-path.js";
 import { psbBeside } from "../../engine/scripts/node-host.js";
+import { EXT_EN } from "./i18n.en.js";
 
 /**
  * 扱う言語 ID。
@@ -96,13 +98,13 @@ function validRules(raw: Record<string, RuleSetting>): Record<string, RuleSettin
   }
   if (badIds.length > 0 || badValues.length > 0) {
     const parts: string[] = [];
-    if (badIds.length > 0) parts.push(`知らない規則 id: ${badIds.join(", ")}`);
+    if (badIds.length > 0) parts.push(m`知らない規則 id: ${badIds.join(", ")}`);
     if (badValues.length > 0) {
       parts.push(
-        `値は off / info / warning / error のどれかです: ${badValues.join(", ")}`,
+        m`値は off / info / warning / error のどれかです: ${badValues.join(", ")}`,
       );
     }
-    void vscode.window.showWarningMessage(`設定 pli.lint.rules を無視しました。${parts.join(" / ")}`);
+    void vscode.window.showWarningMessage(m`設定 pli.lint.rules を無視しました。${parts.join(" / ")}`);
   }
   return out;
 }
@@ -202,7 +204,7 @@ function hostFor(doc: vscode.TextDocument, opts: { dryRun?: boolean } = {}): Pli
           if (opts.dryRun === true) return;
           if (!isSafeWriteTarget(path)) {
             // 既存のシンボリックリンクやディレクトリへは書かない
-            throw new Error(`ファイル ${name} へは書き込めません`);
+            throw new Error(m`ファイル ${name} へは書き込めません`);
           }
           writeFileSync(path, contents);
         },
@@ -224,6 +226,15 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(diagnostics, output);
 
   const config = () => vscode.workspace.getConfiguration("pli");
+
+  // 表示に使う言語。設定を変えたらすぐ効くように、設定が変わるたびに見直す
+  // （コマンド名と設定の説明は VSCode の表示言語で決まるので、
+  //  そちらは VSCode の再読み込みが必要）
+  addCatalog("en", EXT_EN);
+  const applyLocale = (): void => {
+    setLocale(chooseLocale(config().get<string>("language", "auto"), vscode.env.language));
+  };
+  applyLocale();
 
   /**
    * 構文と Linter の診断（実行しない分）。
@@ -291,6 +302,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // 設定を変えたら開いている全部を貼り直す（再読み込みを求めない）
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration("pli")) return;
+      applyLocale();
       for (const doc of vscode.workspace.textDocuments) refresh(doc);
     }),
   );
@@ -305,9 +317,8 @@ export function activate(context: vscode.ExtensionContext): void {
       const id = editor?.document.languageId;
       void vscode.window.showWarningMessage(
         id === undefined
-          ? "PL/I のファイルを開いてから実行してください。"
-          : `このファイルは言語「${id}」として開かれています。` +
-              "PL/I として扱うには files.associations で pli を指定してください。",
+          ? m`PL/I のファイルを開いてから実行してください。`
+          : m`このファイルは言語「${id}」として開かれています。PL/I として扱うには files.associations で pli を指定してください。`,
       );
       return undefined;
     }
@@ -319,8 +330,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const raw = config().get<number>(key, fallback);
     if (Number.isInteger(raw) && raw >= 1) return raw;
     void vscode.window.showWarningMessage(
-      `設定 pli.${key} の値 ${String(raw)} は 1 以上の整数ではないので、` +
-        `${fallback} を使います。`,
+      m`設定 pli.${key} の値 ${String(raw)} は 1 以上の整数ではないので、${fallback} を使います。`,
     );
     return fallback;
   };
@@ -374,7 +384,7 @@ export function activate(context: vscode.ExtensionContext): void {
     output.clear();
     // 設定に書いていない PSB を使ったときは、どれを使ったかを言う。
     // 黙って拾うと、同じソースが置き場所で挙動を変える理由が分からない
-    if (psb.fromDir) output.appendLine(`DL/I の PSB: ${psb.name}（ソースの隣から）`);
+    if (psb.fromDir) output.appendLine(m`DL/I の PSB: ${psb.name}（ソースの隣から）`);
     output.appendLine(text);
     output.show(true);
     diagnostics.set(doc.uri, [
@@ -409,7 +419,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!doc) return;
     if (doc.isUntitled) {
       void vscode.window.showWarningMessage(
-        "画面入出力には保存したファイルが要ります（書式定義と台本を同じ場所から読みます）",
+        m`画面入出力には保存したファイルが要ります（書式定義と台本を同じ場所から読みます）`,
       );
       return;
     }
@@ -426,7 +436,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (f.toLowerCase().endsWith(".mfs")) mfs[f] = read(join(dir, f));
     }
     if (Object.keys(mfs).length === 0) {
-      void vscode.window.showWarningMessage(`書式定義（*.mfs）が ${dir} にありません`);
+      void vscode.window.showWarningMessage(m`書式定義（*.mfs）が ${dir} にありません`);
       return;
     }
 
@@ -435,14 +445,14 @@ export function activate(context: vscode.ExtensionContext): void {
       const found = readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".keys"));
       if (found.length === 0) {
         void vscode.window.showWarningMessage(
-          `端末の台本（*.keys）が ${dir} にありません`,
+          m`端末の台本（*.keys）が ${dir} にありません`,
         );
         return;
       }
       const pick =
         found.length === 1
           ? found[0]
-          : await vscode.window.showQuickPick(found, { title: "PL/I: 端末の台本" });
+          : await vscode.window.showQuickPick(found, { title: m`PL/I: 端末の台本` });
       if (pick === undefined) return;
       keysPath = join(dir, pick);
     }
@@ -503,8 +513,8 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("pli.runScreen", () => runScreen()),
     vscode.commands.registerCommand("pli.runWithArgs", async () => {
       const input = await vscode.window.showInputBox({
-        title: "PL/I: 引数",
-        prompt: "主手続きに渡す引数を空白区切りで入力します",
+        title: m`PL/I: 引数`,
+        prompt: m`主手続きに渡す引数を空白区切りで入力します`,
         placeHolder: "123",
       });
       if (input === undefined) return;

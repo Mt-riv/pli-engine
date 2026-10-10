@@ -15,6 +15,7 @@
  *   do i = 1 to 9;                  -> DO 反復文
  */
 
+import { m, msg, tr } from "./i18n/index.js";
 import type {
   Bound,
   DataAttr,
@@ -89,23 +90,23 @@ const UNARY_OPS = new Set(["+", "-", "¬"]);
  * README が未実装として挙げている機能は、必ずここにも載せる。
  */
 const UNIMPLEMENTED_ATTRS: Readonly<Record<string, string>> = {
-  KEYED: "索引ファイル",
-  REGIONAL: "直接編成ファイル",
-  AREA: "AREA 記憶域",
-  OFFSET: "AREA 記憶域",
-  BUILTIN: "BUILTIN 宣言",
-  LABEL: "LABEL 変数",
-  REFER: "自己定義構造体",
-  UNION: "記憶域の重ね合わせ",
-  LIKE: "構造体の複製",
-  EVENT: "多重処理",
-  TASK: "多重処理",
-  COMPLEX: "複素数",
-  CPLX: "複素数",
-  ALIGNED: "記憶域の境界合わせ。この処理系では意味を持たない",
-  UNALIGNED: "記憶域の境界合わせ。この処理系では意味を持たない",
-  CONTROLLED: "CONTROLLED 記憶域",
-  CTL: "CONTROLLED 記憶域",
+  KEYED: msg("索引ファイル"),
+  REGIONAL: msg("直接編成ファイル"),
+  AREA: msg("AREA 記憶域"),
+  OFFSET: msg("AREA 記憶域"),
+  BUILTIN: msg("BUILTIN 宣言"),
+  LABEL: msg("LABEL 変数"),
+  REFER: msg("自己定義構造体"),
+  UNION: msg("記憶域の重ね合わせ"),
+  LIKE: msg("構造体の複製"),
+  EVENT: msg("多重処理"),
+  TASK: msg("多重処理"),
+  COMPLEX: msg("複素数"),
+  CPLX: msg("複素数"),
+  ALIGNED: msg("記憶域の境界合わせ。この処理系では意味を持たない"),
+  UNALIGNED: msg("記憶域の境界合わせ。この処理系では意味を持たない"),
+  CONTROLLED: msg("CONTROLLED 記憶域"),
+  CTL: msg("CONTROLLED 記憶域"),
 };
 
 /**
@@ -115,16 +116,16 @@ const UNIMPLEMENTED_ATTRS: Readonly<Record<string, string>> = {
  * 無いと「解釈できない文です」になり、やはり綴り間違いと区別が付かない。
  */
 const UNIMPLEMENTED_STATEMENTS: Readonly<Record<string, string>> = {
-  WAIT: "多重処理",
-  DISPLAY: "PUT を使ってください",
-  DELAY: "時間待ち",
-  REVERT: "ON 単位の解除は ON ... SYSTEM; を使ってください",
-  LOCATE: "LOCATE 割り当て",
-  UNLOCK: "レコードのロック",
-  DELETE: "索引ファイルが必要",
-  EXIT: "STOP を使ってください",
-  DEFAULT: "DEFAULT 文",
-  DFT: "DEFAULT 文",
+  WAIT: msg("多重処理"),
+  DISPLAY: msg("PUT を使ってください"),
+  DELAY: msg("時間待ち"),
+  REVERT: msg("ON 単位の解除は ON ... SYSTEM; を使ってください"),
+  LOCATE: msg("LOCATE 割り当て"),
+  UNLOCK: msg("レコードのロック"),
+  DELETE: msg("索引ファイルが必要"),
+  EXIT: msg("STOP を使ってください"),
+  DEFAULT: msg("DEFAULT 文"),
+  DFT: msg("DEFAULT 文"),
 };
 
 class Parser {
@@ -179,7 +180,7 @@ class Parser {
     if (!this.at(kind)) {
       const t = this.peek();
       throw new ParseError(
-        `${what} が必要です（${t.kind === "eof" ? "入力の終わり" : JSON.stringify(t.text)} が現れました）`,
+        m`${what} が必要です（${t.kind === "eof" ? m`入力の終わり` : JSON.stringify(t.text)} が現れました）`,
         t.line,
 
         t.col,
@@ -194,7 +195,7 @@ class Parser {
     if (!this.atWord(word)) {
       const t = this.peek();
       throw new ParseError(
-        `${word} が必要です（${t.kind === "eof" ? "入力の終わり" : JSON.stringify(t.text)} が現れました）`,
+        m`${word} が必要です（${t.kind === "eof" ? m`入力の終わり` : JSON.stringify(t.text)} が現れました）`,
         t.line,
 
         t.col,
@@ -321,7 +322,7 @@ class Parser {
         case "ITERATE": {
           const kw = this.next();
           const label = this.at("word") ? this.next().text : undefined;
-          this.expect("semi", "セミコロン");
+          this.expect("semi", m`セミコロン`);
           const kind = kw.upper === "LEAVE" ? ("leave" as const) : ("iterate" as const);
           return label === undefined
             ? { kind, line: kw.line }
@@ -339,9 +340,9 @@ class Parser {
           return this.parseOn();
         case "SIGNAL": {
           const kw = this.next();
-          const cond = this.expect("word", "条件名");
+          const cond = this.expect("word", m`条件名`);
           const condFile = this.parseConditionFile();
-          this.expect("semi", "セミコロン");
+          this.expect("semi", m`セミコロン`);
           return condFile === undefined
             ? { kind: "signal", condition: cond.upper, line: kw.line }
             : { kind: "signal", condition: cond.upper, conditionFile: condFile, line: kw.line };
@@ -361,7 +362,7 @@ class Parser {
       const why = UNIMPLEMENTED_STATEMENTS[t.upper];
       if (why !== undefined) {
         throw new ParseError(
-          `${t.text.toUpperCase()} は未実装です（${why}）`,
+          m`${t.text.toUpperCase()} は未実装です（${tr(why)}）`,
           t.line,
           t.col,
           t.file,
@@ -370,7 +371,7 @@ class Parser {
     }
 
     throw new ParseError(
-      `解釈できない文です（${JSON.stringify(t.text)}）`,
+      m`解釈できない文です（${JSON.stringify(t.text)}）`,
       t.line,
 
       t.col,
@@ -430,17 +431,17 @@ class Parser {
     const target = this.parseRef();
     const op = this.expect("op", "=");
     if ((op.value ?? op.text) !== "=") {
-      throw new ParseError("= が必要です", op.line, op.col, op.file);
+      throw new ParseError(m`= が必要です`, op.line, op.col, op.file);
     }
     const value = this.parseExpr();
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
     return { kind: "assign", target, value, line };
   }
 
   private parseProcedure(label: string | undefined, line: number): Stmt {
     if (label === undefined) {
       const t = this.peek();
-      throw new ParseError("手続きには名前（ラベル）が必要です", t.line, t.col, t.file);
+      throw new ParseError(m`手続きには名前（ラベル）が必要です`, t.line, t.col, t.file);
     }
     this.next(); // PROCEDURE / PROC
 
@@ -448,10 +449,10 @@ class Parser {
     if (this.eat("lparen")) {
       if (!this.at("rparen")) {
         do {
-          params.push(this.expect("word", "引数名").text);
+          params.push(this.expect("word", m`引数名`).text);
         } while (this.eat("comma"));
       }
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
     }
 
     let isMain = false;
@@ -461,7 +462,7 @@ class Parser {
     for (;;) {
       if (this.atWord("OPTIONS")) {
         this.next();
-        this.expect("lparen", "開き括弧");
+        this.expect("lparen", m`開き括弧`);
         // PL/I の OPTIONS は空白区切り（カンマも許す）。
         // 例: options(main reentrant) / options(main, reentrant)
         while (this.at("word")) {
@@ -469,14 +470,14 @@ class Parser {
           if (o.upper === "MAIN") isMain = true;
           this.eat("comma");
         }
-        this.expect("rparen", "閉じ括弧");
+        this.expect("rparen", m`閉じ括弧`);
         continue;
       }
       if (this.atWord("RETURNS")) {
         this.next();
-        this.expect("lparen", "開き括弧");
+        this.expect("lparen", m`開き括弧`);
         returns = this.parseAttributes(() => this.at("rparen"));
-        this.expect("rparen", "閉じ括弧");
+        this.expect("rparen", m`閉じ括弧`);
         continue;
       }
       if (this.eatWord("RECURSIVE")) {
@@ -485,7 +486,7 @@ class Parser {
       }
       break;
     }
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
 
     const body = this.parseBlockUntilEnd(label);
     const stmt: Stmt = {
@@ -512,7 +513,7 @@ class Parser {
     for (;;) {
       if (this.at("eof")) {
         const t = this.peek();
-        throw new ParseError("END が必要です", t.line, t.col, t.file);
+        throw new ParseError(m`END が必要です`, t.line, t.col, t.file);
       }
       // END は文キーワードだが、'END = 1' のような代入でないことを確認する
       if (this.atWord("END") && !this.looksLikeAssignment()) {
@@ -521,7 +522,7 @@ class Parser {
           const endName = this.next();
           if (name !== undefined && endName.upper !== name.toUpperCase()) {
             throw new ParseError(
-              `END の名前 ${JSON.stringify(endName.text)} が開始の ${JSON.stringify(name)} と一致しません`,
+              m`END の名前 ${JSON.stringify(endName.text)} が開始の ${JSON.stringify(name)} と一致しません`,
               endName.line,
 
               endName.col,
@@ -530,7 +531,7 @@ class Parser {
             );
           }
         }
-        this.expect("semi", "セミコロン");
+        this.expect("semi", m`セミコロン`);
         return body;
       }
       this.parseInto(body);
@@ -547,7 +548,7 @@ class Parser {
       where.push({ line: t.line, col: t.col, ...(t.file === undefined ? {} : { file: t.file }) });
       items.push(this.parseDeclItem());
     } while (this.eat("comma"));
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
     this.rejectGroupDimension(items, where);
     return { kind: "declare", items, line };
   }
@@ -573,8 +574,7 @@ class Parser {
       if (next?.level === undefined || next.level <= item.level) continue;
       const w = where[i] ?? { line: 0, col: 0 };
       throw new ParseError(
-        `構造体そのものに付けた次元は未実装です（構造体の配列）。` +
-          `${item.names[0] ?? ""} の次元を葉の項目へ移してください`,
+        m`構造体そのものに付けた次元は未実装です（構造体の配列）。${item.names[0] ?? ""} の次元を葉の項目へ移してください`,
         w.line,
         w.col,
         w.file,
@@ -596,11 +596,11 @@ class Parser {
     const names: string[] = [];
     if (this.eat("lparen")) {
       do {
-        names.push(this.expect("word", "変数名").text);
+        names.push(this.expect("word", m`変数名`).text);
       } while (this.eat("comma"));
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
     } else {
-      names.push(this.expect("word", "変数名").text);
+      names.push(this.expect("word", m`変数名`).text);
     }
 
     // 名前の直後の括弧は配列の次元。属性語の後の括弧（精度・長さ）とは別物。
@@ -613,7 +613,7 @@ class Parser {
       do {
         dims.push(this.parseBound());
       } while (this.eat("comma"));
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
     }
 
     let init: Expr[] | undefined;
@@ -655,8 +655,7 @@ class Parser {
     const t = this.peek();
     if (t.kind === "word") {
       throw new ParseError(
-        `可変の配列境界（${t.text} のような式で大きさを決める形）は未実装です` +
-          "（定数で書いてください）",
+        m`可変の配列境界（${t.text} のような式で大きさを決める形）は未実装です（定数で書いてください）`,
         t.line,
         t.col,
         t.file,
@@ -677,12 +676,12 @@ class Parser {
     } else if (this.atOp("+")) {
       this.next();
     }
-    return sign * Number(this.expect("number", "次元の大きさ").text);
+    return sign * Number(this.expect("number", m`次元の大きさ`).text);
   }
 
   /** 対応する閉じ括弧まで読み飛ばす。中身に意味を持たせない指定に使う。 */
   private skipBalancedParens(): void {
-    this.expect("lparen", "開き括弧");
+    this.expect("lparen", m`開き括弧`);
     let depth = 1;
     while (depth > 0 && !this.at("eof")) {
       const t = this.next();
@@ -740,20 +739,20 @@ class Parser {
           case "ENVIRONMENT": {
             // ENVIRONMENT(F RECSIZE(80)) / (V RECSIZE(120))
             kind = "file";
-            this.expect("lparen", "開き括弧");
+            this.expect("lparen", m`開き括弧`);
             while (!this.at("rparen") && !this.at("eof")) {
               if (this.at("word")) {
                 const e = this.next();
                 if (e.upper === "RECSIZE" || e.upper === "BLKSIZE") {
-                  this.expect("lparen", "開き括弧");
-                  const n = this.expect("number", "数値");
-                  this.expect("rparen", "閉じ括弧");
+                  this.expect("lparen", m`開き括弧`);
+                  const n = this.expect("number", m`数値`);
+                  this.expect("rparen", m`閉じ括弧`);
                   if (e.upper === "RECSIZE") {
                     const size = Number(n.text);
                     // 0 以下だと `splitRecord` が 1 歩も進まず無限ループになる
                     if (!Number.isInteger(size) || size < 1) {
                       throw new ParseError(
-                        `RECSIZE は 1 以上の整数でなければなりません（${n.text}）`,
+                        m`RECSIZE は 1 以上の整数でなければなりません（${n.text}）`,
                         n.line,
                         n.col,
                         n.file,
@@ -770,7 +769,7 @@ class Parser {
               }
               this.next();
             }
-            this.expect("rparen", "閉じ括弧");
+            this.expect("rparen", m`閉じ括弧`);
             break;
           }
           // 外部手続きの宣言。引数の記述は持たない（1ファイル完結のため）
@@ -785,7 +784,7 @@ class Parser {
             if (this.at("lparen")) {
               this.next();
               const ptr = this.parseRef();
-              this.expect("rparen", "閉じ括弧");
+              this.expect("rparen", m`閉じ括弧`);
               onBased?.({ pointer: ptr });
             } else {
               onBased?.({});
@@ -794,7 +793,7 @@ class Parser {
           }
           case "PIC":
           case "PICTURE": {
-            const t = this.expect("string", "PICTURE の指定");
+            const t = this.expect("string", m`PICTURE の指定`);
             kind = "picture";
             picture = t.value ?? t.text;
             break;
@@ -805,9 +804,9 @@ class Parser {
             break;
           }
           case "RETURNS": {
-            this.expect("lparen", "開き括弧");
+            this.expect("lparen", m`開き括弧`);
             returns = this.parseAttributes(() => this.at("rparen"));
-            this.expect("rparen", "閉じ括弧");
+            this.expect("rparen", m`閉じ括弧`);
             break;
           }
           case "OPTIONS": {
@@ -823,15 +822,14 @@ class Parser {
           case "VARYING": varying = true; break;
           case "INIT":
           case "INITIAL": {
-            const lp = this.expect("lparen", "開き括弧");
+            const lp = this.expect("lparen", m`開き括弧`);
             const values: Expr[] = [];
             do {
               // 反復係数 `init((5) 0)` は未実装。素の構文誤りにすると
               // 綴り間違いと区別が付かないので名指しで断る
               if (this.at("lparen")) {
                 throw new ParseError(
-                  "INITIAL の繰り返し係数（init((5) 0) の形）は未実装です" +
-                    "（値を並べて書いてください）",
+                  m`INITIAL の繰り返し係数（init((5) 0) の形）は未実装です（値を並べて書いてください）`,
                   lp.line,
                   lp.col,
                   lp.file,
@@ -839,16 +837,16 @@ class Parser {
               }
               values.push(this.parseExpr());
             } while (this.eat("comma"));
-            this.expect("rparen", "閉じ括弧");
+            this.expect("rparen", m`閉じ括弧`);
             onInit?.(values);
             break;
           }
           case "DEF":
           case "DEFINED": {
             // DEFINED の基底参照。添字に iSUB を含められる。
-            this.expect("lparen", "開き括弧");
+            this.expect("lparen", m`開き括弧`);
             const base = this.parseRefWithISub();
-            this.expect("rparen", "閉じ括弧");
+            this.expect("rparen", m`閉じ括弧`);
             onDefined?.(base);
             break;
           }
@@ -870,7 +868,7 @@ class Parser {
             const phase = UNIMPLEMENTED_ATTRS[w.upper];
             if (phase !== undefined) {
               throw new ParseError(
-                `${w.text.toUpperCase()} は未実装です（${phase}）`,
+                m`${w.text.toUpperCase()} は未実装です（${tr(phase)}）`,
                 w.line,
 
                 w.col,
@@ -879,7 +877,7 @@ class Parser {
               );
             }
             throw new ParseError(
-              `属性として解釈できません: ${JSON.stringify(w.text)}`,
+              m`属性として解釈できません: ${JSON.stringify(w.text)}`,
               w.line,
 
               w.col,
@@ -894,15 +892,15 @@ class Parser {
       if (this.eat("lparen")) {
         nums = [];
         do {
-          const n = this.expect("number", "数値");
+          const n = this.expect("number", m`数値`);
           nums.push(Number(n.text));
         } while (this.eat("comma"));
-        this.expect("rparen", "閉じ括弧");
+        this.expect("rparen", m`閉じ括弧`);
         continue;
       }
       const t = this.peek();
       throw new ParseError(
-        `属性として解釈できません: ${JSON.stringify(t.text)}`,
+        m`属性として解釈できません: ${JSON.stringify(t.text)}`,
         t.line,
 
         t.col,
@@ -963,14 +961,14 @@ class Parser {
     while (!this.at("semi")) {
       if (this.at("eof")) {
         const t = this.peek();
-        throw new ParseError("セミコロン が必要です", t.line, t.col, t.file);
+        throw new ParseError(m`セミコロン が必要です`, t.line, t.col, t.file);
       }
-      const w = this.expect("word", "PUT のオプション");
+      const w = this.expect("word", m`PUT のオプション`);
       switch (w.upper) {
         case "SKIP": {
           if (this.eat("lparen")) {
             const count = this.parseExpr();
-            this.expect("rparen", "閉じ括弧");
+            this.expect("rparen", m`閉じ括弧`);
             options.push({ kind: "skip", count });
           } else {
             options.push({ kind: "skip" });
@@ -981,16 +979,16 @@ class Parser {
           options.push({ kind: "page" });
           break;
         case "LINE": {
-          this.expect("lparen", "開き括弧");
+          this.expect("lparen", m`開き括弧`);
           const at = this.parseExpr();
-          this.expect("rparen", "閉じ括弧");
+          this.expect("rparen", m`閉じ括弧`);
           options.push({ kind: "line", at });
           break;
         }
         case "FILE": {
-          this.expect("lparen", "開き括弧");
-          file = this.expect("word", "ファイル名").text;
-          this.expect("rparen", "閉じ括弧");
+          this.expect("lparen", m`開き括弧`);
+          file = this.expect("word", m`ファイル名`).text;
+          this.expect("rparen", m`閉じ括弧`);
           break;
         }
         case "LIST": {
@@ -999,15 +997,15 @@ class Parser {
         }
         case "EDIT": {
           const items = this.parseDataList();
-          this.expect("lparen", "開き括弧（書式リスト）");
+          this.expect("lparen", m`開き括弧（書式リスト）`);
           const format = this.parseFormatList();
-          this.expect("rparen", "閉じ括弧（書式リスト）");
+          this.expect("rparen", m`閉じ括弧（書式リスト）`);
           options.push({ kind: "edit", items, format });
           break;
         }
         default:
           throw new ParseError(
-            `未対応の PUT オプションです: ${JSON.stringify(w.text)}`,
+            m`未対応の PUT オプションです: ${JSON.stringify(w.text)}`,
             w.line,
 
             w.col,
@@ -1016,7 +1014,7 @@ class Parser {
           );
       }
     }
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
     return file === undefined
       ? { kind: "put", options, line }
       : { kind: "put", options, file, line };
@@ -1024,14 +1022,14 @@ class Parser {
 
   /** 括弧で囲まれた式のリスト（データリスト）。 */
   private parseDataList(): Expr[] {
-    this.expect("lparen", "開き括弧");
+    this.expect("lparen", m`開き括弧`);
     const items: Expr[] = [];
     if (!this.at("rparen")) {
       do {
         items.push(this.parseExpr());
       } while (this.eat("comma"));
     }
-    this.expect("rparen", "閉じ括弧");
+    this.expect("rparen", m`閉じ括弧`);
     return items;
   }
 
@@ -1071,7 +1069,7 @@ class Parser {
             ? (() => {
                 this.next();
                 const inner = this.parseFormatList();
-                this.expect("rparen", "閉じ括弧");
+                this.expect("rparen", m`閉じ括弧`);
                 return inner;
               })()
             : [this.parseFormatItem()];
@@ -1082,11 +1080,11 @@ class Parser {
       this.pos = save;
       this.next();
       const inner = this.parseFormatList();
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
       return { kind: "repeat", count: { kind: "num", text: "1" }, items: inner };
     }
 
-    const w = this.expect("word", "書式項目");
+    const w = this.expect("word", m`書式項目`);
     const nums = (): Expr[] => {
       if (!this.at("lparen")) return [];
       this.next();
@@ -1094,7 +1092,7 @@ class Parser {
       do {
         list.push(this.parseExpr());
       } while (this.eat("comma"));
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
       return list;
     };
 
@@ -1111,7 +1109,7 @@ class Parser {
       case "E": {
         const n = nums();
         if (n[0] === undefined) {
-          throw new ParseError(`${w.upper} には幅が必要です`, w.line, w.col, w.file);
+          throw new ParseError(m`${w.upper} には幅が必要です`, w.line, w.col, w.file);
         }
         const kind = w.upper === "F" ? ("f" as const) : ("e" as const);
         return n[1] === undefined
@@ -1121,7 +1119,7 @@ class Parser {
       case "X": {
         const n = nums();
         if (n[0] === undefined) {
-          throw new ParseError("X には幅が必要です", w.line, w.col, w.file);
+          throw new ParseError(m`X には幅が必要です`, w.line, w.col, w.file);
         }
         return { kind: "x", width: n[0] };
       }
@@ -1129,7 +1127,7 @@ class Parser {
       case "COLUMN": {
         const n = nums();
         if (n[0] === undefined) {
-          throw new ParseError("COLUMN には位置が必要です", w.line, w.col, w.file);
+          throw new ParseError(m`COLUMN には位置が必要です`, w.line, w.col, w.file);
         }
         return { kind: "column", at: n[0] };
       }
@@ -1141,7 +1139,7 @@ class Parser {
         return { kind: "fpage" };
       default:
         throw new ParseError(
-          `未対応の書式項目です: ${JSON.stringify(w.text)}`,
+          m`未対応の書式項目です: ${JSON.stringify(w.text)}`,
           w.line,
 
           w.col,
@@ -1157,13 +1155,13 @@ class Parser {
     // GET STRING(s) ... / GET FILE(f) ... / GET ...（SYSIN から）
     let source: IoTarget = { kind: "file", name: "SYSIN" };
     if (this.eatWord("STRING")) {
-      this.expect("lparen", "開き括弧");
+      this.expect("lparen", m`開き括弧`);
       source = { kind: "string", expr: this.parseExpr() };
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
     } else if (this.eatWord("FILE")) {
-      this.expect("lparen", "開き括弧");
-      source = { kind: "file", name: this.expect("word", "ファイル名").text };
-      this.expect("rparen", "閉じ括弧");
+      this.expect("lparen", m`開き括弧`);
+      source = { kind: "file", name: this.expect("word", m`ファイル名`).text };
+      this.expect("rparen", m`閉じ括弧`);
     }
 
     // SKIP は読み始める前に行を送る
@@ -1172,7 +1170,7 @@ class Parser {
       this.next();
       if (this.eat("lparen")) {
         skip = this.parseExpr();
-        this.expect("rparen", "閉じ括弧");
+        this.expect("rparen", m`閉じ括弧`);
       } else {
         skip = null; // 回数指定なし = 1 行
       }
@@ -1181,25 +1179,25 @@ class Parser {
     let format: FormatItem[] | undefined;
     const targets: Ref[] = [];
     if (this.eatWord("EDIT")) {
-      this.expect("lparen", "開き括弧");
+      this.expect("lparen", m`開き括弧`);
       do {
         targets.push(this.parseRef());
       } while (this.eat("comma"));
-      this.expect("rparen", "閉じ括弧");
-      this.expect("lparen", "開き括弧（書式リスト）");
+      this.expect("rparen", m`閉じ括弧`);
+      this.expect("lparen", m`開き括弧（書式リスト）`);
       format = this.parseFormatList();
-      this.expect("rparen", "閉じ括弧（書式リスト）");
+      this.expect("rparen", m`閉じ括弧（書式リスト）`);
     } else if (this.eatWord("LIST")) {
-      this.expect("lparen", "開き括弧");
+      this.expect("lparen", m`開き括弧`);
       do {
         targets.push(this.parseRef());
       } while (this.eat("comma"));
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
     } else if (skip === undefined) {
       const t = this.peek();
-      throw new ParseError("EDIT または LIST が必要です", t.line, t.col, t.file);
+      throw new ParseError(m`EDIT または LIST が必要です`, t.line, t.col, t.file);
     }
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
     const stmt = { kind: "get" as const, source, targets, line };
     return {
       ...stmt,
@@ -1239,10 +1237,10 @@ class Parser {
     // DO WHILE(...) / DO UNTIL(...)
     if (this.atWord("WHILE", "UNTIL")) {
       const which = this.next().upper;
-      this.expect("lparen", "開き括弧");
+      this.expect("lparen", m`開き括弧`);
       const cond = this.parseExpr();
-      this.expect("rparen", "閉じ括弧");
-      this.expect("semi", "セミコロン");
+      this.expect("rparen", m`閉じ括弧`);
+      this.expect("semi", m`セミコロン`);
       const body = this.parseBlockUntilEnd();
       return which === "WHILE"
         ? { kind: "doWhile", cond, body, ...labels, line }
@@ -1251,10 +1249,10 @@ class Parser {
 
     // DO var = <指定>[, <指定>...];
     // 指定は `from TO to [BY by]` または単一値。
-    const varName = this.expect("word", "制御変数").text;
+    const varName = this.expect("word", m`制御変数`).text;
     const eq = this.expect("op", "=");
     if ((eq.value ?? eq.text) !== "=") {
-      throw new ParseError("= が必要です", eq.line, eq.col, eq.file);
+      throw new ParseError(m`= が必要です`, eq.line, eq.col, eq.file);
     }
     const specs: DoSpec[] = [];
     do {
@@ -1278,7 +1276,7 @@ class Parser {
         ...(by !== undefined ? { by } : {}),
       });
     } while (this.eat("comma"));
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
     const body = this.parseBlockUntilEnd();
     return { kind: "doIter", varName, specs, body, ...labels, line };
   }
@@ -1289,31 +1287,31 @@ class Parser {
     let subject: Expr | undefined;
     if (this.eat("lparen")) {
       subject = this.parseExpr();
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
     }
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
 
     const whens: WhenClause[] = [];
     let otherwise: Stmt | undefined;
     for (;;) {
       if (this.at("eof")) {
         const t = this.peek();
-        throw new ParseError("SELECT に END が必要です", t.line, t.col, t.file);
+        throw new ParseError(m`SELECT に END が必要です`, t.line, t.col, t.file);
       }
       if (this.atWord("END") && !this.looksLikeAssignment()) {
         this.next();
         if (this.at("word")) this.next();
-        this.expect("semi", "セミコロン");
+        this.expect("semi", m`セミコロン`);
         break;
       }
       if (this.atWord("WHEN") && !this.looksLikeAssignment()) {
         this.next();
-        this.expect("lparen", "開き括弧");
+        this.expect("lparen", m`開き括弧`);
         const values: Expr[] = [];
         do {
           values.push(this.parseExpr());
         } while (this.eat("comma"));
-        this.expect("rparen", "閉じ括弧");
+        this.expect("rparen", m`閉じ括弧`);
         whens.push({ values, body: this.parseStatement() });
         continue;
       }
@@ -1324,7 +1322,7 @@ class Parser {
       }
       const t = this.peek();
       throw new ParseError(
-        `SELECT の中には WHEN / OTHERWISE / END のみ置けます（${JSON.stringify(t.text)}）`,
+        m`SELECT の中には WHEN / OTHERWISE / END のみ置けます（${JSON.stringify(t.text)}）`,
         t.line,
 
         t.col,
@@ -1342,21 +1340,21 @@ class Parser {
 
   private parseBegin(): Stmt {
     const line = this.next().line; // BEGIN
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
     return { kind: "beginBlock", body: this.parseBlockUntilEnd(), line };
   }
 
   private parseGoto(): Stmt {
     const kw = this.next(); // GOTO / GO
     if (kw.upper === "GO") this.expectWord("TO");
-    const label = this.expect("word", "飛び先のラベル").text;
-    this.expect("semi", "セミコロン");
+    const label = this.expect("word", m`飛び先のラベル`).text;
+    this.expect("semi", m`セミコロン`);
     return { kind: "goto", label, line: kw.line };
   }
 
   private parseOn(): Stmt {
     const line = this.next().line; // ON
-    const cond = this.expect("word", "条件名");
+    const cond = this.expect("word", m`条件名`);
     // ENDFILE(SYSIN) のようにファイルを取る条件
     const conditionFile = this.parseConditionFile();
     // SNAP は報告の指定なので読み飛ばす。
@@ -1367,7 +1365,7 @@ class Parser {
       this.next();
     }
     if (system) {
-      this.expect("semi", "セミコロン");
+      this.expect("semi", m`セミコロン`);
       return conditionFile === undefined
         ? { kind: "on", condition: cond.upper, line }
         : { kind: "on", condition: cond.upper, conditionFile, line };
@@ -1382,8 +1380,8 @@ class Parser {
   private parseConditionFile(): string | undefined {
     if (!this.at("lparen")) return undefined;
     this.next();
-    const name = this.expect("word", "ファイル名").text;
-    this.expect("rparen", "閉じ括弧");
+    const name = this.expect("word", m`ファイル名`).text;
+    this.expect("rparen", m`閉じ括弧`);
     return name;
   }
 
@@ -1399,11 +1397,11 @@ class Parser {
     do {
       if (!this.eatWord("FILE")) {
         const t = this.peek();
-        throw new ParseError("OPEN には FILE(名前) が必要です", t.line, t.col, t.file);
+        throw new ParseError(m`OPEN には FILE(名前) が必要です`, t.line, t.col, t.file);
       }
-      this.expect("lparen", "開き括弧");
-      const name = this.expect("word", "ファイル名").text;
-      this.expect("rparen", "閉じ括弧");
+      this.expect("lparen", m`開き括弧`);
+      const name = this.expect("word", m`ファイル名`).text;
+      this.expect("rparen", m`閉じ括弧`);
 
       const attrs: OpenAttrs = {};
       while (this.at("word") && !this.atWord("FILE")) {
@@ -1416,26 +1414,26 @@ class Parser {
           case "STREAM": attrs.record = false; break;
           case "RECORD": attrs.record = true; break;
           case "LINESIZE": {
-            this.expect("lparen", "開き括弧");
+            this.expect("lparen", m`開き括弧`);
             attrs.lineSize = this.parseExpr();
-            this.expect("rparen", "閉じ括弧");
+            this.expect("rparen", m`閉じ括弧`);
             break;
           }
           case "PAGESIZE": {
-            this.expect("lparen", "開き括弧");
+            this.expect("lparen", m`開き括弧`);
             attrs.pageSize = this.parseExpr();
-            this.expect("rparen", "閉じ括弧");
+            this.expect("rparen", m`閉じ括弧`);
             break;
           }
           case "TITLE": {
-            this.expect("lparen", "開き括弧");
+            this.expect("lparen", m`開き括弧`);
             attrs.title = this.parseExpr();
-            this.expect("rparen", "閉じ括弧");
+            this.expect("rparen", m`閉じ括弧`);
             break;
           }
           default:
             throw new ParseError(
-              `OPEN の属性として解釈できません: ${JSON.stringify(w.text)}`,
+              m`OPEN の属性として解釈できません: ${JSON.stringify(w.text)}`,
               w.line,
               w.col,
               w.file,
@@ -1444,7 +1442,7 @@ class Parser {
       }
       files.push({ name, attrs });
     } while (this.eat("comma"));
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
     return { kind: "open", files, line };
   }
 
@@ -1454,19 +1452,19 @@ class Parser {
     do {
       if (!this.eatWord("FILE")) {
         const t = this.peek();
-        throw new ParseError("CLOSE には FILE(名前) が必要です", t.line, t.col, t.file);
+        throw new ParseError(m`CLOSE には FILE(名前) が必要です`, t.line, t.col, t.file);
       }
-      this.expect("lparen", "開き括弧");
-      files.push(this.expect("word", "ファイル名").text);
-      this.expect("rparen", "閉じ括弧");
+      this.expect("lparen", m`開き括弧`);
+      files.push(this.expect("word", m`ファイル名`).text);
+      this.expect("rparen", m`閉じ括弧`);
     } while (this.eat("comma"));
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
     return { kind: "close", files, line };
   }
 
   private parseCall(): Stmt {
     const line = this.next().line; // CALL
-    const name = this.expect("word", "手続き名").text;
+    const name = this.expect("word", m`手続き名`).text;
     const args: Expr[] = [];
     if (this.eat("lparen")) {
       if (!this.at("rparen")) {
@@ -1474,9 +1472,9 @@ class Parser {
           args.push(this.parseExpr());
         } while (this.eat("comma"));
       }
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
     }
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
     return { kind: "call", name, args, line };
   }
 
@@ -1485,9 +1483,9 @@ class Parser {
     let value: Expr | undefined;
     if (this.eat("lparen")) {
       value = this.parseExpr();
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
     }
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
     const stmt: Stmt = { kind: "return", line };
     if (value !== undefined) {
       return { ...stmt, value } as Stmt;
@@ -1547,14 +1545,14 @@ class Parser {
         const body = (t.value ?? "").replace(/\s+/g, "");
         if (!/^[0-9A-Fa-f]*$/.test(body)) {
           throw new ParseError(
-            `16 進定数に使えない文字があります: ${JSON.stringify(t.value ?? "")}`,
+            m`16 進定数に使えない文字があります: ${JSON.stringify(t.value ?? "")}`,
             t.line,
             t.col,
           );
         }
         if (body.length % 2 !== 0) {
           throw new ParseError(
-            "16 進定数の桁数は偶数でなければなりません（1 文字 = 2 桁）",
+            m`16 進定数の桁数は偶数でなければなりません（1 文字 = 2 桁）`,
             t.line,
             t.col,
           );
@@ -1568,14 +1566,14 @@ class Parser {
       case "lparen": {
         this.next();
         const e = this.parseExpr();
-        this.expect("rparen", "閉じ括弧");
+        this.expect("rparen", m`閉じ括弧`);
         return e;
       }
       case "word":
         return this.parseRef();
       default:
         throw new ParseError(
-          `式が必要です（${t.kind === "eof" ? "入力の終わり" : JSON.stringify(t.text)} が現れました）`,
+          m`式が必要です（${t.kind === "eof" ? m`入力の終わり` : JSON.stringify(t.text)} が現れました）`,
           t.line,
 
           t.col,
@@ -1590,7 +1588,7 @@ class Parser {
    * 字句解析では "1sub" が number + word になるので、ここで組み立てる。
    */
   private parseRefWithISub(): Ref {
-    const name = this.expect("word", "基底変数名").text;
+    const name = this.expect("word", m`基底変数名`).text;
     const subscripts: Expr[] = [];
     if (this.eat("lparen")) {
       if (!this.at("rparen")) {
@@ -1598,7 +1596,7 @@ class Parser {
           subscripts.push(this.parseISubOrExpr());
         } while (this.eat("comma"));
       }
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
     }
     return { kind: "ref", name, subscripts };
   }
@@ -1620,7 +1618,7 @@ class Parser {
     // 構造体の修飾名 rec.addr.city は1つの名前として扱う。
     // 字句解析では '.' が演算子として出ないため、ここで数値の小数点と
     // 区別するために word の直後に '.' が続く形だけを拾う。
-    let name = this.expect("word", "変数名").text;
+    let name = this.expect("word", m`変数名`).text;
     while (this.at("dot") && this.peek(1).kind === "word") {
       this.next();
       name += "." + this.next().text;
@@ -1635,7 +1633,7 @@ class Parser {
           subscripts.push(this.parseExpr());
         } while (this.eat("comma"));
       }
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
     }
     const ref: Ref = { kind: "ref", name, subscripts, ...(called ? { called } : {}) };
 
@@ -1660,11 +1658,11 @@ class Parser {
     let set: Ref | undefined;
 
     while (!this.at("semi") && !this.at("eof")) {
-      const w = this.expect("word", `${op.toUpperCase()} の指定`);
-      this.expect("lparen", "開き括弧");
+      const w = this.expect("word", m`${op.toUpperCase()} の指定`);
+      this.expect("lparen", m`開き括弧`);
       switch (w.upper) {
         case "FILE":
-          file = this.expect("word", "ファイル名").text;
+          file = this.expect("word", m`ファイル名`).text;
           break;
         case "INTO":
           into = this.parseRef();
@@ -1678,28 +1676,28 @@ class Parser {
         case "KEY":
         case "KEYFROM":
           throw new ParseError(
-            "索引ファイル（KEY 指定）は未実装です",
+            m`索引ファイル（KEY 指定）は未実装です`,
             w.line,
             w.col,
             w.file,
           );
         default:
           throw new ParseError(
-            `${op.toUpperCase()} の指定として解釈できません: ${JSON.stringify(w.text)}`,
+            m`${op.toUpperCase()} の指定として解釈できません: ${JSON.stringify(w.text)}`,
             w.line,
             w.col,
             w.file,
           );
       }
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
       this.eat("comma");
     }
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
 
     if (file === undefined) {
       const t = this.peek();
       throw new ParseError(
-        `${op.toUpperCase()} には FILE(名前) が必要です`,
+        m`${op.toUpperCase()} には FILE(名前) が必要です`,
         t.line,
         t.col,
         t.file,
@@ -1719,14 +1717,14 @@ class Parser {
   /** ALLOCATE x SET(p); */
   private parseAllocate(): Stmt {
     const line = this.next().line; // ALLOCATE
-    const name = this.expect("word", "変数名").text;
+    const name = this.expect("word", m`変数名`).text;
     let set: Ref | undefined;
     if (this.eatWord("SET")) {
-      this.expect("lparen", "開き括弧");
+      this.expect("lparen", m`開き括弧`);
       set = this.parseRef();
-      this.expect("rparen", "閉じ括弧");
+      this.expect("rparen", m`閉じ括弧`);
     }
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
     return set === undefined
       ? { kind: "allocate", name, line }
       : { kind: "allocate", name, set, line };
@@ -1739,7 +1737,7 @@ class Parser {
     do {
       refs.push(this.parseRef());
     } while (this.eat("comma"));
-    this.expect("semi", "セミコロン");
+    this.expect("semi", m`セミコロン`);
     return { kind: "free", refs, line };
   }
 }

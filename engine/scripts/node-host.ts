@@ -7,6 +7,7 @@
  * PL/I 側から来た名前は必ず `safe-path.ts` の封じ込めを通す。
  * 通さないと `OPEN FILE(f) TITLE('../../どこか')` でソースの外を読み書きできる。
  */
+import { m } from "../src/i18n/index.js";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { IMS_NAME } from "../src/index.js";
@@ -97,7 +98,7 @@ export class NodeHost implements PliHost {
           // 既存のシンボリックリンクやディレクトリへは書かない。
           // 書くとリンク先（許可ルートの外）を上書きしてしまう。
           // 親ディレクトリも勝手には作らない（mkdir -p は境界を越える）
-          throw new Error(`ファイル ${name} へは書き込めません`);
+          throw new Error(m`ファイル ${name} へは書き込めません`);
         }
         writeFileSync(path, contents);
       },
