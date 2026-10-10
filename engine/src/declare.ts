@@ -48,11 +48,15 @@ export function qualifyDeclareItems(items: DeclItem[]): DeclItem[] {
     // 自分に BASED が無ければ、外側の構造体のものを引き継ぐ
     const inherited = [...basedStack].reverse().find((b) => b !== undefined);
     const based = item.based ?? inherited;
-    out.push({
-      ...item,
-      names: [[...path, name].join(".")],
-      ...(based === undefined ? {} : { based }),
-    });
+    // 括弧付きの名前リスト（`2 (a, b) char(4)`）は葉を名前の数だけ作る。
+    // `names[0]` だけを見ていると 2 つめ以降が黙って消える
+    for (const one of item.names.length > 0 ? item.names : [name]) {
+      out.push({
+        ...item,
+        names: [[...path, one].join(".")],
+        ...(based === undefined ? {} : { based }),
+      });
+    }
   }
   return out;
 }

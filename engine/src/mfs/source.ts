@@ -253,6 +253,20 @@ function dscaOf(c: Context, s: MacroStmt, value: string): Dsca {
     n = int(c, s, "DSCA", t);
   }
   const low = n & 0xff;
+  // 扱うのは 3 ビットだけ。知らないビットを黙って落とすと
+  // 指定したのに何も起きない（`DSCA=X'8000'` が無言の no-op になっていた）。
+  // 0x80 は MFS が使う埋めビットなので通す
+  const known = 0x80 | 0x40 | 0x20 | 0x10;
+  const rest = n & ~known & 0xffff;
+  if (rest !== 0) {
+    fail(
+      c,
+      s,
+      `DSCA=${value} のうち X'${rest.toString(16).toUpperCase().padStart(4, "0")}' の` +
+        `ビットは未実装です（扱うのは X'40' 書式書き出し / X'20' 打ち込める項目の消去 / ` +
+        `X'10' 警報だけ）`,
+    );
+  }
   return {
     eraseAll: (low & 0x40) !== 0,
     eraseUnprotected: (low & 0x20) !== 0,

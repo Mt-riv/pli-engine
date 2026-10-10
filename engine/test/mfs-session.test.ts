@@ -343,6 +343,36 @@ describe("異常終了したときは出力を捨てる", () => {
 });
 
 /**
+ * `/FORMAT`。
+ *
+ * 実機の `/FORMAT` は**書式書き出し**で、固定文字から画面を組み直す。
+ * メッセージ書き出しとして扱うと、同じ書式を指定したときに画面が
+ * 1 ビットも変わらず、利用者から見て不審な「何も起きない」になる。
+ */
+describe("/FORMAT", () => {
+  it("同じ書式でも打ち込んだ値が消える（書式書き出し）", () => {
+    const s = session();
+    s.start();
+    // いったん値を出しておく
+    const shown = s.send(enter({ ITEMIN: "42" }));
+    expect(fieldNamed(shown.screen!, "NAMEOUT")?.text).toContain("ITEM=000042");
+    // /FORMAT が取るのは MOD の名前。同じ書式を指定して確かめる
+    const back = s.send({
+      aid: { kind: "enter" },
+      fields: new Map([["PFKEY", "/FOR INVOUT."]]),
+    });
+    expect(fieldNamed(back.screen!, "NAMEOUT")?.text.trim()).toBe("");
+  });
+
+  it("別の書式に切り替えられる", () => {
+    const s = session();
+    s.start();
+    const step = s.send({ aid: { kind: "pf", n: 3 }, fields: new Map() });
+    expect(step.screen?.format).toBe("OTHFMT");
+  });
+});
+
+/**
  * ENTER 以外のキー。
  *
  * `Aid` には `clear` と `pa` があり台本も受け付けるのに、`formatInput` は

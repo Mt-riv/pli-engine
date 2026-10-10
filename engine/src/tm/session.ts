@@ -244,7 +244,10 @@ export class Session {
         .replace(/\.$/, "")
         .toUpperCase();
       if (name === "") return this.step({ notice: "/FORMAT に書式の名前がありません" });
-      return this.show(name, []);
+      // `/FORMAT` は**書式書き出し**。同じ書式を指定しても、固定文字から
+      // 組み直して打ち込んだ値が消える。base を渡すとメッセージ書き出しに
+      // なり、同じ書式のときに画面が 1 ビットも変わらなかった
+      return this.show(name, [], { formatWrite: true });
     }
     return this.step({ notice: `コマンド ${upper} は未実装です（/FORMAT だけを扱う）` });
   }
@@ -359,15 +362,25 @@ export class Session {
     }
   }
 
-  /** MOD で画面を組み、次に読む MID を決める。 */
-  private show(modName: string, segments: string[]): SessionStep {
+  /**
+   * MOD で画面を組み、次に読む MID を決める。
+   *
+   * `formatWrite` を立てると、装置に同じ書式が入っていても固定文字から
+   * 組み直す（実機の書式書き出し）。立てなければメッセージ書き出しで、
+   * MOD が触る項目だけを書き換える。
+   */
+  private show(
+    modName: string,
+    segments: string[],
+    opts: { formatWrite?: boolean } = {},
+  ): SessionStep {
     try {
       const screen = formatOutput(
         this.opts.library,
         modName,
         segments,
         this.outputOptions(),
-        this.current,
+        opts.formatWrite === true ? undefined : this.current,
       );
       this.current = screen;
       // 前の通知を残さない。新しい MOD を送ったら系のメッセージ欄は消える

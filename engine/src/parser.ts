@@ -585,7 +585,12 @@ class Parser {
   private parseDeclItem(): DeclItem {
     // 構造体のレベル番号（dcl 1 rec, 2 name char(10); の 1 や 2）
     let level: number | undefined;
-    if (this.at("number") && this.peek(1).kind === "word") {
+    // `2 nm char(4)` と `2 (a, b) char(4)` の両方。括弧付きの名前リストは
+    // PL/I の普通の書き方で、受けないとレベル番号で素の構文誤りになる
+    if (
+      this.at("number") &&
+      (this.peek(1).kind === "word" || this.peek(1).kind === "lparen")
+    ) {
       level = Number(this.next().text);
     }
     const names: string[] = [];
@@ -645,6 +650,18 @@ class Parser {
    * PL/I は下限を明示できる: (10) は 1..10、(0:9) は 0..9。
    */
   private parseBound(): Bound {
+    // `dcl a(n)` は未実装（記憶域の大きさを実行時に決める仕掛けが無い）。
+    // 素の「数値が必要です」にすると綴り間違いと区別が付かない
+    const t = this.peek();
+    if (t.kind === "word") {
+      throw new ParseError(
+        `可変の配列境界（${t.text} のような式で大きさを決める形）は未実装です` +
+          "（定数で書いてください）",
+        t.line,
+        t.col,
+        t.file,
+      );
+    }
     const first = this.parseSignedInt();
     if (this.eat("colon")) {
       return { lo: first, hi: this.parseSignedInt() };
@@ -806,9 +823,20 @@ class Parser {
           case "VARYING": varying = true; break;
           case "INIT":
           case "INITIAL": {
-            this.expect("lparen", "開き括弧");
+            const lp = this.expect("lparen", "開き括弧");
             const values: Expr[] = [];
             do {
+              // 反復係数 `init((5) 0)` は未実装。素の構文誤りにすると
+              // 綴り間違いと区別が付かないので名指しで断る
+              if (this.at("lparen")) {
+                throw new ParseError(
+                  "INITIAL の繰り返し係数（init((5) 0) の形）は未実装です" +
+                    "（値を並べて書いてください）",
+                  lp.line,
+                  lp.col,
+                  lp.file,
+                );
+              }
               values.push(this.parseExpr());
             } while (this.eat("comma"));
             this.expect("rparen", "閉じ括弧");

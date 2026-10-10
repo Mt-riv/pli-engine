@@ -46,7 +46,15 @@ export function aidName(aid: Aid): string {
   }
 }
 
-/** 項目の中身を長さにそろえる。 */
+/**
+ * 項目の中身を長さにそろえる。
+ *
+ * `FILL=NULL` のとき、**何も返らなかった項目**はセグメントから消えるが
+ * （呼び側で落とす）、**短いデータが返った項目**はここで空白まで伸ばす。
+ * セグメントの桁割りが固定なので、途中の項目だけ詰めると後ろの項目の
+ * 位置がずれてプログラムの宣言と合わなくなる。実機の圧縮の規則までは
+ * 確かめようが無いので、この扱いに決めて書き残しておく。
+ */
 function fit(data: string, mfld: Mfld, fill: Fill): string {
   const len = mfld.length;
   if (data.length >= len) {

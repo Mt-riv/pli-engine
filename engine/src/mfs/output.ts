@@ -55,6 +55,15 @@ interface AttrOverride {
 function readAttrBytes(two: string): AttrOverride {
   const b0 = two.charCodeAt(0) || 0;
   const b1 = two.charCodeAt(1) || 0;
+  // 扱うのは上位 5 ビット。残りのビット（非表示や MDT の指定にあたる）は
+  // 意味を確かめられていないので、立っていたら黙って無視せず断る
+  const rest = b1 & 0x07;
+  if ((b1 & 0x80) !== 0 && rest !== 0) {
+    throw new MfsBlockError(
+      `ATTR=YES の 2 バイト目の下位ビット（X'${rest.toString(16).toUpperCase()}'）は未実装です` +
+        "（扱うのは 置き換え / 保護 / 数字 / 強調 だけ）",
+    );
+  }
   return {
     present: (b1 & 0x80) !== 0,
     cursor: (b0 & 0xc0) === 0xc0,
@@ -99,7 +108,10 @@ function place(field: ScreenField, data: string, mfld: Mfld, fill: Fill): void {
     field.text = mfld.just === "R" ? data.slice(data.length - len) : data.slice(0, len);
     return;
   }
-  // 出力の FILL=NULL は「埋めない」。画面は空白のままになる
+  // `FILL=NULL` は実機では「その桁を送らない」= 装置の表示を変えない。
+  // この処理系は空白で埋める（書式書き出しなら元が空白なので同じ結果、
+  // メッセージ書き出しでは項目の残りが消える点が実機と違う）。
+  // 実機の確かめようが無いので、違いを書き残しておく
   const pad = fill.kind === "null" ? " " : fill.c;
   field.text = mfld.just === "R" ? data.padStart(len, pad) : data.padEnd(len, pad);
 }
