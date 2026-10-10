@@ -11,6 +11,7 @@
  */
 
 import { IMS_NAME, listOf, readMacros, type MacroStmt } from "../macro.js";
+import { validateLayout } from "./device.js";
 import {
   DEFAULT_ATTR,
   FILL_BLANK,
@@ -334,7 +335,7 @@ function applyDpage(c: Context, s: MacroStmt): void {
   const fill = opt(s, "FILL");
   const dpage: Dpage = {
     ...(cursor === undefined ? {} : { cursor: cursorOf(c, s, cursor) }),
-    fill: fill === undefined ? FILL_BLANK : fillOf(c, s, fill),
+    ...(fill === undefined ? {} : { fill: fillOf(c, s, fill) }),
     dflds: [],
   };
   fmt.dpages.push(dpage);
@@ -345,7 +346,7 @@ function applyDfld(c: Context, s: MacroStmt, suffix: string, lineInc: number, co
   const fmt = c.fmt ?? fail(c, s, "DFLD 文が FMT の外にあります");
   if (c.dpage === undefined) {
     // DPAGE を書かない定義も通る（1 画面として扱う）
-    const dpage: Dpage = { fill: FILL_BLANK, dflds: [] };
+    const dpage: Dpage = { dflds: [] };
     fmt.dpages.push(dpage);
     c.dpage = dpage;
   }
@@ -382,6 +383,11 @@ function applyDfld(c: Context, s: MacroStmt, suffix: string, lineInc: number, co
     ...(eattrText === undefined ? {} : { eattr: eattrOf(c, s, eattrText) }),
     srcLine: s.line,
   };
+  if (dfld.line === 1 && dfld.col === 1) {
+    // 属性バイトが 1 つ前の位置に入るので、画面の先頭には置けない
+    // （実機も 3270 では POS=(1,1) を書いてはならないと規定している）
+    fail(c, s, "POS=(1,1) は 3270 では使えません（属性バイトの置き場所が無い）");
+  }
   if (dfld.line < 1 || dfld.line > fmt.rows || dfld.col < 1 || dfld.col > fmt.cols) {
     fail(
       c,
@@ -712,9 +718,22 @@ export function loadMfs(files: Record<string, string>): MfsLibrary {
       messages.set(m.name, m);
     }
   }
+  for (const f of formats.values()) {
+    if (f.dpages.length > 1) {
+      throw new MfsDefError(
+        `書式 ${f.name} に DPAGE が ${f.dpages.length} 個あります` +
+          "（2 画面目を選ぶ仕掛け（ページング）が未実装なので 1 つだけ）",
+        f.file,
+        f.srcLine,
+      );
+    }
+    // 項目の重なりは画面を組めないので、読んだ時点で断る
+    validateLayout(f);
+  }
   // 参照の食い違いは、使うときではなく読んだ時点で断る
   for (const m of messages.values()) {
-    if (!formats.has(m.sor)) {
+    const fmt = formats.get(m.sor);
+    if (fmt === undefined) {
       throw new MfsDefError(
         `MSG ${m.name} の SOR=${m.sor} にあたる FMT がありません`,
         m.file,
@@ -728,6 +747,51 @@ export function loadMfs(files: Record<string, string>): MfsLibrary {
         m.srcLine,
       );
     }
+    if (m.lpages.length > 1) {
+      throw new MfsDefError(
+        `メッセージ記述 ${m.name} に LPAGE が ${m.lpages.length} 個あります` +
+          "（どれを使うかを決める LPAGE COND= が未実装なので 1 つだけ）",
+        m.file,
+        m.srcLine,
+      );
+    }
+    const named = new Set(
+      fmt.dpages.flatMap((d) => d.dflds.map((x) => x.name).filter((x) => x !== undefined)),
+    );
+    for (const seg of m.lpages.flatMap((l) => l.segs)) {
+      for (const f of seg.mflds) {
+        checkMfld(m, f, named);
+      }
+    }
   }
   return new MfsLibrary(formats, messages);
+}
+
+/** `MFLD` が指す先と、向きに合った書き方かを見る。 */
+function checkMfld(m: MessageDesc, f: Mfld, named: Set<string>): void {
+  const where = (text: string): never => {
+    throw new MfsDefError(`MSG ${m.name} の ${text}`, m.file, f.srcLine);
+  };
+  if (m.type === "OUTPUT") {
+    if (f.source.kind === "literal") {
+      where("出力の MFLD に固定文字だけを書くことはできません（置く先の項目がありません）");
+    }
+    if (f.source.kind === "dfld-literal") {
+      where("出力の MFLD に固定文字を添える書き方は未実装です（入力用の書き方）");
+    }
+  } else {
+    if (f.source.kind === "system") {
+      where(`システム定数 ${f.source.which} は出力専用です`);
+    }
+    if (f.attrBytes) {
+      where("入力の MFLD の ATTR=YES は未実装です（装置は属性を返さない）");
+    }
+  }
+  const target =
+    f.source.kind === "dfld" || f.source.kind === "dfld-literal" || f.source.kind === "system"
+      ? f.source.name
+      : undefined;
+  if (target !== undefined && !named.has(target)) {
+    where(`MFLD ${target} にあたる DFLD が ${m.sor} にありません`);
+  }
 }

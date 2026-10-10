@@ -107,8 +107,8 @@ export const FILL_BLANK: Fill = { kind: "char", c: " " };
 export interface Dpage {
   /** `CURSOR=((ll,cc))`。無ければ最初の打ち込める項目へ置く。 */
   cursor?: { line: number; col: number };
-  /** 出力で項目の残りを埋める文字。 */
-  fill: Fill;
+  /** 出力で項目の残りを埋める文字。書かれていなければ MSG の `FILL=`。 */
+  fill?: Fill;
   dflds: Dfld[];
 }
 

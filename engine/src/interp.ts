@@ -41,6 +41,7 @@ import { Database } from "./dli/store.js";
 import { DliRuntime, DliUnsupported, type PcbState } from "./dli/dli.js";
 import { DliDefError, type DbdDef } from "./dli/types.js";
 import { DefError, IMS_NAME } from "./macro.js";
+import { TmRuntime, TmUnsupported, type IoPcbState } from "./tm/tm.js";
 import {
   FixedOverflow,
   MAX_BIN,
@@ -376,6 +377,14 @@ export interface RunOptions {
   maxStringLength?: number;
   /** ALLOCATE の回数の上限。 */
   maxAllocations?: number;
+  /**
+   * IMS TM（メッセージキュー）。
+   *
+   * 渡すと入出力 PCB への `GU` / `GN` / `ISRT` / `PURG` が使えるようになる。
+   * **キューと出来上がった出力を持つのは呼ぶ側**（画面との往復は
+   * 1 入力 = 1 回の実行で、実行の外側が回す）。
+   */
+  tm?: TmRuntime;
 }
 
 /** 記憶域の上限の既定値。ブラウザのタブを守れる程度に取る。 */
@@ -824,6 +833,10 @@ export class Interpreter {
     }
     const index = this.pcbIndexFor(dli, pcbRef, scope, s.line);
     const ioRef = args[3];
+    if (dli.pcb(index).def.kind === "io") {
+      this.messageCall(s, scope, func, pcbRef, dli.pcb(index), ioRef, args[4]);
+      return;
+    }
     const ioArea =
       ioRef === undefined || ioRef.kind !== "ref"
         ? ""
@@ -849,6 +862,119 @@ export class Interpreter {
       this.writeIoArea(ioRef, result.ioArea, scope, s.line);
     }
     this.writePcb(pcbRef, scope, dli.pcb(index), s.line);
+  }
+
+  /**
+   * 入出力 PCB への呼び出し（IMS TM）。
+   *
+   * データベースの呼び出しと違い、I/O 領域の先頭 4 バイトが
+   * `LL ZZ`（長さと予約）になる。`LL` はプログラムが入れる数値なので、
+   * 文字として扱う `readIoArea` では読めない。
+   */
+  private messageCall(
+    s: Extract<Stmt, { kind: "call" }>,
+    scope: Scope,
+    func: string,
+    pcbRef: Ref,
+    pcb: PcbState,
+    ioRef: Expr | undefined,
+    modRef: Expr | undefined,
+  ): void {
+    const tm = this.opts.tm;
+    if (tm === undefined) {
+      throw new RuntimeError(
+        "入出力 PCB への呼び出しにはメッセージキューが必要です" +
+          "（実行するときに MFS の書式と入力を与えてください）",
+        s.line,
+      );
+    }
+    const code = func.trim().toUpperCase();
+    const isInsert = code === "ISRT";
+    const area = ioRef !== undefined && ioRef.kind === "ref" ? ioRef : undefined;
+    let segment: string | undefined;
+    if (isInsert) {
+      if (area === undefined) {
+        throw new RuntimeError("ISRT には I/O 領域が必要です", s.line);
+      }
+      segment = this.readMessageArea(area, scope, s.line);
+    }
+    const modName =
+      modRef === undefined
+        ? undefined
+        : modRef.kind === "ref"
+          ? this.asText(this.evalRef(modRef, scope, s.line))
+          : this.asText(this.eval(modRef, scope, s.line));
+
+    let result;
+    try {
+      result = tm.call(code, segment, modName);
+    } catch (e) {
+      if (e instanceof TmUnsupported) throw new RuntimeError(e.message, s.line);
+      throw e;
+    }
+    if (result.segment !== undefined && area !== undefined) {
+      this.writeMessageArea(area, result.segment, scope, s.line);
+    }
+    pcb.status = result.status;
+    this.writePcb(pcbRef, scope, pcb, s.line);
+  }
+
+  /**
+   * メッセージ I/O 領域を読む（`ISRT`）。
+   *
+   * 先頭 2 項目は `LL`（このセグメントの長さ。`LL ZZ` を含む）と `ZZ`。
+   * **`LL` の分だけを送る**（実機も `LL` を見る）。
+   */
+  private readMessageArea(ref: Ref, scope: Scope, line: number): string {
+    const leaves = this.leafCells(ref, scope, line);
+    const ll = this.messageLength(leaves, ref, line);
+    let text = "";
+    for (const l of leaves.slice(2)) {
+      const w = this.widthOfAttr(l.attr, l.key, line);
+      const cell = l.cells[l.index];
+      text += (cell === undefined ? "" : this.asText(cell)).padEnd(w).slice(0, w);
+    }
+    if (ll <= 4) {
+      throw new RuntimeError(
+        `ISRT のセグメント長 LL が ${ll} です。LL には LL ZZ の 4 バイトを含めた長さを入れてください`,
+        line,
+      );
+    }
+    return text.padEnd(ll - 4).slice(0, ll - 4);
+  }
+
+  /** メッセージ I/O 領域へ書く（`GU` / `GN`）。 */
+  private writeMessageArea(ref: Ref, segment: string, scope: Scope, line: number): void {
+    const leaves = this.leafCells(ref, scope, line);
+    this.messageLength(leaves, ref, line); // 形の確認
+    const ll = leaves[0]!;
+    const zz = leaves[1]!;
+    ll.cells[ll.index] = this.coerce(makeFixed("bin", MAX_BIN, 0, BigInt(segment.length + 4)), ll.attr, line);
+    zz.cells[zz.index] = this.coerce(makeFixed("bin", MAX_BIN, 0, 0n), zz.attr, line);
+    let pos = 0;
+    for (const l of leaves.slice(2)) {
+      const w = this.widthOfAttr(l.attr, l.key, line);
+      const piece = segment.slice(pos, pos + w).padEnd(w);
+      pos += w;
+      l.cells[l.index] = this.coerce(makeChar(piece, piece.length, true), l.attr, line);
+    }
+  }
+
+  /** `LL` を読む。あわせてメッセージ I/O 領域の形を確かめる。 */
+  private messageLength(
+    leaves: { key: string; attr: DataAttr; cells: Value[]; index: number }[],
+    ref: Ref,
+    line: number,
+  ): number {
+    const shape =
+      `${ref.name} はメッセージ I/O 領域として使えません。` +
+      "DCL 1 名前, 2 LL FIXED BIN(15), 2 ZZ FIXED BIN(15), 2 … の形で宣言してください";
+    if (leaves.length < 3) throw new RuntimeError(shape, line);
+    const ll = leaves[0]!;
+    const zz = leaves[1]!;
+    if (ll.attr.type !== "fixed" || zz.attr.type !== "fixed") throw new RuntimeError(shape, line);
+    const cell = ll.cells[ll.index];
+    return cell === undefined ? 0 : Number(render(asFixed(cell, line)));
   }
 
   /** DL/I ランタイム。最初に使うときに PSB とデータベースを読む。 */
@@ -936,7 +1062,7 @@ export class Interpreter {
     for (let i = 0; i < count; i++) {
       const pcb = dli.pcb(i);
       const cells = new Map<string, Value[]>();
-      for (const slot of pcbLayout(pcb)) {
+      for (const slot of pcbLayout(pcb, this.opts.tm?.state)) {
         cells.set(slot.name, [slot.value()]);
       }
       out.push(
@@ -1032,7 +1158,7 @@ export class Interpreter {
         line,
       );
     }
-    const slots = pcbLayout(pcb);
+    const slots = pcbLayout(pcb, this.opts.tm?.state);
     if (leaves.length < slots.length) {
       throw new RuntimeError(
         `PCB マスクの項目が ${leaves.length} 個しかありません（${slots.length} 個必要です）`,
@@ -3237,12 +3363,37 @@ export const BUILTIN_SUBROUTINE_NAMES: ReadonlySet<string> = new Set([
 /** PCB マスクの規定の並び。葉の名前ではなく、この順で結び付ける。 */
 function pcbLayout(
   pcb: PcbState,
+  io?: IoPcbState,
 ): { name: string; attr: DataAttr; value: () => Value }[] {
   const chars = (v: string, n: number): Value => makeChar(v, n, false);
   const num = (n: number): Value => makeFixed("bin", MAX_BIN, 0, BigInt(n));
   const keylen = Math.max(1, pcb.def.keylen);
   const char = (length: number): DataAttr => ({ type: "char", length, varying: false });
   const binary: DataAttr = { type: "fixed", base: "bin", p: MAX_BIN, q: 0 };
+  if (pcb.def.kind === "io") {
+    // 入出力 PCB。DB の PCB とは並びも項目も違う
+    const dec = (p: number, q: number): DataAttr => ({ type: "fixed", base: "dec", p, q });
+    const packed = (v: number, q: number): Value => makeFixed("dec", 7, q, BigInt(Math.round(v * 10 ** q)));
+    const state: IoPcbState = io ?? {
+      lterm: "",
+      status: pcb.status,
+      date: 0,
+      time: 0,
+      seq: 0,
+      modName: "",
+      userid: "",
+    };
+    return [
+      { name: "LTERM_NAME", attr: char(8), value: () => chars(state.lterm, 8) },
+      { name: "RESERVED1", attr: char(2), value: () => chars("", 2) },
+      { name: "STAT_CODE", attr: char(2), value: () => chars(pcb.status, 2) },
+      { name: "DATE", attr: dec(7, 0), value: () => packed(state.date, 0) },
+      { name: "TIME", attr: dec(7, 1), value: () => packed(state.time, 1) },
+      { name: "MSG_SEQ", attr: binary, value: () => num(state.seq) },
+      { name: "MOD_NAME", attr: char(8), value: () => chars(state.modName, 8) },
+      { name: "USER_ID", attr: char(8), value: () => chars(state.userid, 8) },
+    ];
+  }
   return [
     { name: "DBNAME", attr: char(8), value: () => chars(pcb.def.dbdName ?? "", 8) },
     {
