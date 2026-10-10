@@ -1,0 +1,26 @@
+/* 論点: 値が 0 のとき、ピクチャのどこまでが詰め文字になるか。
+
+   pli-frac-suppress で「ZZV.ZZ に 0 を入れると小数部と小数点まで
+   消える」ことが分かった。9 が混ざる場合・挿入文字がある場合・
+   浮動記号がある場合にどこで止まるかを決める。
+   角括弧で挟んで、空白も含めて見る（ASCII だけを使う）。 */
+pz: proc options(main);
+  dcl a pic'ZZZZ';
+  dcl b pic'ZZZ9';
+  dcl c pic'ZZV.ZZ';
+  dcl d pic'ZZ9V.ZZ';
+  dcl e pic'ZZV.Z9';
+  dcl f pic'ZZ,ZZZ';
+  dcl g pic'$ZZ9V.ZZ';
+  dcl h pic'****';
+  a = 0; put skip list('ZZZZ     [', a, ']');
+  b = 0; put skip list('ZZZ9     [', b, ']');
+  c = 0; put skip list('ZZV.ZZ   [', c, ']');
+  d = 0; put skip list('ZZ9V.ZZ  [', d, ']');
+  e = 0; put skip list('ZZV.Z9   [', e, ']');
+  f = 0; put skip list('ZZ,ZZZ   [', f, ']');
+  g = 0; put skip list('$ZZ9V.ZZ [', g, ']');
+  h = 0; put skip list('****     [', h, ']');
+  c = 0.05; put skip list('ZZV.ZZ 0.05 [', c, ']');
+  e = 0.05; put skip list('ZZV.Z9 0.05 [', e, ']');
+end pz;

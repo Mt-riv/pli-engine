@@ -1,0 +1,5 @@
+実機: Iron Spring PL/I 1.4.1（Linux / i386）。2026-10-10 に取得。
+取り直す手順は別リポジトリ pli-oracle の README「次に実機が要るとき」。
+固定している規則: TRUNC / CEIL / FLOOR の結果精度（= 出力フィールド幅）。
+**3 つとも同じ** min(N, max(p-q,1)+1) で、DEC(6,5) の 1.23456 では幅 5。
+pli-engine は TRUNC だけが元の精度を保っていて幅 9 になっていた。

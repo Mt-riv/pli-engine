@@ -269,9 +269,29 @@ export function editPicture(spec: PictureSpec, value: FixedVal): string {
     di++;
   });
 
-  // 整数部が全部ゼロなら、最後の整数桁までを抑制の対象にする
+  /*
+   * 値が 0 で、**桁がすべて抑制できる**（`9` が 1 つも無い）なら、
+   * 小数点と挿入文字まで含めて欄全体が詰め文字になる。実機で確認:
+   *
+   *   PIC'ZZV.ZZ'  に 0   → "     "（小数点も消える）
+   *   PIC'**V.**'  に 0   → "*****"
+   *   PIC'ZZ,ZZZ'  に 0   → "      "（カンマも消える）
+   *   PIC'ZZV.Z9'  に 0   → "  .00"（9 があるので欄全体にはならない）
+   *   PIC'ZZ9V.ZZ' に 0   → "  0.00"
+   *   PIC'ZZV.ZZ'  に 0.05 → "  .05"（値が 0 でないので整数部だけ）
+   *
+   * 以前は整数部までしか抑制していなかったので `  .00` になっていた。
+   */
+  const allZero = digits.split("").every((d) => d === "0");
+  const allSuppressible = spec.positions.every(
+    (pos) => pos.kind !== "digit" || pos.suppress !== "none",
+  );
   const suppressUntil =
-    firstSignificant >= 0 ? firstSignificant : lastIntegerDigitPos + 1;
+    allZero && allSuppressible
+      ? spec.positions.length
+      : firstSignificant >= 0
+        ? firstSignificant
+        : lastIntegerDigitPos + 1;
 
   // 抑制できない桁（9）があればそこで抑制を打ち切る
   let effectiveUntil = 0;

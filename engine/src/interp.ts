@@ -2972,6 +2972,26 @@ export class Interpreter {
   }
 
   private compareValues(a: Value, b: Value, line: number): number {
+    /*
+     * 片方が文字で片方が算術なら、**文字を算術に変換して**代数比較する
+     * （PL/I の規定）。実機でも全部 TRUE になることを確認した:
+     *
+     *   dcl i fixed bin(15); i = 12;
+     *   i = '12'   → 真      i = '012' → 真      i = ' 12' → 真
+     *
+     * 以前は数値を文字に直して照合順序で比べていたので、どれも偽になり、
+     * しかも `i + 0 = 12` は真という食い違いが出ていた
+     * （`asText` は数値を出力フィールド幅へ右詰めするため、
+     * `"       12"` と `"12       "` の比較になって必ず外れる）。
+     */
+    const arithmetic = (v: Value): boolean =>
+      v.t === "fixed" || v.t === "float";
+    if (a.t === "char" && arithmetic(b)) {
+      return this.compareValues(this.toFixed(a, line), b, line);
+    }
+    if (b.t === "char" && arithmetic(a)) {
+      return this.compareValues(a, this.toFixed(b, line), line);
+    }
     if (a.t === "char" || b.t === "char") {
       const x = this.asText(a);
       const y = this.asText(b);

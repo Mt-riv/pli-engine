@@ -1,0 +1,17 @@
+/* 論点: TRUNC / CEIL / FLOOR の結果精度。出力フィールド幅から読む。
+
+   PL/I の規定は 3 つとも min(N, max(p-q,1)+1)。
+   FIXED DEC(p,q) の幅は p+3 なので、幅 5 なら p=2、幅 9 なら p=6。
+
+   pli-engine は TRUNC だけが元の p を保っていて（幅 9）、
+   CEIL / FLOOR（幅 5）と食い違っていた。規定に合わせて揃えたので、
+   実機がどちらかを確かめる。1.23456 は DEC(6,5)。 */
+tprec: proc options(main);
+  put skip list('[', trunc(1.23456), ']');
+  put skip list('[', floor(1.23456), ']');
+  put skip list('[',  ceil(1.23456), ']');
+  put skip list('[', trunc(-1.23456), ']');
+  put skip list('[', floor(-1.23456), ']');
+  put skip list('[', trunc(123.45), ']');
+  put skip list('[', floor(123.45), ']');
+end tprec;
