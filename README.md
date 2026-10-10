@@ -231,12 +231,12 @@ xdg-open dist-web/index.html
 #### リリースから入手する（手軽）
 
 [Releases](https://github.com/Mt-riv/pli-engine/releases) から
-`pli-lang-0.4.0.vsix` をダウンロードします。ビルドは要りません。
+`pli-lang-0.4.1.vsix` をダウンロードします。ビルドは要りません。
 
 `gh` が使えるなら次でも取れます。
 
 ```bash
-gh release download vscode-v0.4.0 --repo Mt-riv/pli-engine
+gh release download vscode-v0.4.1 --repo Mt-riv/pli-engine
 ```
 
 #### 自分でビルドする
@@ -245,14 +245,14 @@ gh release download vscode-v0.4.0 --repo Mt-riv/pli-engine
 cd ../vscode-pli        # pli-engine/engine から
 npm ci
 npm run build
-npx @vscode/vsce package      # pli-lang-0.4.0.vsix ができる
+npx @vscode/vsce package      # pli-lang-0.4.1.vsix ができる
 ```
 
 #### インストール
 
 VSCode の拡張ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）→ 右上の `…` →
-**「VSIX からのインストール」** で `pli-lang-0.4.0.vsix` を選びます。
-`code` コマンドが使えるなら `code --install-extension pli-lang-0.4.0.vsix` でも入ります。
+**「VSIX からのインストール」** で `pli-lang-0.4.1.vsix` を選びます。
+`code` コマンドが使えるなら `code --install-extension pli-lang-0.4.1.vsix` でも入ります。
 
 使い方は [`docs/vscode-manual.md`](docs/vscode-manual.md)。
 
@@ -262,6 +262,7 @@ VSCode の拡張ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）→ 右上の `…`
 cd ../engine            # VSCode の手順を飛ばした場合はそのまま engine にいます
 npm run pli -- examples/dli/stuprt.pli --psb STUPSB   # プログラムを 1 本走らせる
 npm run plitest -- examples/tests    # PL/I で書いたテストを走らせる（PSB は自動検出）
+npm run pli -- examples/screen/dbinq.pli --psb INVPSB --keys examples/screen/dbinq.keys  # 画面（MFS）
 npm run plilint -- examples          # 怪しい書き方を検査する
 npm run plilint -- --list-rules      # 規則の一覧と、その理由
 npm run pli -- --help                # オプションの一覧

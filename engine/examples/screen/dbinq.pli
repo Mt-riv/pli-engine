@@ -1,0 +1,79 @@
+/* 画面（MFS）とデータベース（DL/I）を 1 本のプログラムで使う。
+
+     走らせ方:  npm run pli -- examples/screen/dbinq.pli --psb INVPSB --keys examples/screen/dbinq.keys
+     VSCode:    このファイルを開いて「PL/I: 画面を動かす（MFS）」
+
+   同じディレクトリに置いた 5 つのファイルを使う。
+     dbinq.mfs    画面の書式（MFSGEN への入力。MID / MOD / DIF / DOF）
+     dbinq.keys   端末の台本。拡張にも CLI にも端末が無いので、
+                  打つ手順をここに書く
+     INVPSB.psb   先頭が入出力 PCB、2 つめが ITEM の DB PCB
+     ITEM.dbd     階層の定義
+     ITEM.dat     データ
+
+   入力の品番は MID が JUST=R, FILL=C'0' で 6 桁にそろえるので、
+   そのまま順序キーの SSA に使える。見つからなければ DL/I は GE を返す。 */
+invq: proc(io_ptr, db_ptr) options(main);
+  dcl plitdli entry;
+  dcl (io_ptr, db_ptr) pointer;
+  dcl 1 io_pcb based(io_ptr),
+        2 lterm_name char(8),
+        2 reserved1  char(2),
+        2 stat_code  char(2),
+        2 msg_date   fixed dec(7,0),
+        2 msg_time   fixed dec(7,1),
+        2 msg_seq    fixed bin(31),
+        2 mod_name   char(8),
+        2 user_id    char(8);
+  dcl 1 db_pcb based(db_ptr),
+        2 dbname     char(8),
+        2 seg_level  char(2),
+        2 db_stat    char(2),
+        2 proc_opt   char(4),
+        2 reserved2  fixed bin(31),
+        2 seg_name   char(8),
+        2 len_kfb    fixed bin(31),
+        2 no_senseg  fixed bin(31),
+        2 key_fb     char(6);
+  dcl 1 msg_in,
+        2 in_ll   fixed bin(15),
+        2 in_zz   fixed bin(15),
+        2 in_tran char(12),
+        2 in_item char(6);
+  dcl 1 msg_out,
+        2 out_ll   fixed bin(15),
+        2 out_zz   fixed bin(15),
+        2 out_name char(20),
+        2 out_date char(8),
+        2 out_note char(40);
+  dcl 1 seg_io,
+        2 s_itemno char(6),
+        2 s_name   char(20);
+  dcl ssa char(26);
+  dcl three fixed bin(31) init(3);
+  dcl four  fixed bin(31) init(4);
+  dcl func_gu   char(4) init('GU  ');
+  dcl func_isrt char(4) init('ISRT');
+  dcl modname   char(8) init('INVOUT  ');
+
+  call plitdli(three, func_gu, io_pcb, msg_in);
+  do while (io_pcb.stat_code = '  ');
+    ssa = 'ITEM    (ITEMNO   =' || msg_in.in_item || ')';
+    call plitdli(four, func_gu, db_pcb, seg_io, ssa);
+    if db_pcb.db_stat = '  ' then
+      do;
+        msg_out.out_name = seg_io.s_name;
+        msg_out.out_note = 'FOUND';
+      end;
+    else
+      do;
+        msg_out.out_name = ' ';
+        msg_out.out_note = 'NOT FOUND (STATUS ' || db_pcb.db_stat || ')';
+      end;
+    msg_out.out_date = ' ';
+    msg_out.out_ll = 72;
+    msg_out.out_zz = 0;
+    call plitdli(four, func_isrt, io_pcb, msg_out, modname);
+    call plitdli(three, func_gu, io_pcb, msg_in);
+  end;
+end invq;

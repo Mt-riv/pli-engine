@@ -17,6 +17,7 @@ import {
   runTestSource,
   SNIPPETS,
   formatReport,
+  IMS_NAME,
   type Diagnostic,
   type LintMessage,
   type LintOptions,
@@ -288,7 +289,7 @@ export function runScreenForEditor(
   const head = `--- ${fileName} ---`;
   if (opts.psb === undefined || opts.psb === "") {
     return {
-      text: `${head}\n画面入出力には PSB が要ります（設定 pli.dli.psb に入出力 PCB を含む PSB を書いてください）`,
+      text: `${head}\n画面入出力には PSB が要ります（ソースの隣に入出力 PCB を含む *.psb を 1 つ置くか、設定 pli.dli.psb に名前を書いてください）`,
       ok: false,
       diagnostics: [],
     };
@@ -396,4 +397,60 @@ export function snippetCompletions(): SnippetCompletion[] {
     detail: s.name,
     documentation: s.description,
   }));
+}
+
+/**
+ * どの PSB を使うか決めた結果。
+ *
+ * 実機では JCL が PSB を決める。エディタには JCL にあたるものが無いので、
+ * 設定とソースの置き場所から決める。
+ */
+export interface PsbChoice {
+  /** 使う PSB の名前。空なら DL/I を使わない。 */
+  name: string;
+  /**
+   * 設定ではなくソースの隣から拾ったか。
+   * 真なら、どれを使ったかを利用者に見せる（置き場所で挙動が変わるため）。
+   */
+  fromDir: boolean;
+  /** 設定の値を使えなかったときの説明。あれば利用者へ出す。 */
+  warning?: string;
+}
+
+/**
+ * 設定とソースの隣から、使う PSB を決める。
+ *
+ * 優先順位は 設定 `pli.dli.psb` → ソースの隣の `*.psb`。
+ *
+ * この判断が `extension.ts`（VSCode API を触るのでテストできない側）に
+ * あったため、隣から拾う段がまるごと抜けていても気づけなかった。
+ * `plitest` は隣から拾うので、**同じファイルがコマンドラインでは通り、
+ * エディタからは DL/I のテストが全部異常**になっていた。
+ *
+ * 設定の値が IMS の名前として使えないときは、隣へ落ちずに DL/I を切る。
+ * 落ちると「設定は無視します」と言いながら別の PSB で動くことになり、
+ * 書き間違いが見つからなくなる。
+ */
+export function choosePsb(opts: {
+  /** 設定 `pli.dli.psb` の生の値。 */
+  setting: string;
+  /**
+   * ソースの隣にある PSB の名前。ちょうど 1 つのときだけ渡す。
+   * 保存前のファイルなど、隣を見られないときは省く。
+   */
+  beside?: string;
+}): PsbChoice {
+  const raw = opts.setting.trim();
+  if (raw !== "") {
+    if (IMS_NAME.test(raw.toUpperCase())) return { name: raw, fromDir: false };
+    return {
+      name: "",
+      fromDir: false,
+      warning:
+        `設定 pli.dli.psb の値「${raw}」は IMS の名前として使えません` +
+        "（1〜8 桁の英数字と $ # @ だけ）。DL/I は無効にします。",
+    };
+  }
+  if (opts.beside === undefined || opts.beside === "") return { name: "", fromDir: false };
+  return { name: opts.beside, fromDir: true };
 }

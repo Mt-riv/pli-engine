@@ -645,7 +645,7 @@ export class Interpreter {
     // 主手続きは PCB のポインタの並びしか受け取らないので、混ぜない。
     const args: Value[] =
       this.opts.psb === undefined
-        ? main.params.map((_, i) => makeChar(this.opts.args?.[i] ?? "", undefined, true))
+        ? this.commandLineArgs(main)
         : this.pcbPointers(main.params.length, main.line);
     this.callProcedure({ stmt: main, defScope: global }, args, global);
   }
@@ -1093,6 +1093,36 @@ export class Interpreter {
       databases.set(name, Database.load(pcb.dbd!, text(`${name}.dat`) ?? "", `${name}.dat`));
     }
     return new DliRuntime(psb, databases);
+  }
+
+  /**
+   * PSB が無いときに主手続きへ渡すコマンドライン引数。
+   *
+   * 引数をポインタで宣言している主手続きは PCB を受け取る IMS の
+   * プログラムなので、文字列を渡しても宣言のところで
+   * 「ポインタにはポインタしか代入できません」になるだけで、
+   * 足りないものが PSB の指定だとは分からない。名指しで断る。
+   */
+  private commandLineArgs(main: Extract<Stmt, { kind: "procedure" }>): Value[] {
+    const params = new Set(main.params.map((p) => p.toUpperCase()));
+    const pointers: string[] = [];
+    for (const s of main.body) {
+      if (s.kind !== "declare") continue;
+      for (const item of s.items) {
+        if (item.attr.type !== "pointer") continue;
+        for (const name of item.names) {
+          if (params.has(name.toUpperCase())) pointers.push(name);
+        }
+      }
+    }
+    if (pointers.length > 0) {
+      throw new RuntimeError(
+        `主手続きの引数 ${pointers.join(", ")} はポインタで宣言されています。` +
+          "PCB を受け取る IMS のプログラムなので、実行するときに PSB の名前を与えてください",
+        main.line,
+      );
+    }
+    return main.params.map((_, i) => makeChar(this.opts.args?.[i] ?? "", undefined, true));
   }
 
   /**

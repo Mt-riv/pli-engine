@@ -358,4 +358,41 @@ end p;`;
   call plitdli(three, func_gn, db_pcb, seg_io);`);
     expect(result.diagnostics[0]?.message).toContain("セグメント I/O 領域で扱えません");
   });
+
+  /**
+   * PSB 無しで IMS のプログラムを走らせたとき。
+   *
+   * 主手続きの引数は、PSB が無ければコマンドライン引数（文字列）になる。
+   * PCB を受ける `DCL (io_ptr, db_ptr) POINTER;` に文字列が来るので、
+   * 直す前は宣言の行で「ポインタにはポインタしか代入できません」とだけ
+   * 言っていた。指している行も理由も違うので、足りないものが
+   * PSB の指定だと分からない。
+   */
+  it("引数をポインタで宣言した主手続きは、PSB が無いことを名指しで断る", () => {
+    const r = runProgram(
+      `stuprt: proc(io_ptr, db_ptr) options(main);
+  dcl (io_ptr, db_ptr) pointer;
+end stuprt;`,
+      { host: new MemoryHost({}) },
+    );
+    expect(r.ok).toBe(false);
+    const message = r.diagnostics[0]?.message ?? "";
+    expect(message).toContain("io_ptr, db_ptr");
+    expect(message).toContain("PSB");
+    expect(message).not.toContain("ポインタにはポインタしか");
+    // 宣言の行ではなく、引数を取っている主手続きの行を指す
+    expect(r.diagnostics[0]?.line).toBe(1);
+  });
+
+  it("引数が文字列の主手続きは、PSB が無くてもコマンドライン引数で動く", () => {
+    const r = runProgram(
+      `p: proc(parm) options(main);
+  dcl parm char(10) varying;
+  put list(parm);
+end p;`,
+      { host: new MemoryHost({}), args: ["abc"] },
+    );
+    expect(r.ok).toBe(true);
+    expect(r.stdout.trim()).toBe("abc");
+  });
 });

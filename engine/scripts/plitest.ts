@@ -12,7 +12,7 @@
  * （PSB は実機では JCL が決めるもので、ソースには書けない）。
  */
 import { writeFileSync, mkdirSync, readdirSync, lstatSync, realpathSync, statSync } from "node:fs";
-import { join, basename, dirname, extname, relative, resolve } from "node:path";
+import { join, basename, extname, relative, resolve } from "node:path";
 import {
   isTestFileName,
   isTestSource,
@@ -21,7 +21,7 @@ import {
   toXmlReport,
   type TestReport,
 } from "../src/index.js";
-import { hostForFile } from "./node-host.js";
+import { hostForFile, psbBeside } from "./node-host.js";
 import { fail, main, positiveInt, readText, usage, value } from "./cli-util.js";
 
 const USAGE = `使い方: plitest <ファイル/ディレクトリ...> [オプション]
@@ -69,18 +69,6 @@ function collect(target: string, all: boolean, seen = new Set<string>()): string
         return [];
       }
     });
-}
-
-/** テストファイルの隣にある PSB の名前。ちょうど 1 つなら使える。 */
-function psbBeside(file: string): string | undefined {
-  try {
-    const names = readdirSync(dirname(resolve(file)))
-      .filter((n) => /\.psb$/i.test(n))
-      .map((n) => n.replace(/\.psb$/i, ""));
-    return names.length === 1 ? names[0] : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 main(() => {

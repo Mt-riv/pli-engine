@@ -177,11 +177,18 @@ COURSE  C001MATH
 |------|-----------|
 | ブラウザ版 | 「ファイル」欄に `<名前>.psb` を置く（1 つだけ）。置いてあれば DL/I が有効になる |
 | CLI | `npm run pli -- prog.pli --psb STUPSB` |
-| テスト CLI | `npm run plitest -- examples/tests --psb STUPSB` |
-| VSCode | 設定 `pli.dli.psb` |
+| テスト CLI | `npm run plitest -- examples/tests --psb STUPSB`。省略するとソースの隣の `*.psb` を使う |
+| VSCode | 設定 `pli.dli.psb`。空ならソースの隣の `*.psb` を使う |
 | プログラム | `runProgram(source, { host, psb: "STUPSB" })` |
 
+ソースの隣から拾うのは、`*.psb` が**ちょうど 1 つ**のときだけ。
+2 つ以上あるとどれを使うか決められないので、何も使わない。
+VSCode は設定から来ていない PSB を使ったときに
+出力パネルの先頭でそう言う（置き場所で挙動が変わる理由が分かるように）。
+
 指定せずに `CALL PLITDLI` に達すると、PSB が無いと言って止まる。
+主手続きが引数をポインタで宣言している（＝ PCB を受け取る）のに
+PSB が無いときは、`CALL` を待たずにその場で断る。
 
 ### PCB マスク
 
@@ -314,12 +321,16 @@ Linter の `dli-status-unchecked` が、一度も読んでいなければ指摘�
 
 - `engine/examples/tests/dli_test.pli` — PL/I で書いた 12 本のテスト。
   `STUDENT.dbd` / `STUPSB.psb` / `STUDENT.dat` / `dlipcb.inc` が同じ場所にある
+- `engine/examples/dli/stuprt.pli` — 階層順に全件並べる。主手続きが PCB の
+  ポインタを受け取る形
+- `engine/examples/screen/dbinq.pli` — 画面（MFS）と一緒に使う形（[`mfs.md`](mfs.md)）
 - ブラウザ版のサンプル「IMS/DB（DL/I）」 — 選ぶと DBD・PSB・データも一緒に入る
 
 ```bash
 cd engine
 npm run plitest -- examples/tests    # 書き戻さない。PSB は隣の *.psb を自動で使う
 npm run pli -- examples/dli/stuprt.pli --psb STUPSB
+npm run pli -- examples/screen/dbinq.pli --psb INVPSB --keys examples/screen/dbinq.keys
 ```
 
 `examples/dli/STUPSB.psb` には `CMPAT=YES` が付いていて（入出力 PCB が

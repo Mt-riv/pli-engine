@@ -7,8 +7,9 @@
  * PL/I 側から来た名前は必ず `safe-path.ts` の封じ込めを通す。
  * 通さないと `OPEN FILE(f) TITLE('../../どこか')` でソースの外を読み書きできる。
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { IMS_NAME } from "../src/index.js";
 import type { FileMode, PliFile, PliHost } from "../src/index.js";
 import {
   contain,
@@ -113,6 +114,31 @@ export class NodeHost implements PliHost {
     const kept = contain(join(this.opts.baseDir, name), this.contain);
     if (kept === undefined) this.refused.add(name);
     return kept;
+  }
+}
+
+/**
+ * ソースの隣にある PSB の名前。ちょうど 1 つあるときだけ返す。
+ *
+ * PSB は実機では JCL が決めるものでソースには書けないので、
+ * 指定が無いときの既定としてここから拾う。2 つ以上あるときは
+ * どれを使うか決められないので何も返さない（黙って選ばない）。
+ *
+ * CLI（plitest）と VSCode 拡張の両方がこれを使う。別々に持つと
+ * 同じソースが「コマンドラインでは通るのにエディタでは全部異常」になる。
+ */
+export function psbBeside(file: string): string | undefined {
+  try {
+    const names = readdirSync(dirname(resolve(file)))
+      .filter((n) => /\.psb$/i.test(n))
+      .map((n) => n.replace(/\.psb$/i, ""))
+      // IMS の名前になれないものは PSB として指定できない。
+      // 数に入れると `my-psb.psb` が 1 つあるだけで
+      // 「PSB 名 my-psb は IMS の名前として使えません」で止まる
+      .filter((n) => IMS_NAME.test(n.toUpperCase()));
+    return names.length === 1 ? names[0] : undefined;
+  } catch {
+    return undefined;
   }
 }
 

@@ -34,6 +34,14 @@ export type {
   RuleSetting,
 } from "./lint.js";
 
+/**
+ * IMS の名前（PSB・DBD・セグメントなど）の形。
+ *
+ * 名前がそのままファイル名になる入口（CLI の `--psb`、VSCode の設定、
+ * ソースの隣から拾う `*.psb`）が同じ検査を使えるように公開している。
+ */
+export { IMS_NAME } from "./macro.js";
+
 export { SNIPPETS, plainText, toVscodeSnippets } from "./snippets.js";
 export type { Snippet, VscodeSnippet } from "./snippets.js";
 
