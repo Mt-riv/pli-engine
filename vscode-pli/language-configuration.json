@@ -9,8 +9,13 @@
   ],
   "surroundingPairs": [["(", ")"], ["'", "'"], ["\"", "\""]],
   "wordPattern": "[A-Za-z_$#@][A-Za-z0-9_$#@]*",
+  "_comment_indent": [
+    "字下げの規則。`do` などが文字列やコメントの中にあるだけで増やさないよう、",
+    "行頭（またはラベルの直後）に来ている場合だけを見る。",
+    "また同じ行で `end` を書いて閉じている 1 行完結の DO 群では増やさない。"
+  ],
   "indentationRules": {
-    "increaseIndentPattern": "(?i)\\b(procedure|proc|begin|do|select)\\b[^;]*;\\s*$",
+    "increaseIndentPattern": "(?i)^\\s*(?:[A-Za-z_$#@][A-Za-z0-9_$#@]*\\s*:\\s*)*\\b(procedure|proc|begin|do|select)\\b(?![^;]*\\bend\\b)[^;]*;\\s*$",
     "decreaseIndentPattern": "(?i)^\\s*\\b(end)\\b"
   }
 }

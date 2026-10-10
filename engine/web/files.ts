@@ -16,16 +16,26 @@
 
 const SEPARATOR = /^:::[ \t]*(.+?)[ \t]*$/;
 
-/** テキストを「名前 → 中身」に分ける。区切りより前の文字は捨てる。 */
-export function parseFiles(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
+/**
+ * テキストを「区切りより前の文章」と「名前 → 中身」に分ける。
+ *
+ * 区切りより前は**捨てない**。実行後に欄を組み立て直すとき、
+ * 利用者が書いたメモや、区切り無しで貼ったテキストが消えてしまう。
+ */
+export function splitAux(text: string): {
+  preamble: string;
+  files: Record<string, string>;
+} {
+  const files: Record<string, string> = {};
+  const preambleLines: string[] = [];
   let name: string | undefined;
   let buffer: string[] = [];
 
   const flush = () => {
     if (name === undefined) return;
-    // 末尾の改行は 1 つに揃える（ファイルらしく見せるため）
-    out[name] = buffer.join("\n").replace(/\n*$/, "\n");
+    const body = buffer.join("\n");
+    // 中身が空なら空のまま。`"\n"` にすると「空行 1 つのファイル」に変わる
+    files[name] = /^\n*$/.test(body) ? "" : body.replace(/\n*$/, "\n");
   };
 
   for (const line of text.split("\n")) {
@@ -36,17 +46,35 @@ export function parseFiles(text: string): Record<string, string> {
       buffer = [];
       continue;
     }
-    if (name !== undefined) buffer.push(line);
+    if (name === undefined) preambleLines.push(line);
+    else buffer.push(line);
   }
   flush();
-  return out;
+  return { preamble: preambleLines.join("\n"), files };
 }
 
-/** 「名前 → 中身」をテキストに戻す。 */
-export function serializeFiles(files: Record<string, string>): string {
+/** テキストを「名前 → 中身」に分ける。区切りより前の文章は見ない。 */
+export function parseFiles(text: string): Record<string, string> {
+  return splitAux(text).files;
+}
+
+/**
+ * 「名前 → 中身」をテキストに戻す。
+ *
+ * `preamble` を渡すと先頭に戻す（`splitAux` と対で使う）。
+ */
+export function serializeFiles(
+  files: Record<string, string>,
+  preamble = "",
+): string {
   const parts: string[] = [];
+  const head = preamble.replace(/\n*$/, "");
+  if (head !== "") parts.push(head);
   for (const [name, contents] of Object.entries(files)) {
-    parts.push(`::: ${name}`, contents.replace(/\n$/, ""));
+    parts.push(`::: ${name}`);
+    // 中身が空なら行を足さない。足すと空行 1 つのファイルに変わる
+    const body = contents.replace(/\n$/, "");
+    if (body !== "") parts.push(body);
   }
   return parts.length === 0 ? "" : parts.join("\n") + "\n";
 }

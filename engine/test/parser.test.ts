@@ -810,3 +810,56 @@ describe("ENTRY 宣言", () => {
     }
   });
 });
+
+/**
+ * 未実装を名指しで断る。
+ *
+ * この処理系の約束は「できないことは黙って動かさず、何が未実装かを
+ * 名指しで断る」。素の構文エラーになると、綴り間違いと未実装の
+ * 区別が付かなくなるので、README が未実装として挙げた機能は
+ * 必ず名指しできることを固定する。
+ */
+describe("未実装の名指し", () => {
+  const why = (src: string): string => {
+    try {
+      parse(src);
+      return "(誤りにならなかった)";
+    } catch (e) {
+      return (e as Error).message;
+    }
+  };
+  const MAIN = (body: string) => `m: proc options(main);\n${body}\nend m;\n`;
+
+  it("README が未実装として挙げた属性を名指しする", () => {
+    for (const [code, word] of [
+      ["dcl f file keyed;", "KEYED"],
+      ["dcl f file regional;", "REGIONAL"],
+      ["dcl e event;", "EVENT"],
+      ["dcl a area(100);", "AREA"],
+      ["dcl 1 b like a;", "LIKE"],
+      ["dcl 1 u union, 2 a char(4);", "UNION"],
+      ["dcl z complex;", "COMPLEX"],
+    ] as const) {
+      const m = why(MAIN(`  ${code}`));
+      expect(m, code).toContain(word);
+      expect(m, code).toContain("未実装");
+    }
+  });
+
+  it("README が未実装として挙げた文を名指しする", () => {
+    for (const [code, word] of [
+      ["wait(e);", "WAIT"],
+      ["display('x');", "DISPLAY"],
+      ["revert error;", "REVERT"],
+      ["delete file(f);", "DELETE"],
+    ] as const) {
+      const m = why(MAIN(`  ${code}`));
+      expect(m, code).toContain(word);
+      expect(m, code).toContain("未実装");
+    }
+  });
+
+  it("知らない語は未実装とは言わない（綴り間違いと区別する）", () => {
+    expect(why(MAIN("  frobnicate x;"))).toContain("解釈できない文です");
+  });
+});

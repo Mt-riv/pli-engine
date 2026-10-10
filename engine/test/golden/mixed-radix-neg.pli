@@ -1,0 +1,10 @@
+/* 論点 1 の続き: 負の値で 0 方向への切り捨てか、負の無限方向か。
+   -0.1 × 2⁴ = -1.6。0 方向なら -1（-0.06）、床なら -2（-0.12）。 */
+mixneg: proc options(main);
+  dcl i fixed bin(15);
+  i = 1;
+  put skip list('i*(-0.1)    ', i * (-0.1));
+  put skip list('i*(-0.1)*16 ', (i * (-0.1)) * 16);
+  put skip list('i*(-0.3)*16 ', (i * (-0.3)) * 16);
+  put skip list('i*(-0.7)*16 ', (i * (-0.7)) * 16);
+end mixneg;

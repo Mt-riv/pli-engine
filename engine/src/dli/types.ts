@@ -25,7 +25,8 @@ export interface FieldDef {
   start: number;
   bytes: number;
   /** `TYPE=` の値。C（文字）だけを実際に扱う。 */
-  type: "C" | "P" | "X";
+  /** 項目の型。扱えるのは C（文字）だけ。 */
+  type: "C";
 }
 
 /** 順序キー項目（`FIELD NAME=(name,SEQ,U)`）。 */

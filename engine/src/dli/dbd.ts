@@ -8,16 +8,89 @@
  */
 
 import { DliDefError, type DbdDef, type FieldDef, type SegmentDef } from "./types.js";
-import { listOf, numberOf, readMacros, required, type MacroStmt } from "./macro.js";
+import { listOf, numberOf, readMacros, required, requiredName, type MacroStmt } from "./macro.js";
 
-/** 受け付ける `TYPE=`。実際に扱うのは C だけ。 */
-function fieldType(text: string, s: MacroStmt, file: string): "C" | "P" | "X" {
+/**
+ * `TYPE=` を読む。
+ *
+ * **扱えるのは `C`（文字）だけ。** データファイルがテキストなので、
+ * `P`（パック 10 進）と `X`（16 進）は表現できない。
+ * 受理して文字列として比較すると `'100' > '99'` が偽になり、
+ * 「書いたとおりに動いていない」ことに気づけないので名指しで断る。
+ */
+function fieldType(text: string, s: MacroStmt, file: string): "C" {
   const t = text.toUpperCase();
-  if (t === "C" || t === "P" || t === "X") return t;
-  throw new DliDefError(`FIELD の TYPE=${text} は扱えません（C / P / X）`, file, s.line);
+  if (t === "C") return t;
+  if (t === "P" || t === "X") {
+    throw new DliDefError(
+      `FIELD の TYPE=${t} は未実装です（データファイルがテキストなので ` +
+        `文字として表せる TYPE=C だけを扱う）`,
+      file,
+      s.line,
+    );
+  }
+  throw new DliDefError(`FIELD の TYPE=${text} は扱えません（C のみ）`, file, s.line);
 }
 
 /** `PARENT=0` / `PARENT=STUDENT` / `PARENT=((STUDENT,SNGL))` を名前に直す。 */
+/** この処理系が扱うアクセス方式。論理層が同じものだけ。 */
+const SUPPORTED_ACCESS = new Set(["HDAM", "HIDAM", "HISAM", "HSAM"]);
+
+/** 論理関係に使うポインタ。物理の親子だけを再現するので扱えない。 */
+const LOGICAL_POINTERS = new Set(["LTWIN", "LTWINBWD", "LPARNT", "LCHILD", "SNGL", "DBLE"]);
+
+/**
+ * `SEGM` 文のうち、論理関係に関わる書き方を断る。
+ *
+ * 再現するのは**物理の親子関係だけ**。論理関係（1 つのセグメントが
+ * 2 つの親を持つ形）は、黙って最初の親だけを採ると
+ * 「書いたとおりに動いていない」ことに気づけない。
+ */
+function checkUnsupportedSegm(s: MacroStmt, file: string): void {
+  if (s.operands.has("SOURCE")) {
+    throw new DliDefError(
+      "SOURCE= は未実装です（論理セグメントは再現しない）",
+      file,
+      s.line,
+    );
+  }
+  const parentText = s.operands.get("PARENT");
+  if (parentText !== undefined) {
+    const items = listOf(parentText);
+    // `PARENT=((A,SNGL),(Z,PHYS,DB))` のように 2 段で 2 つ以上あれば二重親
+    if (items.length > 1 && items.every((x) => x.startsWith("("))) {
+      throw new DliDefError(
+        "PARENT= に親を 2 つ以上書くこと（論理関係）は未実装です",
+        file,
+        s.line,
+      );
+    }
+    for (const item of items) {
+      for (const word of listOf(item.replace(/^\(|\)$/g, ""))) {
+        if (LOGICAL_POINTERS.has(word.toUpperCase())) {
+          throw new DliDefError(
+            `PARENT= の ${word.toUpperCase()} は未実装です（論理関係のポインタ）`,
+            file,
+            s.line,
+          );
+        }
+      }
+    }
+  }
+  const ptr = s.operands.get("POINTER");
+  if (ptr !== undefined) {
+    for (const word of listOf(ptr)) {
+      if (LOGICAL_POINTERS.has(word.toUpperCase())) {
+        throw new DliDefError(
+          `POINTER=${word.toUpperCase()} は未実装です（論理関係のポインタ）`,
+          file,
+          s.line,
+        );
+      }
+    }
+  }
+}
+
 function parentOf(text: string | undefined): string | undefined {
   if (text === undefined) return undefined;
   let first = listOf(text)[0] ?? "";
@@ -44,9 +117,22 @@ export function parseDbd(text: string, file: string): DbdDef {
         if (name !== undefined) {
           throw new DliDefError("DBD 文が 2 つあります", file, s.line);
         }
-        name = required(s, "NAME", file).toUpperCase();
+        name = requiredName(s, "NAME", file);
         const a = s.operands.get("ACCESS");
-        if (a !== undefined) access = (listOf(a)[0] ?? access).toUpperCase();
+        if (a !== undefined) {
+          const want = (listOf(a)[0] ?? access).toUpperCase();
+          // 論理層だけを再現するので HDAM / HIDAM / HISAM / HSAM は同じ扱い。
+          // DEDB（高速機能）と GSAM は構造からして違うので名指しで断る
+          if (!SUPPORTED_ACCESS.has(want)) {
+            throw new DliDefError(
+              `ACCESS=${want} は未実装です（HDAM / HIDAM / HISAM / HSAM のみ。` +
+                `これらは論理層が同じなので同じに扱う）`,
+              file,
+              s.line,
+            );
+          }
+          access = want;
+        }
         break;
       }
       case "DATASET":
@@ -60,10 +146,11 @@ export function parseDbd(text: string, file: string): DbdDef {
         if (name === undefined) {
           throw new DliDefError("SEGM 文の前に DBD 文が必要です", file, s.line);
         }
-        const segName = required(s, "NAME", file).toUpperCase();
+        const segName = requiredName(s, "NAME", file);
         if (segments.has(segName)) {
           throw new DliDefError(`セグメント ${segName} が 2 回定義されています`, file, s.line);
         }
+        checkUnsupportedSegm(s, file);
         const parent = parentOf(s.operands.get("PARENT"));
         if (parent === undefined) {
           if (root !== undefined) {

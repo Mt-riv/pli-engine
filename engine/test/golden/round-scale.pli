@@ -1,0 +1,9 @@
+/* ROUND の結果の尺度。n 桁に揃うのか、元の尺度を保つのか。 */
+rsc: proc options(main);
+  dcl x fixed dec(5,1);
+  x = 12.5;
+  put skip list('round(x,3)    ', round(x, 3));
+  put skip list('round(x,1)    ', round(x, 1));
+  put skip list('round(x,0)    ', round(x, 0));
+  put skip list('round(1.005,2)', round(1.005, 2));
+end rsc;

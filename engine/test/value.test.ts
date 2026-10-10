@@ -88,6 +88,28 @@ describe("除算の精度規則", () => {
   it("0 除算はエラー", () => {
     expect(() => div(bin(1), bin(0))).toThrow();
   });
+
+  /*
+   * **10 進の最大精度は 15 桁。実機とは意図的に違えている。**
+   *
+   * 突き合わせに使っている処理系（Iron Spring PL/I 1.4.1）の N は **18** で、
+   * `put list(1/3)` が `0.33333333333333333`（小数 17 桁）になる。
+   * この処理系は 15 なので `0.33333333333333`（14 桁）。
+   *   実機: dcl b fixed dec(18); も受け付け、18 桁をそのまま出す
+   *
+   * 15 を選んでいるのは、互換の目標が **IBM PL/I for MVS and VM 1.1** で、
+   * そこでの FIXED DECIMAL の上限が 15 桁だからである（Iron Spring も MVS 1.1
+   * 互換を謳っているが、この点は実機側の拡張）。表明の窓 FIXED DEC(15,5) や
+   * 文書の「15 桁」もここに揃えてある。
+   *
+   * 除算の結果の桁数は N で決まるので、**どんな除算もゴールデンでは
+   * バイト一致しない**。だから golden/decimal.pli には除算を入れていない。
+   */
+  it("DEC の最大精度は 15（実機の 18 ではない）", () => {
+    const r = div(fixedFromLiteral("1"), fixedFromLiteral("3"));
+    expect(r).toMatchObject({ base: "dec", p: 15, q: 14 });
+    expect(render(r)).toBe("0.33333333333333");
+  });
 });
 
 describe("基数が混在した場合", () => {
@@ -158,5 +180,82 @@ describe("文字への変換", () => {
   it("数値を文字列に連結できる形にする", () => {
     // hanoi.pli の 'move' || f のために必要
     expect(toCharString(bin(1))).toBe("             1");
+  });
+});
+
+/**
+ * 基数混在。
+ *
+ * README の表どおり BINARY に変換する（13 の階乗がちょうど溢れることで
+ * 裏が取れている）。ただし**尺度も移す**必要がある。
+ * 以前は整数尺度（q=0）に落としていたため、`I`〜`N` の暗黙変数
+ * （FIXED BIN(15,0)）と小数を混ぜたごく普通のコードで、
+ * 小数部が黙って消えていた。比較まで逆の答えを返していた。
+ */
+describe("基数混在", () => {
+  const dec = (v: string) => fixedFromLiteral(v);
+  const bin = (v: number) => makeFixed("bin", 15, 0, BigInt(v));
+
+  it("結果は BINARY になる", () => {
+    expect(mul(bin(10), dec("1.5")).base).toBe("bin");
+  });
+
+  it("小数部を捨てない", () => {
+    // 10 * 1.5 = 15。以前は 1.5 を 1 と見て 10 を返していた
+    expect(Number(render(mul(bin(10), dec("1.5"))))).toBeCloseTo(15, 6);
+    expect(Number(render(add(bin(10), dec("0.5"))))).toBeCloseTo(10.5, 6);
+  });
+
+  it("比較が正しい向きになる", () => {
+    // 以前は 10 = 10.5 が真、10 < 10.5 が偽だった
+    expect(compare(bin(10), dec("10.5"))).toBeLessThan(0);
+    expect(compare(bin(10), dec("10.5"))).not.toBe(0);
+    expect(compare(bin(11), dec("10.5"))).toBeGreaterThan(0);
+  });
+
+  it("2 進尺度は 10 進桁数から決まる（1 桁 ≒ 3.32 ビット）", () => {
+    // DEC(2,1) → q = ceil(1 * log2(10)) = 4
+    const r = mul(bin(1), dec("1.5"));
+    expect(r.q).toBe(4);
+  });
+
+  it("2 進で表せない小数は丸められる（混在そのものの性質）", () => {
+    // 0.1 は 2 進では循環小数。Linter が mixed-base-arithmetic で
+    // 警告するのはこのため
+    const r = mul(bin(10), dec("0.1"));
+    expect(Number(render(r))).not.toBe(10);
+    expect(Number(render(r))).toBeGreaterThan(0.5);
+    expect(Number(render(r))).toBeLessThan(2);
+  });
+
+  /*
+   * 端数の扱いは**実機（Iron Spring PL/I 1.4.1）で確かめた**。
+   * `dcl i fixed bin(15); i = 1;` として:
+   *   put list(i*0.1)        →  0.06      （四捨五入なら 0.12）
+   *   put list((i*0.1)*16)   →  1.00      （四捨五入なら 2.00）
+   *   put list((i*0.3)*16)   →  4.00      （四捨五入なら 5.00）
+   *   put list((i*(-0.1))*16) → -1.00     （床なら -2.00）
+   * 2 進尺度を掛け戻すと蓄えた整数がそのまま見えるので、丸めの向きが分かる。
+   */
+  it("尺度を移すときの端数は 0 方向へ切り捨てる", () => {
+    // DEC(2,1) の 0.1 は q = 4 の 2 進尺度へ移る。0.1 × 2⁴ = 1.6 なので
+    // 切り捨てなら 1（0.0625）、四捨五入なら 2（0.125）
+    const r = mul(bin(1), dec("0.1"));
+    expect(r.q).toBe(4);
+    expect(r.v).toBe(1n);
+    // 0.3 × 2⁴ = 4.8。四捨五入なら 5
+    expect(mul(bin(1), dec("0.3")).v).toBe(4n);
+  });
+
+  it("負の値も 0 方向へ切り捨てる（床ではない）", () => {
+    // -0.1 × 2⁴ = -1.6。0 方向なら -1、床なら -2
+    expect(mul(bin(1), dec("-0.1")).v).toBe(-1n);
+    expect(mul(bin(1), dec("-0.3")).v).toBe(-4n);
+  });
+
+  it("整数同士は正確（13 の階乗がちょうど溢れる根拠を保つ）", () => {
+    let acc = makeFixed("bin", 31, 0, 1n);
+    for (let i = 2; i <= 12; i++) acc = mul(acc, dec(String(i)));
+    expect(render(acc).trim()).toBe("479001600");
   });
 });

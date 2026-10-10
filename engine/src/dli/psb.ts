@@ -14,7 +14,7 @@ import {
   type SensegDef,
 } from "./types.js";
 import { concatenatedKeyLength } from "./dbd.js";
-import { listOf, readMacros, required } from "./macro.js";
+import { listOf, readMacros, required, requiredName } from "./macro.js";
 
 /** DBD の名前から定義を引く。読めなければ undefined。 */
 export type DbdResolver = (name: string) => DbdDef | undefined;
@@ -54,7 +54,7 @@ export function parsePsb(text: string, file: string, resolveDbd: DbdResolver): P
         if (type !== "DB") {
           throw new DliDefError(`PCB の TYPE=${type} は扱えません（DB / TP）`, file, s.line);
         }
-        const dbdName = required(s, "DBDNAME", file).toUpperCase();
+        const dbdName = requiredName(s, "DBDNAME", file);
         const dbd = resolveDbd(dbdName);
         if (dbd === undefined) {
           throw new DliDefError(
@@ -82,7 +82,7 @@ export function parsePsb(text: string, file: string, resolveDbd: DbdResolver): P
         if (current === undefined || current.kind !== "db") {
           throw new DliDefError("SENSEG 文の前に PCB TYPE=DB が必要です", file, s.line);
         }
-        const segName = required(s, "NAME", file).toUpperCase();
+        const segName = requiredName(s, "NAME", file);
         const seg = current.dbd!.segments.get(segName);
         if (seg === undefined) {
           throw new DliDefError(

@@ -308,3 +308,108 @@ end p;`;
     expect(found).toEqual([]);
   });
 });
+
+/**
+ * 誤検知の修正。
+ *
+ * Linter の誤検知は「切られる」ことに直結するので、
+ * 直したものは出なくなったことと、本物は出続けることを対で固定する。
+ */
+describe("誤検知", () => {
+  it("BASED の locator ポインタを「代入したが読んでいない」とは言わない", () => {
+    const src = MAIN(`  dcl p pointer;
+  dcl cell fixed bin(31) based(p);
+  allocate cell set(p);
+  cell = 5;
+  put list(cell);`);
+    expect(only(lint(src), "assigned-but-never-read")).toEqual([]);
+    expect(only(lint(src), "unused-variable")).toEqual([]);
+  });
+
+  it("SET 無しの ALLOCATE でも宣言の based(p) を使ったとみなす", () => {
+    const src = MAIN(`  dcl p pointer;
+  dcl cell fixed bin(31) based(p);
+  allocate cell;
+  cell = 5;
+  put list(cell);`);
+    expect(only(lint(src), "assigned-but-never-read")).toEqual([]);
+  });
+
+  it("再 ALLOCATE したら free-then-use を出さない", () => {
+    const src = MAIN(`  dcl p pointer;
+  dcl cell fixed bin(31) based(p);
+  allocate cell set(p);
+  cell = 1;
+  free p -> cell;
+  allocate cell set(p);
+  p -> cell = 2;
+  put list(p -> cell);`);
+    expect(only(lint(src), "free-then-use")).toEqual([]);
+  });
+
+  it("FREE したまま使えば free-then-use は出る", () => {
+    const src = MAIN(`  dcl p pointer;
+  dcl cell fixed bin(31) based(p);
+  allocate cell set(p);
+  cell = 1;
+  free p -> cell;
+  put list(p -> cell);`);
+    expect(only(lint(src), "free-then-use")).toHaveLength(1);
+  });
+
+  it("endfile-without-on は OPEN では出さず、読む文で 1 回だけ出す", () => {
+    const src = MAIN(`  dcl f file stream input;
+  dcl x fixed bin(31);
+  open file(f) input title('X');
+  get file(f) list(x);
+  put list(x);
+  close file(f);`);
+    const found = only(lint(src), "endfile-without-on");
+    expect(found).toHaveLength(1);
+    // OPEN は 3 行目、GET は 4 行目
+    expect(found[0]?.line).toBe(5);
+  });
+});
+
+describe("自己呼び出しだけの手続き", () => {
+  it("呼ばれていないものとして報告する", () => {
+    const src = MAIN(`  put list('hi');
+  dead: proc;
+    call dead;
+  end dead;`);
+    const found = only(lint(src), "unused-procedure");
+    expect(found).toHaveLength(1);
+    expect(found[0]?.message).toMatch(/自分自身からしか/);
+  });
+
+  it("外から呼ばれていれば報告しない（再帰は正しい書き方）", () => {
+    const src = MAIN(`  call rec(3);
+  rec: proc(n);
+    dcl n fixed bin(31);
+    if n > 0 then call rec(n - 1);
+  end rec;`);
+    expect(only(lint(src), "unused-procedure")).toEqual([]);
+  });
+});
+
+describe("未宣言の名前に括弧を付けて読んだとき", () => {
+  it("知っている組込関数なら「未実装」と言う（「暗黙に宣言されます」では嘘になる）", () => {
+    const found = only(lint(MAIN("  put list(sqrt(16));")), "implicit-declaration");
+    expect(found).toHaveLength(1);
+    expect(found[0]?.message).toMatch(/未実装/);
+  });
+
+  it("知らない名前なら「未知の関数」と言う（綴り間違いと区別する）", () => {
+    const found = only(
+      lint(MAIN("  put list(nosuchname(16));")),
+      "implicit-declaration",
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]?.message).toMatch(/未知の関数/);
+  });
+
+  it("添字付きの代入は暗黙宣言のまま（実行時も動く）", () => {
+    const found = only(lint(MAIN("  a(1) = 2;\n  put list(a(1));")), "implicit-declaration");
+    expect(found[0]?.message).toMatch(/暗黙に/);
+  });
+});

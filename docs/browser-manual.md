@@ -8,7 +8,7 @@
 ```bash
 cd engine
 npm ci
-npm run web:build          # dist-web/index.html ができる（約 124KB）
+npm run web:build          # dist-web/index.html ができる（HTML 1 枚）
 ```
 
 | OS | 開き方 |
@@ -43,8 +43,8 @@ npm run web:build          # dist-web/index.html ができる（約 124KB）
 
 | 部品 | 役割 |
 |------|------|
-| サンプル | 12 本の例を読み込む。すべて実行可能 |
-| Snippet | 38 本の定型を挿入する。挿入位置の字下げに合わせて貼られる |
+| サンプル | 13 本の例を読み込む。すべて実行可能 |
+| Snippet | 43 本の定型を挿入する。挿入位置の字下げに合わせて貼られる |
 | 実行 | プログラムを動かす（`Ctrl+Enter` でも可） |
 | ファイル | 下の引き出しを開閉する（付随ファイルと標準入力） |
 | 検査 | 実行せずに Linter をかける |
@@ -89,7 +89,7 @@ TEST_DECIMAL_IS_EXACT: proc;
   call ASSERT_EQUALS(0.3, x, '10進なら誤差が出ない');
 end TEST_DECIMAL_IS_EXACT;
 
-DISABLED_TEST_WIP: proc;   /* DISABLED_ が付くと省略される */
+DISABLED_TEST_WIP: proc;   /* 接頭辞 DISABLED_TEST_ が付くと省略される */
   call FAIL('まだ書いていない');
 end DISABLED_TEST_WIP;
 ```
@@ -174,7 +174,8 @@ end p;
 ```
 
 - 名前の大文字小文字は区別しません
-- `%INCLUDE decls;` は `decls` → `decls.inc` → `decls.pli` の順に探します
+- `%INCLUDE decls;` は `decls` → `decls.inc` → `decls.pli` → `decls.pl1` →
+`decls.cpy` → `decls.plinc` の順に探します
 - 入出力は `data` に対して `data.txt` / `data.dat` / `data.csv` も試します
   （PL/I のファイル名は識別子なので `.` を書けないため）
 - **プログラムが書き出したファイルは、実行後この欄に現れます**。
@@ -254,7 +255,8 @@ file:///.../index.html#s=aGVsbG86IHByb2Mgb3B0aW9ucyhtYWluKTsK...
 - `http(s)://` で開いている場合は URL をクリップボードにコピーします
 - `file://` ではクリップボードが使えないので、アドレスバーを書き換えます。
   そこからコピーしてください
-- その URL を開くと内容が復元されます（保存した内容より優先）
+- その URL を開くと内容が復元されます。**ソースだけでなく付随ファイルと標準入力も載る**ので、`%INCLUDE` やファイル入出力、DL/I を使ったプログラムも受け取った側で動きます。
+受け取った側では**自動では実行しません**。中身を確かめてから「実行する」を押してください（保存した内容より優先）
 - Base64 で約 1.33 倍になるため、長いソースはブラウザの URL 長上限に
   当たります。その場合はファイルを直接渡してください
 
@@ -278,7 +280,7 @@ file:///.../index.html#s=aGVsbG86IHByb2Mgb3B0aW9ucyhtYWluKTsK...
 ## 制限
 
 - 自作処理系のサブセットです。未実装の機能は名指しで報告します
-  （一覧は [`../README.md`](../README.md) の「自作処理系の限界」）
+  （一覧は [`../README.md`](../README.md) の「処理系の限界」）
 - レコード入出力の区切りは**行**です。固定長レコードを扱う処理系では
   改行を含まないバイト列として読むものもあるので、他の処理系へ持っていく
   データはその点を確かめてください

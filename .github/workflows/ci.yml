@@ -1,0 +1,82 @@
+# テストと型検査を push / PR ごとに走らせる。
+#
+# これが無いと、壊れたコードが気づかれないまま入る。
+# `plitest` と `plilint` はこのリポジトリ自身のゲートでもあるので、
+# 「ゲートが効いていること」もここで確かめる。
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+# 既定を読み取りだけにする。書き込みが必要なジョブで個別に上げる
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: engine/package-lock.json
+      - run: npm ci
+      - name: 型検査
+        run: npm run typecheck
+      - name: テスト
+        run: npm test
+      - name: PL/I で書いたテスト
+        run: npm run plitest -- examples/tests
+      - name: Linter（同梱の例に指摘が出ないこと）
+        run: npm run plilint -- examples --strict
+      - name: ブラウザ版のビルド
+        run: npm run web:build
+      - name: 出荷物に runtime 依存の脆弱性が無いこと
+        run: npm audit --omit=dev --audit-level=low
+
+  # 突き合わせ用の処理系は別リポジトリ（pli-oracle）にあり、CI では動かさない。
+  # ゴールデンの期待値は `engine/test/golden/` に固定してあり、
+  # 上の `npm test` がバイト一致を要求する。取り直す手順は
+  # `engine/test/golden/README.md` にある。
+
+  vscode:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode-pli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: vscode-pli/package-lock.json
+      - run: npm ci
+      - name: 型検査
+        run: npm run typecheck
+      - name: テスト
+        run: npm test
+      - name: 拡張のバンドル
+        run: npm run build
+      - name: vsix を作る
+        run: npx @vscode/vsce package --out pli-lang.vsix
+      - name: 出荷物に runtime 依存の脆弱性が無いこと
+        run: npm audit --omit=dev --audit-level=low
+      # リリースに添付する資産を、作者のローカルではなく CI で作れるようにする。
+      # 手元でビルドしたバイナリを検証手段なしで配るのを避けるため
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: vscode-pli/pli-lang.vsix
+          if-no-files-found: error

@@ -52,8 +52,8 @@ Extension を直しながら試す場合は、**`vscode-pli/` フォルダを VS
 | 実行 | `PL/I: 実行`（`Ctrl+Alt+R` / `Cmd+Alt+R`） |
 | 引数付き実行 | `PL/I: 引数を指定して実行` |
 | テスト | `PL/I: テストを実行`（`Ctrl+Alt+T` / `Cmd+Alt+T`） |
-| Linter | 入力中に自動。13 規則 |
-| Snippet | 38 本。`main` `dow` `getlist` などを入力して `Tab` |
+| Linter | 入力中に自動。14 規則 |
+| Snippet | 43 本。`main` `dowhile` `getlist` などを入力して `Tab` |
 
 コマンドはすべてコマンドパレット（`Ctrl+Shift+P` / `Cmd+Shift+P`）から
 `PL/I:` で引けます。
@@ -187,7 +187,7 @@ IF IF = THEN THEN THEN = ELSE;
 ```bash
 cd vscode-pli
 npm ci
-npm test          # 49 件（VSCode を起動せずに動く）
+npm test          # VSCode を起動せずに動く
 npm run typecheck
 npm run build     # esbuild で dist/extension.js（処理系を同梱）
 ```

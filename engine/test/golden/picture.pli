@@ -1,0 +1,10 @@
+/* PICTURE の桁編集。engine/README.md が
+   `$$$,$$9V.99` に 1234.5 を入れると " $1,234.50" になると書いている。 */
+picture: proc options(main);
+  dcl amount pic'$$$,$$9V.99';
+  dcl z pic'ZZ9V.99';
+  amount = 1234.5;
+  z = 12.34;
+  put skip list('[' || amount || ']');
+  put skip list('[' || z || ']');
+end picture;

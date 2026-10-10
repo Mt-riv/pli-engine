@@ -13,7 +13,11 @@
 
 import type { DataAttr, DeclItem, Expr, FormatItem, Program, Ref, Stmt } from "./ast.js";
 import { groupNames, qualifyDeclareItems } from "./declare.js";
-import { BUILTIN_NAMES, BUILTIN_SUBROUTINE_NAMES } from "./interp.js";
+import {
+  BUILTIN_NAMES,
+  BUILTIN_SUBROUTINE_NAMES,
+  UNIMPLEMENTED_BUILTINS,
+} from "./interp.js";
 import { parse } from "./parser.js";
 import type { PliHost } from "./host.js";
 import { ASSERT_PROCEDURES, isTestSource } from "./testing.js";
@@ -187,7 +191,8 @@ function forEachStmt(body: readonly Stmt[], fn: (s: Stmt) => void): void {
         );
         break;
       case "on":
-        forEachStmt([s.body], fn);
+        // `ON ... SYSTEM;` は本体を持たない（既定動作へ戻すだけ）
+        if (s.body !== undefined) forEachStmt([s.body], fn);
         break;
       default:
         break;
@@ -210,6 +215,14 @@ export interface LintOptions {
   rules?: Record<string, RuleSetting>;
   /** `%INCLUDE` の解決に使う。渡さないと取り込みのあるソースは検査できない。 */
   host?: PliHost;
+  /**
+   * このソースは単独のプログラムではなく、`%INCLUDE` される断片か。
+   *
+   * コピーブック（`.inc` / `.cpy` / `.plinc`）は宣言だけを並べた
+   * 断片なので、`missing-main` と「使われていない変数」は当たらない。
+   * これを渡さないと、開いただけで宣言の数だけ警告が並ぶ。
+   */
+  fragment?: boolean;
 }
 
 /**
@@ -243,6 +256,11 @@ interface VarInfo {
    */
   isBased?: boolean;
   /**
+   * `based(p)` に書いた locator ポインタの名前（大文字）。
+   * `ALLOCATE` に `SET` が無いときの暗黙の対象になる。
+   */
+  basedPointer?: string;
+  /**
    * DL/I の PCB マスクの項目。中身は DL/I が埋めるもので、
    * プログラムは必要な項目だけ読む。読まない項目があって当然なので
    * 「代入したが読んでいない」の判定から外す。
@@ -262,6 +280,11 @@ interface ProcInfo {
    * 呼ばれていなくても指摘しない。
    */
   isExternal?: boolean;
+  /**
+   * 自分自身からの呼び出しの回数。
+   * 再帰だけでは外から入る道が無いので、`unused-procedure` の判定で引く。
+   */
+  selfCalls?: number;
 }
 
 class LintScope {
@@ -318,6 +341,7 @@ class Linter {
     private readonly source: string,
     private readonly severity: (id: string) => LintSeverity | undefined,
     isTest: boolean,
+    private readonly fragment = false,
   ) {
     this.injected = isTest ? ASSERT_PROCEDURES : new Set<string>();
   }
@@ -353,7 +377,7 @@ class Linter {
     this.walkBody(program.body, global, { inOnUnit: false });
     this.reportUnused(global);
 
-    if (this.enabled("missing-main") && !this.injected.size) {
+    if (this.enabled("missing-main") && !this.injected.size && !this.fragment) {
       const hasMain = program.body.some((s) => s.kind === "procedure" && s.isMain);
       if (!hasMain) {
         const first = program.body[0];
@@ -407,7 +431,7 @@ class Linter {
           if (s.otherwise) this.collect([s.otherwise], scope);
           break;
         case "on":
-          this.collect([s.body], scope);
+          if (s.body !== undefined) this.collect([s.body], scope);
           break;
         default:
           break;
@@ -463,14 +487,36 @@ class Linter {
           writes: 0,
           mentions: 0,
           ...(item.based === undefined ? {} : { isBased: true }),
+          ...(item.based?.pointer === undefined
+            ? {}
+            : { basedPointer: item.based.pointer.name.toUpperCase() }),
         });
         // DEFINED の基底は参照されたとみなす
         if (item.defined) this.read(item.defined, scope, line);
+
       }
     }
   }
 
   // ---- 参照の記録 ----
+
+  /** ポインタに新しい値が入ったら「解放済み」ではなくなる。 */
+  private clearFreed(ref: Ref): void {
+    this.freedPointers.delete(ref.name.toUpperCase());
+  }
+
+  /**
+   * BASED 変数を修飾なしで参照したときの locator の扱い。
+   *
+   * `dcl cell fixed bin based(p); cell = 5;` は、処理系が `p` を
+   * たどって記憶域を見る。数えないと `p` が
+   * 「代入したが一度も読んでいない」に見える（BASED の典型形で必ず出る）。
+   */
+  private readBasedLocator(v: VarInfo | undefined, scope: LintScope): void {
+    if (v?.basedPointer === undefined) return;
+    const ptr = scope.lookupVar(v.basedPointer);
+    if (ptr) ptr.reads++;
+  }
 
   private read(ref: Ref, scope: LintScope, line: number, asMention = false): void {
     const key = ref.name.toUpperCase();
@@ -486,11 +532,12 @@ class Linter {
     if (v) {
       if (asMention) v.mentions++;
       else v.reads++;
+      if (ref.locator === undefined) this.readBasedLocator(v, scope);
     } else if (scope.lookupProc(key)) {
       // 関数としての呼び出し
       scope.lookupProc(key)!.calls++;
     } else if (!BUILTIN_NAMES.has(key) && !this.injected.has(key) && !scope.hasName(key)) {
-      this.implicit(ref.name, line);
+      this.implicit(ref.name, line, ref.subscripts.length > 0);
     }
     if (ref.locator) this.read(ref.locator, scope, line);
     if (SHAPE_BUILTINS.has(key) && !scope.lookupVar(key)) {
@@ -516,12 +563,45 @@ class Linter {
     const key = ref.name.toUpperCase();
     if (ref.locator) this.read(ref.locator, scope, line);
     const v = scope.lookupVar(key);
-    if (v) v.writes++;
-    else if (!scope.hasName(key) && !this.injected.has(key)) this.implicit(ref.name, line);
+    if (v) {
+      v.writes++;
+      if (ref.locator === undefined) this.readBasedLocator(v, scope);
+    } else if (!scope.hasName(key) && !this.injected.has(key)) {
+      this.implicit(ref.name, line);
+    }
     for (const sub of ref.subscripts) this.expr(sub, scope, line);
   }
 
-  private implicit(name: string, line: number): void {
+  /**
+   * 宣言の無い名前を報告する。
+   *
+   * `asCall` は「括弧を付けて値として読んだ」場合。
+   * この処理系はそれを配列の添字ではなく関数呼び出しと見て
+   * 「未知の関数です」で止めるので、暗黙宣言とは違う言い方にする。
+   * 揃えないと、Linter が「暗黙に宣言されます」と言ったものが
+   * 実行時に止まることになる。
+   */
+  private implicit(name: string, line: number, asCall = false): void {
+    const upperName = name.toUpperCase();
+    // 知っている組込関数で未実装のものは、そう言う。
+    // 「暗黙に宣言されます」と言うと、実行すると止まるので嘘になる
+    if (UNIMPLEMENTED_BUILTINS.has(upperName)) {
+      this.report(
+        "implicit-declaration",
+        line,
+        `${name} は PL/I の組込関数ですが、この処理系では未実装です。` +
+          "使うと実行時に止まります。",
+      );
+      return;
+    }
+    if (asCall) {
+      this.report(
+        "implicit-declaration",
+        line,
+        `${name} は宣言されていません。関数として呼ぶと実行時に「未知の関数です」で止まります。`,
+      );
+      return;
+    }
     const upper = name.toUpperCase();
     const first = upper[0] ?? "";
     const kind =
@@ -610,11 +690,11 @@ class Linter {
 
   // ---- 文の走査 ----
 
-  private walkBody(body: Stmt[], scope: LintScope, ctx: { inOnUnit: boolean }): void {
+  private walkBody(body: Stmt[], scope: LintScope, ctx: WalkCtx): void {
     for (const s of body) this.walk(s, scope, ctx);
   }
 
-  private walk(s: Stmt, scope: LintScope, ctx: { inOnUnit: boolean }): void {
+  private walk(s: Stmt, scope: LintScope, ctx: WalkCtx): void {
     switch (s.kind) {
       case "procedure": {
         const inner = new LintScope(scope);
@@ -632,7 +712,7 @@ class Linter {
           });
         }
         this.collect(s.body, inner);
-        this.walkBody(s.body, inner, ctx);
+        this.walkBody(s.body, inner, { ...ctx, proc: s.name.toUpperCase() });
         this.reportUnused(inner);
         return;
       }
@@ -667,7 +747,7 @@ class Linter {
         return;
       case "open":
         for (const f of s.files) {
-          this.useFile(f.name, s.line, f.attrs.mode ?? "output");
+          this.useFile(f.name, s.line, f.attrs.mode ?? "output", false);
           this.openedFiles.add(f.name.toUpperCase());
           for (const e of [f.attrs.lineSize, f.attrs.pageSize, f.attrs.title]) {
             if (e) this.expr(e, scope, s.line);
@@ -675,7 +755,7 @@ class Linter {
         }
         return;
       case "close":
-        for (const name of s.files) this.useFile(name, s.line, "output");
+        for (const name of s.files) this.useFile(name, s.line, "output", false);
         return;
       case "record": {
         this.useFile(s.file, s.line, s.op === "read" ? "input" : "output");
@@ -688,7 +768,17 @@ class Linter {
       case "allocate": {
         const v = scope.lookupVar(s.name.toUpperCase());
         if (v) v.writes++;
-        if (s.set) this.write(s.set, scope, s.line);
+        if (s.set) {
+          this.write(s.set, scope, s.line);
+          // 再確保したので「解放済み」ではなくなる
+          this.freedPointers.delete(s.set.name.toUpperCase());
+        } else if (v?.basedPointer !== undefined) {
+          // SET が無ければ宣言の based(p) が対象。
+          // その p は「書かれた」ので assigned-but-never-read に出さない
+          const ptr = scope.lookupVar(v.basedPointer);
+          if (ptr) ptr.writes++;
+          this.freedPointers.delete(v.basedPointer);
+        }
         return;
       }
       case "free":
@@ -741,12 +831,15 @@ class Linter {
         if (s.otherwise) this.walk(s.otherwise, scope, ctx);
         return;
       case "on":
-        this.walk(s.body, scope, { inOnUnit: true });
+        if (s.body !== undefined) this.walk(s.body, scope, { ...ctx, inOnUnit: true });
         return;
       case "call": {
         const key = s.name.toUpperCase();
         const proc = scope.lookupProc(key);
-        if (proc) proc.calls++;
+        if (proc) {
+          proc.calls++;
+          if (ctx.proc === key) proc.selfCalls = (proc.selfCalls ?? 0) + 1;
+        }
         else if (
           !BUILTIN_SUBROUTINE_NAMES.has(key) &&
           !this.injected.has(key) &&
@@ -827,7 +920,19 @@ class Linter {
   /**
    * ファイルを使ったことを記録し、宣言の有無と ENDFILE の備えを見る。
    */
-  private useFile(name: string, line: number, mode: "input" | "output" | "update"): void {
+  /**
+   * ファイル名の使用を記録する。
+   *
+   * `checkEndfile` が偽なら `endfile-without-on` を見ない。
+   * `OPEN` と `CLOSE` は**読む文ではない**ので、ここで見ると
+   * 実際に読む `GET` / `READ` の行と二重に出る。
+   */
+  private useFile(
+    name: string,
+    line: number,
+    mode: "input" | "output" | "update",
+    checkEndfile = true,
+  ): void {
     const key = name.toUpperCase();
     if (
       !BUILTIN_FILES.has(key) &&
@@ -841,7 +946,12 @@ class Linter {
         `ファイル ${name} は宣言されていません。既定属性が割り当てられ、そのまま動いてしまいます。`,
       );
     }
-    if (mode === "input" && !this.endfileCovered.has(key) && !this.endfileCovered.has("")) {
+    if (
+      checkEndfile &&
+      mode === "input" &&
+      !this.endfileCovered.has(key) &&
+      !this.endfileCovered.has("")
+    ) {
       this.report(
         "endfile-without-on",
         line,
@@ -886,6 +996,9 @@ class Linter {
 
   private reportUnused(scope: LintScope): void {
     this.reportDliStatus(scope);
+    // 断片（コピーブック）は、宣言を取り込んだ側が使う。
+    // ここだけ見て「使われていない」とは言えない
+    if (this.fragment) return;
     for (const v of scope.vars.values()) {
       if (v.isParam) continue; // 引数は呼ぶ側の都合なので対象にしない
       if (v.isBased) continue; // BASED は別の記憶域を見るための窓
@@ -907,8 +1020,15 @@ class Linter {
       }
     }
     for (const p of scope.procs.values()) {
-      if (p.calls === 0 && !p.isMain && !p.isExternal && !calledByFramework(p.name)) {
-        this.report("unused-procedure", p.line, `手続き ${p.name} は呼ばれていません。`);
+      // 自己呼び出しだけでは「呼ばれている」ことにならない。
+      // 外から入口が無いので、その手続きは一度も実行されない
+      const fromOutside = p.calls - (p.selfCalls ?? 0);
+      if (fromOutside <= 0 && !p.isMain && !p.isExternal && !calledByFramework(p.name)) {
+        const why =
+          (p.selfCalls ?? 0) > 0
+            ? `手続き ${p.name} は自分自身からしか呼ばれていません。`
+            : `手続き ${p.name} は呼ばれていません。`;
+        this.report("unused-procedure", p.line, why);
       }
     }
   }
@@ -946,7 +1066,25 @@ export function lint(source: string, opts: LintOptions = {}): LintMessage[] {
     isTest = false;
   }
 
-  return new Linter(source, severity, isTest).run(program);
+  return new Linter(source, severity, isTest, opts.fragment === true).run(program);
+}
+
+/** 走査中の文脈。 */
+interface WalkCtx {
+  /** ON 単位の中か（GOTO の扱いが変わる）。 */
+  inOnUnit: boolean;
+  /** いま走査している手続きの名前（大文字）。自己呼び出しの判定に使う。 */
+  proc?: string;
+}
+
+/**
+ * `%INCLUDE` される断片（コピーブック）として扱う名前か。
+ *
+ * 3 つの入口で同じ判定を使うために、ここに置く。
+ * 拡張子で見るのは実機の慣習（`.inc` / `.cpy`）に合わせたもの。
+ */
+export function isFragmentFileName(fileName: string): boolean {
+  return /\.(inc|cpy|plinc)$/i.test(fileName);
 }
 
 /** 人が読む形にまとめる。CLI 用。 */

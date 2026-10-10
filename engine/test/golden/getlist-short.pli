@@ -1,0 +1,8 @@
+/* GET LIST で ENDFILE がいつ上がるか、読めた値は代入されるか。
+   getlist-short: 入力は同名の .in を見る。 */
+getlistshort: proc options(main);
+  dcl (a, b) fixed bin(31);
+  on endfile(sysin) put skip list('ENDFILE');
+  get list(a, b);
+  put skip list('a=', a, 'b=', b);
+end getlistshort;

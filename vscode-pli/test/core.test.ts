@@ -214,6 +214,39 @@ describe("runTestsForEditor", () => {
     expect(o.report.total).toBe(0);
     expect(o.text).toContain("テストが見つかりません");
   });
+
+  it("報告に失敗した行を出す", () => {
+    // TESTS の 7 行目が失敗する表明
+    expect(runTestsForEditor(TESTS, "a_test.pli").text).toContain("失敗 (7 行)");
+  });
+
+  it("失敗した行に印を付ける", () => {
+    const o = runTestsForEditor(TESTS, "a_test.pli");
+    expect(o.diagnostics).toHaveLength(1);
+    // VSCode は 0 始まりなので 7 行目は line=6
+    expect(o.diagnostics[0]?.range.start.line).toBe(6);
+    expect(o.diagnostics[0]?.source).toBe("pli-test");
+    expect(o.diagnostics[0]?.message).toContain("TEST_NG");
+    expect(o.diagnostics[0]?.message).toContain("わざと間違える");
+  });
+
+  it("成功だけなら印を付けない", () => {
+    const o = runTestsForEditor(
+      "TEST_OK: proc;\n  call ASSERT_EQUALS(4, 2 + 2, '足し算');\nend TEST_OK;\n",
+      "a_test.pli",
+    );
+    expect(o.report.ok).toBe(true);
+    expect(o.diagnostics).toEqual([]);
+  });
+
+  it("異常で終わったテストにも印を付ける", () => {
+    const o = runTestsForEditor(
+      "TEST_E: proc;\n  dcl a fixed dec(3,0);\n  a = 99999;\nend TEST_E;\n",
+      "a_test.pli",
+    );
+    expect(o.report.errors).toBe(1);
+    expect(o.diagnostics[0]?.range.start.line).toBe(2);
+  });
 });
 
 describe("snippetCompletions", () => {
@@ -328,5 +361,45 @@ end p;`;
   it("psb が空なら DL/I は動かず、PSB が無いと言う", () => {
     const outcome = runForEditor(SRC, "t.pli", { host: host(), psb: "" });
     expect(outcome.result.diagnostics[0]?.message).toContain("PSB");
+  });
+});
+
+/**
+ * `%INCLUDE` 先の誤りの帰属。
+ *
+ * 取り込み先の行番号を本体にそのまま当てると、無関係な行に赤線が出る。
+ * 「診断が嘘になる」のを防ぐために `%INCLUDE` の行へまとめる。
+ */
+describe("取り込み先の診断", () => {
+  const source = [
+    "m: proc options(main);",
+    "  %include decls;",
+    "  put list(x);",
+    "end m;",
+  ].join("\n");
+
+  it("%INCLUDE の行に出し、ファイル名と元の行を添える", () => {
+    const diags = toEditorDiagnostics(source, [
+      {
+        severity: "error",
+        phase: "parse",
+        line: 4,
+        col: 5,
+        file: "decls.inc",
+        message: "セミコロン が必要です",
+      },
+    ]);
+    expect(diags).toHaveLength(1);
+    // 本体の 4 行目（end m;）ではなく 2 行目（%include）
+    expect(diags[0]?.range.start.line).toBe(1);
+    expect(diags[0]?.message).toContain("decls.inc 4行5桁");
+  });
+
+  it("本体の誤りはその行のまま", () => {
+    const diags = toEditorDiagnostics(source, [
+      { severity: "error", phase: "parse", line: 3, col: 3, message: "誤り" },
+    ]);
+    expect(diags[0]?.range.start.line).toBe(2);
+    expect(diags[0]?.message).not.toContain("行");
   });
 });

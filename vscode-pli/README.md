@@ -11,13 +11,14 @@ PL/I の構文強調・診断・実行・テスト・Snippet・Linter を VSCode
 
 | 機能 | 内容 |
 |------|------|
-| 構文強調 | TextMate 文法。キーワード133語、組込関数98語 |
+| 構文強調 | TextMate 文法。キーワード 133 語、組込関数 98 語（うち 21 種は実装済み。残りは別スコープ） |
 | 診断 | 入力中に構文を検査し、問題タブに行・桁付きで表示 |
 | 実行 | `PL/I: 実行`（`Cmd/Ctrl+Alt+R`）で出力パネルに結果を表示 |
 | 引数付き実行 | `PL/I: 引数を指定して実行` で主手続きに引数を渡す |
 | テスト | `PL/I: テストを実行`（`Cmd/Ctrl+Alt+T`） |
-| Snippet | 38本。`main` `proc` `dow` `sel` `onerr` などを入力して展開 |
-| Linter | 入力中に 13 規則で検査。問題タブに規則 id 付きで出る |
+| Snippet | 43 本。`main` `proc` `dowhile` `sel` `onerr` などを入力して展開 |
+| Linter | 入力中に 14 規則で検査。問題タブに規則 id 付きで出る |
+| IMS/DB（DL/I） | `CALL PLITDLI` で階層型データベースを読み書きする。設定 `pli.dli.psb` に PSB の名前を入れると有効になる |
 
 対応する拡張子: `.pli` `.pl1` `.plinc` `.inc` `.cpy`
 
@@ -67,6 +68,33 @@ end TEST_MOD;
 | `pli.run.maxOutputBytes` | `1000000` | 出力の上限（文字数） |
 | `pli.lint.enabled` | `true` | 入力中に Linter をかける |
 | `pli.lint.rules` | `{}` | 規則ごとの上書き（`off` / `info` / `warning` / `error`） |
+| `pli.dli.psb` | `""` | IMS/DB（DL/I）で使う PSB の名前。入れると `<名前>.psb` を読み、主手続きの引数が PCB のポインタになる。空なら DL/I を使わない |
+
+## IMS/DB（DL/I）
+
+設定 `pli.dli.psb` に PSB の名前（拡張子なし）を入れると、`CALL PLITDLI` で
+階層型データベースを読み書きできる。`<PSB 名>.psb` / `<DBD 名>.dbd` /
+`<DBD 名>.dat` を、開いているファイルの隣かワークスペース直下に置く。
+空のままなら DL/I は使わない（`CALL PLITDLI` は「PSB が指定されていません」と
+言って止まる）。
+
+PSB 名は IMS の規則どおり 1〜8 桁の英数字と `$ # @` だけを受け付ける。
+そのままファイル名になるので、形が違う値は無視して警告を出す。
+
+書き方の詳細はリポジトリの `docs/dli.md`。
+
+## 読み書きするファイルの範囲
+
+`%INCLUDE` とファイル入出力は、**開いているファイルのディレクトリと
+ワークスペースのフォルダの中だけ**を読み書きする。`../` や絶対パスで
+外へ出ることはできず、シンボリックリンクも実体の位置で判定する。
+
+`PL/I: テストを実行` は実ファイルへ書き戻さない。テストが書いたファイルで
+次回の結果が変わらないようにするためで、CLI の `plitest` と同じ約束。
+
+この Extension は**信頼済みのワークスペースでしか動かない**
+（`capabilities.untrustedWorkspaces: false`）。ワークスペースの設定と
+ソースを読んで解析するため。
 
 ## 構文強調の限界
 
@@ -105,7 +133,7 @@ VSCode を起動せずにテストできる。
 
 ```bash
 npm install
-npm test        # 49 件
+npm test        # VSCode を起動せずに動く
 npm run typecheck
 npm run build   # esbuild で dist/extension.js にバンドル（エンジン同梱）
 ```
@@ -133,3 +161,7 @@ npx @vscode/vsce package
 ```
 
 生成された `.vsix` は `code --install-extension pli-lang-0.2.0.vsix` で導入できる。
+
+## ライセンス
+
+MIT License（Copyright (c) 2026 Mt-riv）。同梱の `LICENSE` を参照。

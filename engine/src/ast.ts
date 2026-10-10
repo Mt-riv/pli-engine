@@ -18,6 +18,12 @@ export type DataAttr =
    */
   | { type: "pointer" }
   /**
+   * 型を書いていない宣言（`dcl x;`）。
+   * 属性は名前の先頭文字で決まる（暗黙宣言と同じ規則）ので、
+   * 名前が分かる時点まで決定を遅らせる。
+   */
+  | { type: "implicit" }
+  /**
    * PICTURE 属性。数値編集の指定を原文のまま持つ。
    * 解析は `picture.ts` が行う（構文解析の段では文字列として扱う）。
    */
@@ -52,6 +58,15 @@ export interface Ref {
   kind: "ref";
   name: string;
   subscripts: Expr[];
+  /**
+   * 括弧が書かれていたか（`date()` と `date` の区別）。
+   *
+   * 引数が無い関数呼び出しは `subscripts` が空になるので、
+   * これが無いと「未宣言のスカラ」と見分けが付かない。
+   * 見分けが付かないと `date()` が暗黙宣言の 0 になり、
+   * 「未知の関数です」と断れない。
+   */
+  called?: boolean;
   /**
    * ポインタ修飾（`p -> x` の `p`）。
    * BASED 変数をどの記憶域で見るかを指定する。
@@ -99,6 +114,13 @@ export interface DeclItem {
    * 基底変数の要素への別名になる。添字に iSUB を含められる。
    */
   defined?: Ref;
+  /**
+   * 記憶域クラス。`"static"` なら手続きを抜けても値が残る。
+   *
+   * 持たせないと `dcl cnt fixed bin(15) static init(0);` が
+   * 呼ぶたびに 0 へ戻り、呼び出し回数を数える定型が黙って壊れる。
+   */
+  storage?: "static" | "automatic";
 }
 
 /**
@@ -193,7 +215,12 @@ export type Stmt =
       condition: string;
       /** ENDFILE(SYSIN) のようにファイルを取る条件での対象ファイル。 */
       conditionFile?: string;
-      body: Stmt;
+      /**
+       * ON 単位。`ON ... SYSTEM;` は本体を持たず、既定動作へ戻す
+       * （それまでに置いた ON 単位の解除）。空の本体を置くと
+       * 「何もしない ON 単位」になり、復帰して実行を続けてしまう。
+       */
+      body?: Stmt;
       line: number;
     }
   | { kind: "signal"; condition: string; conditionFile?: string; line: number }

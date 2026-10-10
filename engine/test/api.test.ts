@@ -93,6 +93,69 @@ end h;`;
   });
 });
 
+/**
+ * 誤りが手続きの中で起きたときの呼び出しの鎖。
+ *
+ * 誤りの行だけでは足りない場合がある。処理系が前置きを差し込む作り
+ * （テストフレームワーク）では、誤りの行が利用者のソースのどこでもない
+ * 場所を指すことがあり、そのときは呼び出し元から辿る必要がある。
+ */
+describe("呼び出し元の行", () => {
+  it("手続きの中で起きた誤りは呼んだ側の行を持つ", () => {
+    const r = runProgram(`m: proc options(main);
+  call sub;
+end m;
+sub: proc;
+  dcl a fixed dec(3,0);
+  a = 99999;
+end sub;
+`);
+    expect(r.ok).toBe(false);
+    expect(r.diagnostics[0]?.line).toBe(6);
+    expect(r.diagnostics[0]?.callerLines).toEqual([2]);
+  });
+
+  it("入れ子なら外側から内側の順に並ぶ", () => {
+    const r = runProgram(`m: proc options(main);
+  call a;
+end m;
+a: proc;
+  call b;
+end a;
+b: proc;
+  dcl n fixed dec(3,0);
+  n = 99999;
+end b;
+`);
+    expect(r.diagnostics[0]?.callerLines).toEqual([2, 5]);
+  });
+
+  it("主手続きの中で起きた誤りには入らない（呼んだ側が無い）", () => {
+    const r = runProgram(
+      "m: proc options(main);\n dcl a fixed dec(3,0);\n a = 99999;\nend m;",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.diagnostics[0]?.callerLines).toBeUndefined();
+  });
+
+  it("文数の上限で止まったときも鎖を持つ", () => {
+    const r = runProgram(
+      "m: proc options(main);\n call loop;\nend m;\nloop: proc;\n do while('1'b); end;\nend loop;",
+      { maxSteps: 10000 },
+    );
+    expect(r.ok).toBe(false);
+    expect(r.diagnostics[0]?.callerLines).toEqual([2]);
+  });
+
+  it("正常終了したプログラムには付かない", () => {
+    const r = runProgram(
+      "m: proc options(main);\n call sub;\nend m;\nsub: proc;\n put list('HI');\nend sub;",
+    );
+    expect(r.ok).toBe(true);
+    expect(r.diagnostics).toEqual([]);
+  });
+});
+
 describe("VERSION", () => {
   it("バージョン文字列を公開する", () => {
     expect(VERSION).toMatch(/^\d+\.\d+\.\d+/);

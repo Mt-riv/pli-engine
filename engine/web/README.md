@@ -1,6 +1,6 @@
 # ブラウザ版
 
-`pli-engine` をブラウザだけで動かす **HTML 1枚**。
+`pli-engine` をブラウザだけで動かす **HTML 1 枚**。
 サーバもインターネット接続も要らない。
 
 > **使い方の手引きは [`../../docs/browser-manual.md`](../../docs/browser-manual.md)。**
@@ -12,8 +12,9 @@
 **このファイルを渡して、ダブルクリックで開いてもらえばそれで動く。**
 
 ```bash
-npm install
-npm run web:build     # dist-web/index.html（約124KB）ができる
+cd ..                 # このファイルの 1 つ上（engine/）で叩く
+npm ci
+npm run web:build     # dist-web/index.html（HTML 1 枚）ができる
 open dist-web/index.html   # macOS。Windows は start、Linux は xdg-open
 ```
 
@@ -26,7 +27,7 @@ npm run web:dev       # 開発サーバ（編集が即反映される）
 npm run web:preview   # ビルド結果を確認
 ```
 
-## なぜ HTML 1枚なのか
+## なぜ HTML 1 枚なのか
 
 `<script type="module" src="...">` で外部ファイルを読む形にすると、
 `file://` で開いたときに CORS で弾かれて動かない。
@@ -43,8 +44,8 @@ npm run web:preview   # ビルド結果を確認
 - 行番号付きエディタ、診断をクリックすると該当行へジャンプ
 - URL のハッシュにソースを載せて共有
 - `localStorage` に自動保存
-- サンプル12本（すべて実行できることをテストで保証している）
-- **Snippet38本** — ヘッダの「Snippet…」から挿入する。
+- サンプル 13 本（すべて実行できることをテストで保証している）
+- **Snippet 43 本** — ヘッダの「Snippet…」から挿入する。
   挿入位置の字下げに合わせて貼られる
 - **テストモード** — 主手続きが無く `TEST_` 手続きがあるファイルは、
   「実行」でテストとして走り、成功・失敗の一覧を出す
