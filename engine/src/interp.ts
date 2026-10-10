@@ -56,6 +56,7 @@ import {
   binDigitsToDec,
   compare,
   div,
+  fixedFromFloat,
   fixedFromLiteral,
   makeBit,
   makeChar,
@@ -2597,7 +2598,9 @@ export class Interpreter {
           return assignTo(f, attr.base, attr.p, attr.q);
         }
         case "float": {
-          const n = Number(render(this.toFixed(value, line)));
+          // 既に FLOAT なら、そのまま持つ。FIXED を経由させると
+          // 10 進 15 桁に丸められ、1e-9 のような値が 0 になる
+          const n = value.t === "float" ? value.v : Number(render(this.toFixed(value, line)));
           return { t: "float", base: attr.base, p: attr.p, v: n };
         }
         case "char": {
@@ -2642,7 +2645,12 @@ export class Interpreter {
       throw new RuntimeError("ポインタは数値として扱えません", line);
     }
     if (v.t === "fixed") return v;
-    if (v.t === "float") return fixedFromLiteral(String(v.v));
+    if (v.t === "float") {
+      if (!Number.isFinite(v.v)) {
+        this.raiseChecked("CONVERSION", `FIXED にできません: ${v.v}`, line);
+      }
+      return fixedFromFloat(v.v);
+    }
     if (v.t === "bit") return makeFixed("bin", Math.max(1, v.v.length), 0, BigInt(parseInt(v.v || "0", 2)));
     const s = v.v.trim();
     if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(s)) {
@@ -2656,6 +2664,16 @@ export class Interpreter {
   private eval(e: Expr, scope: Scope, line: number): Value {
     switch (e.kind) {
       case "num":
+        // PL/I の指数付き定数は**浮動小数点定数**。FIXED として読むと
+        // 小数が消える（`2.5e-8` が 0 になっていた）。
+        // GET の入力と同じ扱い（FLOAT DEC(6)）に揃える
+        if (/[eE]/.test(e.text)) {
+          const n = Number(e.text);
+          if (!Number.isFinite(n)) {
+            this.raiseChecked("CONVERSION", `浮動小数点定数が大きすぎます: ${e.text}`, line);
+          }
+          return { t: "float", base: "dec", p: 6, v: n };
+        }
         return fixedFromLiteral(e.text);
       case "isub":
         // iSUB は DEFINED の解決時に実際の添字へ置き換えられる。
@@ -2868,6 +2886,14 @@ export class Interpreter {
     }
     if (a.t === "bit" && b.t === "bit") {
       return a.v === b.v ? 0 : a.v < b.v ? -1 : 1;
+    }
+    if (a.t === "float" || b.t === "float") {
+      // FLOAT はこの処理系では JavaScript の数値なので、比較もそれで行う。
+      // FIXED に直してから比べると、10 進 15 桁より細かい値や
+      // 大きすぎる値が丸められて `1e-9 > 0` が偽になる
+      const x = numberOfValue(a, line);
+      const y = numberOfValue(b, line);
+      return x === y ? 0 : x < y ? -1 : 1;
     }
     return compare(asFixed(a, line), asFixed(b, line));
   }
@@ -3210,12 +3236,22 @@ function roundPrecision(a: FixedVal, n: number): number {
   );
 }
 
+/**
+ * JavaScript の数値として取り出す。
+ *
+ * FLOAT はこの処理系では JS の数値そのものなので、FLOAT が絡む
+ * 演算と比較はこれを通す。FIXED を経由させると 10 進 15 桁に
+ * 丸められ、`1e-9` のような値が 0 になる。
+ */
+function numberOfValue(v: Value, line: number): number {
+  if (v.t === "float") return v.v;
+  if (v.t === "fixed") return Number(render(v));
+  if (v.t === "bit") return parseInt(v.v || "0", 2);
+  throw new RuntimeError("数値として扱えません", line);
+}
+
 function floatArith(op: string, a: Value, b: Value, line: number): Value {
-  const num = (v: Value): number => {
-    if (v.t === "float") return v.v;
-    if (v.t === "fixed") return Number(render(v));
-    throw new RuntimeError("数値として扱えません", line);
-  };
+  const num = (v: Value): number => numberOfValue(v, line);
   // 結果の精度は両辺の精度の大きい方。**FIXED の辺も数に入れる**
   // （FIXED(p,q) は FLOAT(p) に変換されてから演算されるため）。
   // 実機で確認: 4**1.5 / 9**0.5 / 2**10 はどれも FLOAT DEC(2) で
@@ -3309,7 +3345,12 @@ function asFixed(v: Value, line: number): FixedVal {
     throw new RuntimeError("ポインタは数値として扱えません", line);
   }
   if (v.t === "fixed") return v;
-  if (v.t === "float") return fixedFromLiteral(String(v.v));
+  if (v.t === "float") {
+    if (!Number.isFinite(v.v)) {
+      throw new RuntimeError(`FIXED にできません: ${v.v}`, line);
+    }
+    return fixedFromFloat(v.v);
+  }
   if (v.t === "bit") {
     return makeFixed("bin", Math.max(1, v.v.length), 0, BigInt(parseInt(v.v || "0", 2)));
   }

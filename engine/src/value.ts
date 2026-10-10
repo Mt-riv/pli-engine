@@ -171,18 +171,74 @@ export function makeBit(v: string, length?: number): BitVal {
  * PL/I の算術定数は FIXED DECIMAL で、桁数がそのまま精度になる。
  */
 export function fixedFromLiteral(text: string): FixedVal {
-  if (/[eE]/.test(text)) {
-    // 指数表記は FLOAT として扱う
-    return makeFixed("dec", MAX_DEC, 0, BigInt(Math.trunc(Number(text))));
-  }
   const neg = text.startsWith("-");
   const body = text.replace(/^[+-]/, "");
-  const dot = body.indexOf(".");
-  const digits = body.replace(".", "");
-  const q = dot < 0 ? 0 : body.length - dot - 1;
-  const p = Math.max(digits.length, 1);
-  const v = BigInt(digits === "" ? "0" : digits);
+  // 指数の部分。PL/I の指数付き定数は浮動小数点定数なので、
+  // ふつうはここへ来ない（`interp.ts` が FLOAT の値にする）。
+  // それでも**小数点の位置をずらして**正しく持つ。以前は
+  // `BigInt(Math.trunc(Number(text)))` で整数に切っていて、
+  // `2.5e-8` が 0 になり `1e400` では生の JS 例外が漏れていた
+  const eAt = body.search(/[eE]/);
+  const exp = eAt < 0 ? 0 : Number(body.slice(eAt + 1));
+  const mant = eAt < 0 ? body : body.slice(0, eAt);
+  const dot = mant.indexOf(".");
+  const digits = mant.replace(".", "");
+  // 精度は**書かれた桁数**（PL/I の規定）。`0.1` は 2 桁なので p=2。
+  // ここを値の桁数にすると算術の精度規則が変わり、出力幅がずれる
+  // （golden の mixed-radix が `0.06` の幅で固定している）
+  let p = Math.max(digits.length, 1);
+  let q = (dot < 0 ? 0 : mant.length - dot - 1) - exp;
+  let v = BigInt(digits === "" ? "0" : digits);
+  if (q < 0) {
+    // 小数点が右へ出る分は整数側へ寄せる
+    v *= ipow(10n, -q);
+    p += -q;
+    q = 0;
+  } else {
+    p = Math.max(p, q);
+  }
   return makeFixed("dec", p, q, neg ? -v : v);
+}
+
+/**
+ * FLOAT の値を FIXED DECIMAL にする。
+ *
+ * `fixedFromLiteral(String(v))` を通してはいけない。JavaScript は
+ * `|x| < 1e-6` と `|x| >= 1e21` を指数表記で文字列化するので、
+ * 以前はその経路で**桁がまるごと消えて 0 になっていた**
+ * （`a = 0.001` のとき `a*a*a` の表示は `1.00000E-0009` なのに
+ * 比較では 0 になり、`a*a*a > 0` が偽になった）。
+ *
+ * 仮数と指数を分けて、10 進の尺度付き整数として組む。
+ * 10 進の最大精度（15 桁）に収まらない小さな値は 0 方向へ切り捨てる
+ * （FIXED への代入と同じ向き）。呼ぶ前に `Number.isFinite` を確かめること。
+ */
+export function fixedFromFloat(x: number): FixedVal {
+  if (x === 0) return makeFixed("dec", 1, 0, 0n);
+  const [mant, expText] = x.toExponential(MAX_DEC - 1).split("e");
+  const exp = Number(expText);
+  const neg = mant!.startsWith("-");
+  // 仮数の数字だけ（MAX_DEC 桁）。末尾の 0 は尺度を無駄に増やすので落とす
+  const digits = mant!.replace(/^[+-]/, "").replace(".", "").replace(/0+$/, "") || "0";
+  // digits は 10^(digits.length - 1) の位から始まる整数
+  let q = digits.length - 1 - exp;
+  let v = BigInt(digits);
+  if (q < 0) {
+    v *= ipow(10n, -q);
+    q = 0;
+  } else if (q > MAX_DEC) {
+    // FIXED DEC(15,15) より細かい桁は持てない
+    v = truncateScale(v, q - MAX_DEC);
+    q = MAX_DEC;
+  }
+  const p = Math.max(v.toString().length, q, 1);
+  return makeFixed("dec", p, q, neg ? -v : v);
+}
+
+/** 10 進で n 桁ぶん 0 方向へ切り捨てる。 */
+function truncateScale(v: bigint, n: number): bigint {
+  const div = ipow(10n, n);
+  return v < 0n ? -(-v / div) : v / div;
 }
 
 /** 尺度を newQ に合わせる（切り捨て）。 */

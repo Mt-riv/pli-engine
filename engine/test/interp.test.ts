@@ -140,6 +140,71 @@ describe("FLOAT", () => {
     const r = out("m: proc options(main); x = 7; y = 2; put skip list(x / y); end m;");
     expect(r.split("\n")[1]).toHaveLength(15); // 幅14 + 空白1
   });
+
+  /**
+   * FLOAT を FIXED に直すときに文字列を経由してはいけない。
+   *
+   * JS は `|x| < 1e-6` と `|x| >= 1e21` を指数表記で文字列化するので、
+   * `fixedFromLiteral(String(v))` を通すと桁がまるごと消えて 0 になる。
+   * 表示（`render`）は `v.v` を直に見るため、**表示は正しいのに
+   * 比較と代入では 0** という食い違いになっていた。
+   */
+  describe("小さすぎる FLOAT が 0 に落ちない", () => {
+    it("表示と比較が食い違わない", () => {
+      const src = `m: proc options(main);
+  dcl a float dec(6);
+  a = 0.001;
+  put skip list(a*a*a);
+  if a*a*a > 0 then put skip list('POSITIVE');
+  if a*a*a = 0 then put skip list('ZERO');
+end m;`;
+      const r = out(src);
+      expect(r).toContain("1.00000E-0009");
+      expect(r).toContain("POSITIVE");
+      expect(r).not.toContain("ZERO");
+    });
+
+    it("代入しても桁が消えない", () => {
+      const src = `m: proc options(main);
+  dcl (a, b) float dec(6);
+  a = 0.001;
+  b = a*a;
+  b = b*a;
+  put skip list(b);
+end m;`;
+      expect(out(src)).toContain("1.00000E-0009");
+    });
+  });
+
+  /**
+   * 指数付き定数は PL/I の規定では**浮動小数点定数**。
+   * FIXED として読むと小数が消え（`2.5e-8` が 0）、
+   * 表現できない大きさでは `BigInt` の生の例外が漏れていた。
+   */
+  describe("指数付き定数", () => {
+    it("FLOAT DEC(6) として読む", () => {
+      expect(out("m: proc options(main); put skip list(1.5e3); end m;")).toContain(
+        " 1.50000E+0003",
+      );
+      expect(out("m: proc options(main); put skip list(2.5e-8); end m;")).toContain(
+        " 2.50000E-0008",
+      );
+    });
+
+    it("大きすぎる定数は名指しで断る（生の JS 例外にしない）", () => {
+      const r = runRaw("m: proc options(main); put list(1e400); end m;");
+      expect(r.error).toContain("浮動小数点定数が大きすぎます");
+    });
+
+    it("FIXED へ代入すれば丸められる", () => {
+      const src = `m: proc options(main);
+  dcl n fixed dec(7,2);
+  n = 1.5e3;
+  put skip list(n);
+end m;`;
+      expect(out(src).replace(/\s+/g, "")).toBe("1500.00");
+    });
+  });
 });
 
 describe("制御構造", () => {
