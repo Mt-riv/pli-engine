@@ -35,7 +35,7 @@ export interface Leftover {
 function keyOfTemplate(node: ts.TemplateLiteral): string {
   if (ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
   let key = node.head.text;
-  node.templateSpans.forEach((span, i) => {
+  node.templateSpans.forEach((span: ts.TemplateSpan, i: number) => {
     key += `{${i}}${span.literal.text}`;
   });
   return key;
@@ -115,7 +115,8 @@ export function scanSource(
       }
     } else if (ts.isTemplateExpression(node)) {
       const fixed =
-        node.head.text + node.templateSpans.map((s) => s.literal.text).join("");
+        node.head.text +
+        node.templateSpans.map((span: ts.TemplateSpan) => span.literal.text).join("");
       if (CJK.test(fixed) && !isCovered(node) && !isExcluded(node)) {
         leftovers.push({ text: fixed, file, line: at(node) });
       }

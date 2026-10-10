@@ -24,6 +24,7 @@ import {
   withLocale,
 } from "../src/i18n/index.js";
 import { EN } from "../src/i18n/en.js";
+import { EXT_EN } from "../../vscode-pli/src/i18n.en.js";
 import { scanTree } from "../scripts/i18n-keys.js";
 import { lint, formatLint, runProgram, runTestSource, formatReport } from "../src/index.js";
 
@@ -124,6 +125,38 @@ describe("英語の表", () => {
 
   it("鍵は keyOf と同じ形（差し込みは {0} から）", () => {
     expect(keyOf(["a", "b", "c"])).toBe("a{0}b{1}c");
+  });
+});
+
+/**
+ * VSCode 拡張の中で定義した文字列。
+ *
+ * **こちらで見るのは、構文木の走査に `typescript` が要るため。**
+ * それは engine の devDependency なので、`vscode-pli` の `npm ci` だけでは
+ * 入っていない（CI の vscode ジョブで実際に落ちた）。
+ * 表そのものの検査（空・差し込みの数・日本語の残り・エンジンの表との
+ * 食い違い）は `vscode-pli/test/i18n.test.ts` にある。
+ */
+describe("VSCode 拡張の中の文字列", () => {
+  const ext = scanTree([resolve(ROOT, "..", "vscode-pli", "src")], resolve(ROOT, ".."));
+  const keys = new Set(ext.keys.map((k) => k.key));
+
+  it("鍵が見つかる（抽出が壊れていないこと）", () => {
+    expect(keys.size).toBeGreaterThan(20);
+  });
+
+  it("m で包み忘れた日本語が無い", () => {
+    expect(ext.leftovers.map((l) => `${l.file}:${l.line} ${l.text.slice(0, 40)}`)).toEqual(
+      [],
+    );
+  });
+
+  it("すべての鍵に訳がある", () => {
+    expect([...keys].filter((k) => (EXT_EN[k] ?? "") === "")).toEqual([]);
+  });
+
+  it("使われていない鍵が残っていない", () => {
+    expect(Object.keys(EXT_EN).filter((k) => !keys.has(k))).toEqual([]);
   });
 });
 

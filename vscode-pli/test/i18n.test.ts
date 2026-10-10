@@ -3,10 +3,15 @@
  *
  * 見るのは 3 つ。
  *
- *   1. `src/` の中の日本語が全部表に入っていて、訳が空でないこと
- *   2. `package.json` の `%鍵%` が ja / en の両方の nls に揃っていること
+ *   1. `package.json` の `%鍵%` が ja / en の両方の nls に揃っていること
  *      （欠けると VSCode は `%鍵%` をそのまま画面に出す）
+ *   2. エンジンの表と食い違う訳を書いていないこと
  *   3. どの言語を使うかの決め方（`chooseLocale`）
+ *
+ * **`src/` の中の日本語を集めて突き合わせるのは engine 側の
+ * `test/i18n.test.ts`。** 構文木の走査に `typescript` が要り、
+ * それは engine の devDependency なので、こちらの `npm ci` だけでは
+ * 入っていない（CI の vscode ジョブで実際に落ちた）。
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -14,30 +19,15 @@ import { join, resolve } from "node:path";
 import { chooseLocale } from "../src/core.js";
 import { EXT_EN } from "../src/i18n.en.js";
 import { EN } from "../../engine/src/i18n/en.js";
-import { scanTree } from "../../engine/scripts/i18n-keys.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const scan = scanTree([join(ROOT, "src")], ROOT);
 
 const read = (name: string): Record<string, string> =>
   JSON.parse(readFileSync(join(ROOT, name), "utf8")) as Record<string, string>;
 
-describe("拡張の中の文字列", () => {
-  const keys = new Set(scan.keys.map((k) => k.key));
-
-  it("m で包み忘れた日本語が無い", () => {
-    expect(scan.leftovers.map((l) => `${l.file}:${l.line} ${l.text.slice(0, 40)}`)).toEqual(
-      [],
-    );
-  });
-
-  it("すべての鍵に英訳がある", () => {
-    const missing = [...keys].filter((k) => (EXT_EN[k] ?? "") === "");
-    expect(missing, "engine で npm run gen:i18n のあと訳を書く").toEqual([]);
-  });
-
-  it("使われていない鍵が残っていない", () => {
-    expect(Object.keys(EXT_EN).filter((k) => !keys.has(k))).toEqual([]);
+describe("英語の表", () => {
+  it("訳が空の鍵が無い", () => {
+    expect(Object.entries(EXT_EN).filter(([, v]) => v === "").map(([k]) => k)).toEqual([]);
   });
 
   it("差し込みの数が鍵と訳で一致する", () => {
