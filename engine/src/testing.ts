@@ -21,7 +21,7 @@
 
 import type { PliHost } from "./host.js";
 import { parse } from "./parser.js";
-import { runProgram, type ProgramOptions } from "./run.js";
+import { runProgram, type Diagnostic, type ProgramOptions } from "./run.js";
 
 /** 出力に混ぜる目印。実行結果から状態を読み取るために使う。 */
 const MARK = "__PLITEST:";
@@ -64,6 +64,27 @@ export const ASSERT_PRELUDE = `
     return(s);
   end __NUM;
 
+  /* ASSERT_NEAR 用。小数 10 桁で受ける（__NUM は 5 桁なので表示が落ちる）。
+     整数部は 5 桁までなので、大きな値には __NUM を使う。 */
+  __NUMW: proc(v) returns(char(32) varying);
+    dcl v fixed dec(15,10);
+    dcl s char(32) varying;
+    s = v;
+    do while(length(s) > 0 & substr(s, 1, 1) = ' ');
+      s = substr(s, 2);
+    end;
+    do while(length(s) > 0 & substr(s, length(s), 1) = ' ');
+      s = substr(s, 1, length(s) - 1);
+    end;
+    if index(s, '.') > 0 then do;
+      do while(substr(s, length(s), 1) = '0');
+        s = substr(s, 1, length(s) - 1);
+      end;
+      if substr(s, length(s), 1) = '.' then s = substr(s, 1, length(s) - 1);
+    end;
+    return(s);
+  end __NUMW;
+
   __ABORT: proc(kind, msg);
     dcl kind char(8) varying;
     dcl msg  char(200) varying;
@@ -93,6 +114,11 @@ export const ASSERT_PRELUDE = `
     if cond then call FAIL(msg || ' : 偽であるべきところが真');
   end ASSERT_FALSE;
 
+  /* 数値の比較は FIXED DEC(15,5) で行う。この処理系の 10 進精度の上限が
+     15 桁なので、整数部 10 桁・小数部 5 桁が見える窓になる。
+       - 小数 6 桁目以降の差は見えない（丸めてから比べる）
+       - 整数部が 11 桁以上なら FIXEDOVERFLOW で異常終了する
+     どちらかに当たるなら ASSERT_NEAR か ASSERT_EQUALS_CHAR を使う。 */
   ASSERT_EQUALS: proc(expected, actual, msg);
     dcl expected fixed dec(15,5);
     dcl actual   fixed dec(15,5);
@@ -100,6 +126,20 @@ export const ASSERT_PRELUDE = `
     if expected ^= actual then
       call FAIL(msg || ' : 期待 ' || __NUM(expected) || ' / 実際 ' || __NUM(actual));
   end ASSERT_EQUALS;
+
+  /* 許容差を自分で決めて比べる。小数 6 桁目以降を見たいときに使う。 */
+  ASSERT_NEAR: proc(expected, actual, tol, msg);
+    dcl expected fixed dec(15,10);
+    dcl actual   fixed dec(15,10);
+    dcl tol      fixed dec(15,10);
+    dcl diff     fixed dec(15,10);
+    dcl msg      char(200) varying;
+    diff = expected - actual;
+    if diff < 0 then diff = -diff;
+    if diff > tol then
+      call FAIL(msg || ' : 期待 ' || __NUMW(expected) || ' / 実際 ' || __NUMW(actual)
+                || ' / 許容差 ' || __NUMW(tol));
+  end ASSERT_NEAR;
 
   ASSERT_NOT_EQUALS: proc(unexpected, actual, msg);
     dcl unexpected fixed dec(15,5);
@@ -127,6 +167,7 @@ export const ASSERT_PRELUDE = `
  */
 export const ASSERT_PROCEDURES: ReadonlySet<string> = new Set([
   "ASSERT_EQUALS",
+  "ASSERT_NEAR",
   "ASSERT_NOT_EQUALS",
   "ASSERT_EQUALS_CHAR",
   "ASSERT_TRUE",
@@ -209,6 +250,14 @@ export interface TestResult {
   status: TestStatus;
   /** 失敗・異常・読み飛ばしの理由。 */
   message?: string;
+  /**
+   * 失敗・異常が起きた**テストファイルの中の**行番号（1 始まり）。
+   *
+   * 駆動プログラムの行ではない。前置きの中で起きた誤り
+   * （表明の変換での桁あふれなど）は、呼び出し元をたどって
+   * テストファイルの行に直してある。たどれなければ入らない。
+   */
+  line?: number;
   stdout: string;
   durationMs: number;
 }
@@ -229,6 +278,24 @@ export interface TestReport {
 }
 
 /**
+ * 1 件分の駆動プログラムと、その中での利用者のソースの位置。
+ *
+ * 位置を持つのは**報告の行番号を利用者のソースに合わせるため**。
+ * 前置き（表明の一式）が 80 行ほどあるので、駆動プログラムの行番号を
+ * そのまま出すと、どの表明で落ちたのか分からない。
+ */
+interface Driver {
+  text: string;
+  /**
+   * 利用者のソースの前に入る行数。
+   * 駆動プログラムの `offset + k` 行目が、利用者のソースの `k` 行目。
+   */
+  offset: number;
+  /** 利用者のソースの行数。 */
+  sourceLines: number;
+}
+
+/**
  * 1件分の駆動プログラムを組み立てる。
  *
  * ON ERROR を仕掛けてあるので、表明の失敗（signal error）でも
@@ -237,27 +304,75 @@ export interface TestReport {
  * TEARDOWN 自身が異常を起こしたときに ON 単位へ再入しないよう
  * 旗で守っている。
  */
-function buildDriver(
-  source: string,
-  testName: string,
-  d: Discovery,
-): string {
+function buildDriver(source: string, testName: string, d: Discovery): Driver {
   const setup = d.hasSetup ? "  call SETUP;\n" : "";
   const teardown = d.hasTeardown ? "  call TEARDOWN;\n" : "";
   const teardownOnError = d.hasTeardown
     ? "      if ^__INTD then do; __INTD = '1'b; call TEARDOWN; end;\n"
     : "";
-  return `__PLITEST_RUNNER: proc options(main);
-  dcl __INTD bit(1);
-  __INTD = '0'b;
-${ASSERT_PRELUDE}
-${source}
-  on error
-    begin;
-${teardownOnError}    end;
-${setup}  call ${testName};
-${teardown}end __PLITEST_RUNNER;
-`;
+  // 前置きと後置きを分けて組み立てる。
+  // 前置きの行数を**数えずに文字列から得る**ので、
+  // 表明を足しても報告の行番号がずれない
+  const head =
+    "__PLITEST_RUNNER: proc options(main);\n" +
+    "  dcl __INTD bit(1);\n" +
+    "  __INTD = '0'b;\n" +
+    `${ASSERT_PRELUDE}\n`;
+  const tail =
+    "  on error\n" +
+    "    begin;\n" +
+    `${teardownOnError}    end;\n` +
+    `${setup}  call ${testName};\n` +
+    `${teardown}end __PLITEST_RUNNER;\n`;
+  return {
+    text: `${head}${source}\n${tail}`,
+    offset: countLines(head),
+    sourceLines: countLines(source) + 1,
+  };
+}
+
+/** 文字列に含まれる改行の数。 */
+function countLines(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) if (s[i] === "\n") n++;
+  return n;
+}
+
+/**
+ * 駆動プログラムの行番号を、利用者のソースの行番号へ戻す。
+ * 前置き（表明の一式）や後置き（テストの呼び出し）の中なら undefined。
+ */
+function toSourceLine(line: number, drv: Driver): number | undefined {
+  const k = line - drv.offset;
+  return k >= 1 && k <= drv.sourceLines ? k : undefined;
+}
+
+/**
+ * 診断が指す「利用者のソースの行」。
+ *
+ * 誤りの行が前置きの中にあることもある（`ASSERT_EQUALS` の変換で
+ * 桁あふれ、表明の失敗で `signal error`、など）。そのときは
+ * 呼び出しの鎖から**利用者のソースにある一番内側の行**を拾う。
+ * これで「どの表明が失敗したか」が行で分かる。
+ */
+function sourceLineOf(d: Diagnostic, drv: Driver): number | undefined {
+  const own = toSourceLine(d.line, drv);
+  if (own !== undefined) return own;
+  const chain = d.callerLines ?? [];
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const mapped = toSourceLine(chain[i]!, drv);
+    if (mapped !== undefined) return mapped;
+  }
+  return undefined;
+}
+
+/** 診断の並びから、最初に見つかった利用者のソースの行。 */
+function firstSourceLine(ds: Diagnostic[], drv: Driver): number | undefined {
+  for (const d of ds) {
+    const line = sourceLineOf(d, drv);
+    if (line !== undefined) return line;
+  }
+  return undefined;
 }
 
 /** 出力から目印の行を取り出す。 */
@@ -320,12 +435,18 @@ export function runTestSource(source: string, opts: TestOptions = {}): TestRepor
 
   for (const name of d.tests) {
     const t0 = Date.now();
-    const r = runProgram(buildDriver(source, name, d), {
+    // **テストごとにホストを複製する。** 共有すると、先のテストが
+    // 書いたファイルを後のテストが読んでしまい、実行の順序で
+    // 結果が変わる（テストの独立が壊れる）。
+    // `clone` を持たないホストはそのまま使う
+    const host = opts.host?.clone?.() ?? opts.host;
+    const driver = buildDriver(source, name, d);
+    const r = runProgram(driver.text, {
       maxSteps: opts.maxSteps ?? 5_000_000,
       maxOutputBytes: opts.maxOutputBytes ?? 1_000_000,
       ...(opts.args ? { args: opts.args } : {}),
       // %INCLUDE とファイル入出力はテストの中でも使える
-      ...(opts.host ? { host: opts.host } : {}),
+      ...(host ? { host } : {}),
       // DL/I もテストの中から呼べる
       ...(opts.psb === undefined ? {} : { psb: opts.psb }),
       ...(opts.stdin === undefined ? {} : { stdin: opts.stdin }),
@@ -341,16 +462,28 @@ export function runTestSource(source: string, opts: TestOptions = {}): TestRepor
     }
     const fail = marks.find((m) => m.kind === "FAIL");
     if (fail) {
-      results.push({ name, status: "failed", message: fail.message, stdout, durationMs });
+      // 失敗した表明の行。`signal error` は前置きの中で起きるので、
+      // 呼び出しの鎖をたどってテストファイルの行に直す
+      const line = firstSourceLine(r.diagnostics, driver);
+      results.push({
+        name,
+        status: "failed",
+        message: fail.message,
+        ...(line === undefined ? {} : { line }),
+        stdout,
+        durationMs,
+      });
       continue;
     }
     // 表明の失敗が無いのに異常終了していれば error。
     // ただし表明の中断で出る ERROR condition は上で拾っているのでここには来ない。
     if (r.diagnostics.length > 0) {
+      const line = firstSourceLine(r.diagnostics, driver);
       results.push({
         name,
         status: "error",
         message: r.diagnostics.map((x) => x.message).join(" / "),
+        ...(line === undefined ? {} : { line }),
         stdout,
         durationMs,
       });
@@ -362,15 +495,30 @@ export function runTestSource(source: string, opts: TestOptions = {}): TestRepor
   const count = (s: TestStatus) => results.filter((r) => r.status === s).length;
   const failures = count("failed");
   const errors = count("error");
+  const passed = count("passed");
+  const skipped = count("skipped");
+  /*
+   * 実行されたテストが 0 件（`DISABLED_` だけ）のファイルは、
+   * 失敗が無いので `ok` にする。全部を意図的に止めている状態は
+   * ありうるので、そこで CI を落とすのは行き過ぎ。
+   *
+   * ただし**黙って緑にはしない。** 注記を付けて、
+   * `plitest` の集計にも「省略」として出す。
+   * 事故で全部無効にしたときに気づけるようにするため。
+   */
+  const ranNothing = passed === 0 && failures === 0 && errors === 0;
   return {
     results,
     total: results.length,
-    passed: count("passed"),
+    passed,
     failures,
     errors,
-    skipped: count("skipped"),
+    skipped,
     ok: failures === 0 && errors === 0,
     durationMs: Date.now() - started,
+    ...(ranNothing && results.length > 0
+      ? { note: `実行されたテストが 0 件です（省略 ${skipped} 件）` }
+      : {}),
   };
 }
 
@@ -405,7 +553,12 @@ export function formatReport(
       : r.status === "error" ? "ERR "
       : "SKIP";
     lines.push(`  ${mark} ${r.name} (${r.durationMs}ms)`);
-    if (r.message) lines.push(`       ${STATUS_LABEL[r.status]}: ${r.message}`);
+    // 行番号は分かったときだけ添える。前置きの中で起きて
+    // 呼び出し元もたどれない場合は黙って省く（嘘の行を出さない）
+    const where = r.line === undefined ? "" : ` (${r.line} 行)`;
+    if (r.message) {
+      lines.push(`       ${STATUS_LABEL[r.status]}${where}: ${r.message}`);
+    }
   }
 
   lines.push(
@@ -433,12 +586,50 @@ function escapeXml(s: string): string {
     .replace(/'/g, "&apos;");
 }
 
-/** CI が読める XML（testsuite / testcase）を作る。 */
-export function toXmlReport(report: TestReport, suiteName: string): string {
+/**
+ * CI が読める XML（testsuite / testcase）を作る。
+ *
+ * `note`（テストが見つからない、解析できない）が付いているときは、
+ * それを 1 件の error として出す。出さないと
+ * `<testsuite tests="0" failures="0" errors="0">` になり、
+ * JUnit 系の集計は**成功と見る**。読み込めなかったことが CI から消える。
+ */
+export interface XmlOptions {
+  /**
+   * テストファイルの位置。`<testcase>` の `file` 属性に入れる。
+   * CI の注釈（GitHub の Annotations など）は `file` と `line` の
+   * 両方が無いとソースの行に印を付けられない。
+   */
+  file?: string;
+}
+
+export function toXmlReport(
+  report: TestReport,
+  suiteName: string,
+  opts: XmlOptions = {},
+): string {
+  if (report.note !== undefined && report.results.length === 0) {
+    const msg = escapeXml(report.note);
+    return [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      `<testsuite name="${escapeXml(suiteName)}" tests="1"` +
+        ` failures="0" errors="1" skipped="0"` +
+        ` time="${(report.durationMs / 1000).toFixed(3)}">`,
+      `    <testcase name="(読み込み)" classname="${escapeXml(suiteName)}" time="0.000">`,
+      `      <error message="${msg}">${msg}</error>`,
+      "    </testcase>",
+      "</testsuite>",
+      "",
+    ].join("\n");
+  }
   const cases = report.results
     .map((r) => {
+      const file =
+        opts.file === undefined ? "" : ` file="${escapeXml(opts.file)}"`;
+      const line = r.line === undefined ? "" : ` line="${r.line}"`;
       const head =
         `    <testcase name="${escapeXml(r.name)}" classname="${escapeXml(suiteName)}"` +
+        `${file}${line}` +
         ` time="${(r.durationMs / 1000).toFixed(3)}"`;
       const msg = escapeXml(r.message ?? "");
       if (r.status === "passed") return `${head} />`;

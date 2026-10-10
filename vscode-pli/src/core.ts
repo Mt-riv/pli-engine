@@ -46,30 +46,61 @@ export interface EditorDiagnostic {
  * エディタの範囲（0 始まり）に変換する。
  *
  * 桁が分からない実行時エラーでは、その行全体を範囲にする。
+ *
+ * **`%INCLUDE` 先の誤りは、その行番号を本体に当ててはいけない。**
+ * 取り込み先の 4 行目の誤りを本体の 4 行目に赤線として出すと、
+ * 無関係な行を指すことになる（診断が嘘になる）。
+ * 取り込み先の誤りは `%INCLUDE` の行にまとめ、メッセージに
+ * ファイル名と元の行を添える。どの行かは CLI とブラウザ版で分かる。
  */
 export function toEditorDiagnostics(
   source: string,
   diagnostics: readonly Diagnostic[],
 ): EditorDiagnostic[] {
   const lines = source.split("\n");
+  /** `%INCLUDE <名前>` が書かれている行（0 始まり）。見つからなければ undefined。 */
+  const includeLineOf = (file: string): number | undefined => {
+    const stem = file.replace(/\.[^.]*$/, "");
+    const re = new RegExp(`%\\s*include\\b[^;]*\\b${escapeRe(stem)}\\b`, "i");
+    for (let i = 0; i < lines.length; i++) {
+      if (re.test(lines[i] ?? "")) return i;
+    }
+    return undefined;
+  };
+
   return diagnostics.map((d) => {
-    const lineIndex = Math.max(0, Math.min(d.line - 1, Math.max(0, lines.length - 1)));
+    const fromInclude = d.file !== undefined;
+    const where = fromInclude ? includeLineOf(d.file!) : undefined;
+    const lineIndex = fromInclude
+      ? (where ?? 0)
+      : Math.max(0, Math.min(d.line - 1, Math.max(0, lines.length - 1)));
     const text = lines[lineIndex] ?? "";
     // 桁が分かる場合はその位置から行末まで、分からない場合は
     // 行頭の空白を除いた範囲にして、空行でも 1 文字分の幅を持たせる。
-    const startCol = d.col === undefined ? text.length - text.trimStart().length : d.col - 1;
+    const startCol =
+      fromInclude || d.col === undefined
+        ? text.length - text.trimStart().length
+        : d.col - 1;
     const start = Math.max(0, Math.min(startCol, text.length));
     const end = Math.max(start + 1, text.length);
+    const col = d.col === undefined ? "" : `${d.col}桁`;
+    const message = fromInclude
+      ? `${d.file} ${d.line}行${col}: ${d.message} (${d.phase})`
+      : `${d.message} (${d.phase})`;
     return {
       range: {
         start: { line: lineIndex, character: start },
         end: { line: lineIndex, character: end },
       },
-      message: `${d.message} (${d.phase})`,
+      message,
       severity: "error" as const,
       source: "pli",
     };
   });
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export interface CheckOptions {
@@ -109,6 +140,39 @@ export function toEditorLint(
       code: m.rule,
     };
   });
+}
+
+/**
+ * テストの失敗・異常をエディタの範囲に移す。
+ *
+ * 出力パネルだけだと、どの表明で落ちたのかを目で探すことになる。
+ * 行が分かっているものだけ印を付ける（分からないものは出さない。
+ * 嘘の行に黄線を引くと、そこを直そうとして時間を失う）。
+ */
+export function toEditorTestResults(
+  source: string,
+  report: TestReport,
+): EditorDiagnostic[] {
+  const lines = source.split("\n");
+  const out: EditorDiagnostic[] = [];
+  for (const r of report.results) {
+    if (r.status !== "failed" && r.status !== "error") continue;
+    if (r.line === undefined) continue;
+    const lineIndex = Math.max(0, Math.min(r.line - 1, Math.max(0, lines.length - 1)));
+    const text = lines[lineIndex] ?? "";
+    const start = Math.max(0, text.length - text.trimStart().length);
+    const end = Math.max(start + 1, text.length);
+    out.push({
+      range: {
+        start: { line: lineIndex, character: start },
+        end: { line: lineIndex, character: end },
+      },
+      message: `${r.name}: ${r.message ?? (r.status === "failed" ? "表明が失敗しました" : "異常終了しました")}`,
+      severity: "error",
+      source: "pli-test",
+    });
+  }
+  return out;
 }
 
 export interface CheckSyntaxOptions {
@@ -171,7 +235,10 @@ export function runForEditor(
     parts.push("");
     for (const d of result.diagnostics) {
       const where = d.col === undefined ? `${d.line}行` : `${d.line}行${d.col}桁`;
-      parts.push(`[${d.phase}] ${where}: ${d.message}`);
+      // 取り込み先の誤りはファイル名を添える。
+      // 添えないと本体の行番号と区別が付かない
+      const file = d.file === undefined ? "" : `${d.file} `;
+      parts.push(`[${d.phase}] ${file}${where}: ${d.message}`);
     }
   }
   const flags: string[] = [];
@@ -206,6 +273,8 @@ export interface TestOutcome {
   report: TestReport;
   /** 出力パネルに出す整形済みの本文。 */
   text: string;
+  /** 失敗・異常の行に付ける印。 */
+  diagnostics: EditorDiagnostic[];
 }
 
 /** テストとして実行して、出力パネル用の本文を組み立てる。 */
@@ -221,7 +290,11 @@ export function runTestsForEditor(
     ...(opts.psb === undefined || opts.psb === "" ? {} : { psb: opts.psb }),
   });
 
-  return { report, text: formatReport(report, fileName, { failedOutput: true }) };
+  return {
+    report,
+    text: formatReport(report, fileName, { failedOutput: true }),
+    diagnostics: toEditorTestResults(source, report),
+  };
 }
 
 export interface SnippetCompletion {

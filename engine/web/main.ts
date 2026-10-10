@@ -18,9 +18,9 @@ import {
   type LintMessage,
 } from "../src/index.js";
 import { SAMPLES } from "./samples.js";
-import { decodeSource, share } from "./share.js";
+import { decodePayload, share } from "./share.js";
 import { insertSnippet } from "./insert.js";
-import { parseFiles, psbNames, serializeFiles } from "./files.js";
+import { parseFiles, psbNames, serializeFiles, splitAux } from "./files.js";
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -30,6 +30,10 @@ const gutter = $<HTMLDivElement>("gutter");
 const out = $<HTMLPreElement>("out");
 const diags = $<HTMLDivElement>("diags");
 const status = $<HTMLSpanElement>("status");
+/** 共有 URL から読み込んだときに出す確認バー。 */
+const sharedBar = $<HTMLDivElement>("shared");
+const sharedRunBtn = $<HTMLButtonElement>("shared-run");
+const sharedDismissBtn = $<HTMLButtonElement>("shared-dismiss");
 const pos = $<HTMLSpanElement>("pos");
 const runBtn = $<HTMLButtonElement>("run");
 const shareBtn = $<HTMLButtonElement>("share");
@@ -120,7 +124,9 @@ function save(): void {
 shareBtn.addEventListener("click", () => {
   void share(
     location.href,
-    src.value,
+    // 付随ファイルと標準入力も載せる。ソースだけでは
+    // %INCLUDE・ファイル入出力・DL/I のプログラムが受け取った側で動かない
+    { source: src.value, aux: aux.value, stdin: stdinBox.value },
     navigator.clipboard,
     (hash) => {
       location.hash = hash;
@@ -174,7 +180,9 @@ function dliOptions(): { psb?: string } {
  * どこにも現れない。実行後に書き戻して、そのまま次の入力にも使えるようにする。
  */
 function syncFilesFromHost(host: MemoryHost): void {
-  const before = parseFiles(aux.value);
+  // 区切りより前の文章（利用者のメモなど）を保つ。
+  // 捨てると「実行したら書いたものが消えた」ことになる
+  const { preamble, files: before } = splitAux(aux.value);
   const after = host.entries();
   // 大文字小文字を無視して突き合わせ、元の名前を保つ
   const lower = new Map(Object.keys(before).map((k) => [k.toUpperCase(), k]));
@@ -187,7 +195,7 @@ function syncFilesFromHost(host: MemoryHost): void {
     }
   }
   if (!changed) return;
-  aux.value = serializeFiles(before);
+  aux.value = serializeFiles(before, preamble);
   updateDrawerHint();
   try {
     localStorage.setItem(AUX_KEY, aux.value);
@@ -491,16 +499,47 @@ try {
 }
 updateDrawerHint();
 
-const fromHash = location.hash.startsWith("#s=")
-  ? decodeSource(location.hash.slice(3))
-  : undefined;
+const shared = decodePayload(location.hash);
 let saved: string | null = null;
 try {
   saved = localStorage.getItem(KEY);
 } catch {
   saved = null;
 }
-src.value = fromHash ?? saved ?? SAMPLES[0]!.source;
+src.value = shared?.source ?? saved ?? SAMPLES[0]!.source;
+if (shared !== undefined) {
+  // 付随ファイルと標準入力も復元する。無ければ空にする
+  // （受け取った側の内容が混ざると、動いているように見えて実は違う）
+  aux.value = shared.aux ?? "";
+  stdinBox.value = shared.stdin ?? "";
+  updateDrawerHint();
+}
 renderGutter();
 updatePos();
-run();
+
+if (shared === undefined) {
+  // 自分の手元のコードなので、そのまま走らせてよい
+  run();
+} else {
+  // **共有 URL のコードは自動実行しない。**
+  // 他人から受け取った URL を開くだけで、無限ループや
+  // 記憶域の確保でタブを固められる。中身を見てから押してもらう。
+  sharedBar.classList.remove("hidden");
+  status.textContent = "共有されたコードを読み込みました（まだ実行していません）";
+  // ハッシュを消す。残すと、編集して読み込み直したときに
+  // 保存した内容ではなく古いハッシュが優先される
+  try {
+    history.replaceState(null, "", location.pathname + location.search);
+  } catch {
+    // file:// などで失敗しても動作に影響させない
+  }
+  save();
+}
+
+sharedRunBtn.addEventListener("click", () => {
+  sharedBar.classList.add("hidden");
+  run();
+});
+sharedDismissBtn.addEventListener("click", () => {
+  sharedBar.classList.add("hidden");
+});

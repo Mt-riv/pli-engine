@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ListWriter, fixedBinWidth, fixedDecWidth } from "../src/format.js";
+import { runProgram } from "../src/index.js";
 
 /**
  * PUT LIST の出力書式は実在の PL/I 処理系の出力と突き合わせて決めた。
@@ -259,5 +260,70 @@ describe("EditWriter: 書式項目", () => {
     w.putChar("x");       // LIST: "x "
     w.editChar("y");      // EDIT: 続けて "y"
     expect(w.text()).toBe("x y");
+  });
+});
+
+/**
+ * F 書式の丸めと桁あふれ。**実機（Iron Spring PL/I 1.4.1）で確かめた。**
+ *
+ * 丸めは**書式の性質**で、代入の性質ではない。同じ値が通る道で違う:
+ *
+ * | | `dcl y fixed dec(5,1); y = x;` | `put edit(x)(f(6,1))` |
+ * |---|---|---|
+ * | 1.26 | 1.2（切り捨て） | 1.3（丸め） |
+ * | 1.25 | 1.2 | 1.3（0 から遠い側） |
+ * | -1.26 | -1.2 | -1.3 |
+ *
+ * 同じ経路で実装するとどちらかが必ず間違う（この処理系は実際に
+ * `assignTo` を使い回していて、F 書式が切り捨てになっていた）。
+ *
+ * バイト一致での固定は `test/golden/fmt-round.*` と `fmt-overflow.*`。
+ * ここは規則そのものを読めるようにしておく。
+ */
+describe("F 書式の丸めと桁あふれ", () => {
+  const out = (body: string): string =>
+    runProgram(`m: proc options(main);\n${body}\nend m;`).stdout;
+  const edit = (literal: string, fmt: string): string =>
+    out(`  put edit('[', ${literal}, ']')(a, ${fmt}, a);`);
+
+  it("小数部は 0 から遠い側へ丸める（切り捨てではない）", () => {
+    expect(edit("1.26", "f(6,1)")).toBe("[   1.3]\n");
+    expect(edit("1.24", "f(6,1)")).toBe("[   1.2]\n");
+  });
+
+  it("ちょうど半分は 0 から遠い側（偶数側ではない）", () => {
+    expect(edit("1.25", "f(6,1)")).toBe("[   1.3]\n");
+    expect(edit("1.35", "f(6,1)")).toBe("[   1.4]\n");
+  });
+
+  it("負の値も 0 から遠い側へ丸める", () => {
+    expect(edit("-1.26", "f(6,1)")).toBe("[  -1.3]\n");
+    expect(edit("-1.25", "f(6,1)")).toBe("[  -1.3]\n");
+  });
+
+  it("小数部の指定が無ければ 0 桁（丸めて整数にする）", () => {
+    // 以前は値をそのまま出していた（1.99 → "1.99"）
+    expect(edit("1.99", "f(4)")).toBe("[   2]\n");
+    expect(edit("1.49", "f(4)")).toBe("[   1]\n");
+  });
+
+  it("指定が値より細かければ 0 を足す", () => {
+    expect(edit("1.5", "f(6,3)")).toBe("[ 1.500]\n");
+    expect(edit("12", "f(6,2)")).toBe("[ 12.00]\n");
+  });
+
+  it("代入は切り捨てのまま（丸めるのは書式だけ）", () => {
+    expect(
+      out(
+        "  dcl x fixed dec(5,2);\n  dcl y fixed dec(5,1);\n" +
+          "  x = 1.26;\n  y = x;\n  put list(y);",
+      ).trim(),
+    ).toBe("1.2");
+  });
+
+  it("幅に収まらない値は右から w 文字を残す（上位桁が黙って落ちる）", () => {
+    expect(edit("123456", "f(3)")).toBe("[456]\n");
+    // 符号も落ちる。実機も同じ（-12345 を f(4) で 2345）
+    expect(edit("-12345", "f(4)")).toBe("[2345]\n");
   });
 });

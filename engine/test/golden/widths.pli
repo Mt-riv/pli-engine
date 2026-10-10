@@ -1,0 +1,13 @@
+/* 出力フィールド幅。engine/README.md の「出力の規定」の表を固定する。
+   FIXED DEC(p,q) は p+3、FIXED BIN(p,q) は 10 進換算 +3
+   （BIN(31)→14、BIN(15)→9）、FLOAT DEC(6) は p+8 で 14。 */
+widths: proc options(main);
+  dcl a fixed dec(5) init(123);
+  dcl b fixed bin(31) init(123);
+  dcl c fixed bin(15) init(123);
+  dcl d float dec(6) init(3.5);
+  put skip list(a);
+  put skip list(b);
+  put skip list(c);
+  put skip list(d);
+end widths;

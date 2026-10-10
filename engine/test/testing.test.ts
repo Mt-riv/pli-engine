@@ -6,7 +6,7 @@ import {
   runTestSource,
   toXmlReport,
 } from "../src/testing.js";
-import { runProgram } from "../src/index.js";
+import { MemoryHost, runProgram } from "../src/index.js";
 
 /**
  * PL/I 向けのテストフレームワーク。
@@ -387,5 +387,161 @@ DISABLED_TEST_C: proc; end DISABLED_TEST_C;
     expect(xml).toContain('errors="1"');
     expect(xml).toContain("<error");
     expect(xml).not.toContain("<failure");
+  });
+});
+
+/**
+ * テストごとの状態の分離。
+ *
+ * 1 つのホストを共有すると、先のテストが書いたファイルを後のテストが
+ * 読んでしまい、実行の順序で結果が変わる。テストの独立が壊れるので、
+ * ホストはテストごとに複製する。
+ */
+describe("ホストの分離", () => {
+  // SHARED を最初から置いておき、A が上書きする。
+  // B が元の内容を見られれば分離できている
+  const src = `TEST_A_OVERWRITES: proc;
+  dcl f file stream output;
+  open file(f) output title('SHARED');
+  put file(f) list('from A');
+  close file(f);
+  call ASSERT_TRUE('1'b, 'A は書くだけ');
+end TEST_A_OVERWRITES;
+
+TEST_B_SEES_THE_ORIGINAL: proc;
+  dcl g file stream input;
+  dcl word char(8) varying;
+  on endfile(g);
+  open file(g) input title('SHARED');
+  get file(g) list(word);
+  close file(g);
+  call ASSERT_EQUALS_CHAR('original', word, 'A の書き換えは見えてはいけない');
+end TEST_B_SEES_THE_ORIGINAL;
+`;
+
+  it("先のテストが書いたファイルを後のテストが読まない", () => {
+    const host = new MemoryHost({ SHARED: "'original'\n" });
+    const r = runTestSource(src, { host });
+    expect(
+      r.results.map((x) => `${x.name}:${x.status}${x.message ? ` ${x.message}` : ""}`),
+    ).toEqual(["TEST_A_OVERWRITES:passed", "TEST_B_SEES_THE_ORIGINAL:passed"]);
+  });
+
+  it("渡したホスト自身は書き換えない", () => {
+    const host = new MemoryHost({ SHARED: "'original'\n" });
+    runTestSource(src, { host });
+    // 複製の上で動くので、呼び出し側のホストは元のまま
+    expect(host.get("SHARED")).toBe("'original'\n");
+  });
+
+  it("clone を持たないホストはそのまま使う", () => {
+    // 実ファイルを見るホストは書き戻しを別の手段で抑えている
+    const plain = { stdin: "", readInclude: () => undefined };
+    const r = runTestSource(
+      "TEST_X: proc;\n  call ASSERT_EQUALS(1, 1, 'ok');\nend TEST_X;\n",
+      { host: plain },
+    );
+    expect(r.passed).toBe(1);
+  });
+});
+
+/**
+ * 報告の行番号。
+ *
+ * 実行器は利用者のソースの前に表明の一式（80 行ほど）を差し込む。
+ * 駆動プログラムの行番号をそのまま出すと、**テストファイルのどこでもない
+ * 行**を指して、どの表明で落ちたのか分からない。
+ * テストファイルの中の行に直すことをここで固定する。
+ */
+describe("報告の行番号", () => {
+  it("失敗した表明の行を指す", () => {
+    const r = runTestSource(`TEST_X: proc;
+  dcl n fixed bin(31);
+  n = 2;
+  call ASSERT_EQUALS(1, n, 'ふたつめ');
+end TEST_X;
+`);
+    expect(r.results[0]?.status).toBe("failed");
+    expect(r.results[0]?.line).toBe(4);
+  });
+
+  it("異常が起きた行を指す", () => {
+    const r = runTestSource(`TEST_X: proc;
+  dcl a(3) fixed bin(31);
+  dcl i fixed bin(31);
+  i = 9;
+  a(i) = 1;
+end TEST_X;
+`);
+    expect(r.results[0]?.status).toBe("error");
+    expect(r.results[0]?.line).toBe(5);
+  });
+
+  it("呼んだ先で起きた異常は、その手続きの中の行を指す", () => {
+    const r = runTestSource(`TEST_X: proc;
+  call INNER;
+end TEST_X;
+
+INNER: proc;
+  dcl p pointer;
+  dcl c fixed bin(31) based(p);
+  p = null();
+  c = 1;
+end INNER;
+`);
+    expect(r.results[0]?.status).toBe("error");
+    expect(r.results[0]?.line).toBe(9);
+  });
+
+  it("前置きの中で起きた異常は、呼び出し元の行に直す", () => {
+    // ASSERT_EQUALS は FIXED DEC(15,5) で受けるので、整数 15 桁は
+    // 表明の中で桁あふれする。誤りの行は前置きの中にあるが、
+    // 知りたいのは「どの表明を書いた行か」
+    const r = runTestSource(`TEST_X: proc;
+  dcl big fixed dec(15);
+  big = 123456789012345;
+  call ASSERT_EQUALS(big, big, '窓を超える値');
+end TEST_X;
+`);
+    expect(r.results[0]?.status).toBe("error");
+    expect(r.results[0]?.line).toBe(4);
+  });
+
+  it("ソースの前に空行があってもずれない", () => {
+    const r = runTestSource(`
+TEST_X: proc;
+  call FAIL('わざと');
+end TEST_X;
+`);
+    expect(r.results[0]?.line).toBe(3);
+  });
+
+  it("成功したテストには行を付けない", () => {
+    const r = runTestSource("TEST_X: proc; call ASSERT_TRUE('1'b, 'a'); end TEST_X;");
+    expect(r.results[0]?.status).toBe("passed");
+    expect(r.results[0]?.line).toBeUndefined();
+  });
+
+  it("整形した報告に行が出る", () => {
+    const r = runTestSource(`TEST_X: proc;
+  call FAIL('わざと');
+end TEST_X;
+`);
+    expect(formatReport(r, "x_test.pli")).toContain("失敗 (2 行): わざと");
+  });
+
+  it("XML は file と line を持つ（CI が注釈を付けられる形）", () => {
+    const r = runTestSource(`TEST_X: proc;
+  call FAIL('わざと');
+end TEST_X;
+`);
+    const xml = toXmlReport(r, "x_test", { file: "test/x_test.pli" });
+    expect(xml).toContain('file="test/x_test.pli"');
+    expect(xml).toContain('line="2"');
+  });
+
+  it("file を渡さなければ XML に file 属性は出ない", () => {
+    const r = runTestSource("TEST_X: proc; call FAIL('わざと'); end TEST_X;");
+    expect(toXmlReport(r, "x_test")).not.toContain(" file=");
   });
 });

@@ -529,3 +529,560 @@ end t;`;
     expect(r.error).toBeDefined();
   });
 });
+
+/**
+ * 記憶域クラスと、以前は黙って間違っていた箇所。
+ *
+ * どれも「テストが 1 例しか無かったために気づけなかった」もの。
+ * 直した挙動と、間違っていた側の挙動を対で書き残す。
+ */
+describe("STATIC", () => {
+  it("手続きを抜けても値が残る", () => {
+    const src = `m: proc options(main);
+  call c; call c; call c;
+  c: proc;
+    dcl cnt fixed bin(15) static init(0);
+    cnt = cnt + 1;
+    put skip list(cnt);
+  end c;
+end m;`;
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("1 2 3");
+  });
+
+  it("STATIC が無ければ呼ぶたびに初期化される", () => {
+    const src = `m: proc options(main);
+  call c; call c;
+  c: proc;
+    dcl cnt fixed bin(15) init(0);
+    cnt = cnt + 1;
+    put skip list(cnt);
+  end c;
+end m;`;
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("1 1");
+  });
+
+  it("別の手続きの同名 STATIC は混ざらない", () => {
+    const src = `m: proc options(main);
+  call a; call b; call a; call b;
+  a: proc;
+    dcl n fixed bin(15) static init(0);
+    n = n + 1;
+    put skip list('a', n);
+  end a;
+  b: proc;
+    dcl n fixed bin(15) static init(100);
+    n = n + 1;
+    put skip list('b', n);
+  end b;
+end m;`;
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("a 1 b 101 a 2 b 102");
+  });
+});
+
+describe("ラベルと GOTO", () => {
+  it("2 つ目以降のラベルへも飛べる", () => {
+    const src = `m: proc options(main);
+a: put skip list('A');
+   goto b;
+b: put skip list('B');
+   goto c;
+c: put skip list('C');
+end m;`;
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("A B C");
+  });
+
+  it("1 つの文に複数のラベルを付けられる", () => {
+    const src = `m: proc options(main);
+  dcl i fixed bin(15) init(0);
+l1: l2: i = i + 1;
+  if i < 3 then goto l2;
+  put list(i);
+end m;`;
+    expect(out(src).trim()).toBe("3");
+  });
+
+  it("見つからないラベルは意味の分かる誤りにする", () => {
+    const r = runRaw(`m: proc options(main);
+  put skip list('before');
+  goto nowhere;
+end m;`);
+    // 以前は Error ではない内部例外が漏れて `[object Object]` になり、
+    // 行番号も 1 固定だった
+    expect(r.error).toMatch(/ラベル NOWHERE が見つかりません/);
+    expect(r.error).toMatch(/^3行:/);
+  });
+});
+
+describe("ビット列の演算", () => {
+  it("& と | はビットごと", () => {
+    expect(out("m: proc options(main);\n  put list('1100'b & '1010'b);\nend m;").trim())
+      .toBe("'1000'B");
+    expect(out("m: proc options(main);\n  put list('1100'b | '1010'b);\nend m;").trim())
+      .toBe("'1110'B");
+  });
+
+  it("短い側は '0'B で埋める", () => {
+    expect(out("m: proc options(main);\n  put list('11'b | '1010'b);\nend m;").trim())
+      .toBe("'1110'B");
+  });
+
+  it("BIT(1) 同士はブール演算と一致する", () => {
+    expect(out("m: proc options(main);\n  put list('1'b & '0'b);\nend m;").trim())
+      .toBe("'0'B");
+  });
+
+  it("数値から BIT への代入は 2 進表現になる", () => {
+    const src = `m: proc options(main);
+  dcl b bit(1);
+  dcl s bit(4);
+  b = 1;
+  s = 5;
+  put list(b, s);
+end m;`;
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("'1'B '0101'B");
+  });
+});
+
+describe("16 進定数", () => {
+  it("2 桁ずつ 1 文字へデコードする", () => {
+    expect(out("m: proc options(main);\n  put list('4142'x);\nend m;").trim())
+      .toBe("AB");
+  });
+
+  it("桁数が奇数なら誤りにする", () => {
+    const r = runRaw("m: proc options(main);\n  put list('414'x);\nend m;");
+    expect(r.error).toMatch(/偶数/);
+  });
+});
+
+describe("PICTURE の小数点", () => {
+  it("V が無ければ . が小数点の位置になる", () => {
+    const src = `m: proc options(main);
+  dcl a pic'ZZ9.99';
+  a = 12.34;
+  put list('[' || a || ']');
+end m;`;
+    expect(out(src).trim()).toBe("[ 12.34]");
+  });
+
+  it("V を併記した形も同じ結果になる", () => {
+    const src = `m: proc options(main);
+  dcl a pic'ZZ9V.99';
+  a = 12.34;
+  put list('[' || a || ']');
+end m;`;
+    expect(out(src).trim()).toBe("[ 12.34]");
+  });
+});
+
+describe("CHAR VARYING と基数混在", () => {
+  it("基数を混ぜても小数部が消えない", () => {
+    const src = `m: proc options(main);
+  dcl i fixed bin(15) init(10);
+  if i < 10.5 then put skip list('lt');
+  if i = 10.5 then put skip list('eq'); else put skip list('ne');
+end m;`;
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("lt ne");
+  });
+});
+
+/**
+ * 名前解決はレキシカル、ON 単位は動的。
+ *
+ * PL/I の規定どおりの組み合わせ。以前は呼んだ位置を親にしていたため
+ * 動的スコープになり、呼び先の未宣言の名前が呼び元の変数に化けていた
+ * （兄弟の手続きが呼び元のループ変数を壊す、という形で現れる）。
+ */
+describe("スコープ", () => {
+  it("入れ子の手続きは定義された位置から名前を解決する", () => {
+    const src = `m: proc options(main);
+  dcl x fixed dec(3) init(1);
+  call q;
+  q: proc;
+    dcl x fixed dec(3) init(2);
+    call p;
+  end q;
+  p: proc;
+    put skip list(x);
+  end p;
+end m;`;
+    // p は m の中で定義されているので m の x（1）を見る。
+    // 呼んだ位置（q）から解決すると 2 になる
+    expect(out(src).trim()).toBe("1");
+  });
+
+  it("兄弟の手続きは呼び元の変数を壊さない", () => {
+    const src = `m: proc options(main);
+  dcl i fixed bin(15);
+  do i = 1 to 2;
+    call b;
+    put skip list('i=', i);
+  end;
+end m;
+b: proc;
+  do i = 1 to 3; end;
+end b;`;
+    // b の i は暗黙宣言のローカル。m のループは 2 回まわる
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("i= 1 i= 2");
+  });
+
+  it("ON 単位は呼び先でも効く（こちらは動的）", () => {
+    const src = `m: proc options(main);
+  dcl done bit(1) init('0'b);
+  on endfile(sysin) done = '1'b;
+  call rd;
+  rd: proc;
+    dcl v fixed bin(31);
+    do while(^done);
+      get list(v);
+    end;
+    put skip list('ok');
+  end rd;
+end m;`;
+    expect(run(src, { stdin: "1 2 3\n" }).stdout.trim()).toBe("ok");
+  });
+});
+
+/**
+ * 引数の渡し方。
+ *
+ * PL/I は変数を**参照で渡す**。呼び先が引数を書き換えると呼び元に戻る。
+ * 値渡しにすると、出力引数を使うふつうのサブルーチンが黙って嘘の答えを返す。
+ * ただし宣言した属性が渡された値と違う場合、実機は一時変数
+ * （ダミー引数）を作るので、そこは値渡しになる。
+ */
+describe("引数の参照渡し", () => {
+  const prelude = `m: proc options(main);
+  dcl (a, b) fixed bin(15);
+  dcl arr(3) fixed bin(15);
+  dcl i fixed bin(15);
+`;
+
+  it("呼び先の書き換えが呼び元に戻る", () => {
+    const src = `${prelude}  a = 1; b = 2;
+  call swap(a, b);
+  put list(a, b);
+  swap: proc(x, y);
+    dcl (x, y) fixed bin(15);
+    dcl tmp fixed bin(15);
+    tmp = x; x = y; y = tmp;
+  end swap;
+end m;`;
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("2 1");
+  });
+
+  it("配列を渡すと要素を書き換えられる", () => {
+    const src = `${prelude}  do i = 1 to 3; arr(i) = i; end;
+  call doubleall(arr);
+  put list(arr(1), arr(2), arr(3));
+  doubleall: proc(v);
+    dcl v(3) fixed bin(15);
+    dcl k fixed bin(15);
+    do k = 1 to 3; v(k) = v(k) * 2; end;
+  end doubleall;
+end m;`;
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("2 4 6");
+  });
+
+  it("宣言した型が違えばダミー引数になる（呼び元は変わらない）", () => {
+    const src = `${prelude}  a = 5;
+  call conv(a);
+  put list(a);
+  conv: proc(n);
+    dcl n fixed dec(7,2);
+    n = n + 10;
+  end conv;
+end m;`;
+    expect(out(src).trim()).toBe("5");
+  });
+
+  it("式や定数は一時値として渡す", () => {
+    const src = `${prelude}  put list(addone(3));
+  addone: proc(n) returns(fixed bin(15));
+    dcl n fixed bin(15);
+    return (n + 1);
+  end addone;
+end m;`;
+    expect(out(src).trim()).toBe("4");
+  });
+
+  it("関数としての呼び出しでも参照渡し", () => {
+    const src = `${prelude}  a = 1;
+  put list(bump(a), a);
+  bump: proc(n) returns(fixed bin(15));
+    dcl n fixed bin(15);
+    n = n + 1;
+    return (n);
+  end bump;
+end m;`;
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("2 2");
+  });
+});
+
+describe("配列式", () => {
+  it("部分式も要素ごとに評価する", () => {
+    const src = `m: proc options(main);
+  dcl (a, b, c)(3) fixed bin(15);
+  dcl i fixed bin(15);
+  do i = 1 to 3; a(i) = i * 10; b(i) = i; end;
+  c = a + b * 2;
+  put list(c(1), c(2), c(3));
+end m;`;
+    // 以前は b * 2 が b(1) * 2 に潰れて 12 22 32 になっていた
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("12 24 36");
+  });
+
+  it("単項演算も要素ごと", () => {
+    const src = `m: proc options(main);
+  dcl (a, c)(3) fixed bin(15);
+  dcl i fixed bin(15);
+  do i = 1 to 3; a(i) = i; end;
+  c = -a;
+  put list(c(1), c(2), c(3));
+end m;`;
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("-1 -2 -3");
+  });
+
+  it("要素数が合わなければ断る（黙って切らない）", () => {
+    const r = runRaw(`m: proc options(main);
+  dcl a(3) fixed bin(15);
+  dcl b(5) fixed bin(15);
+  a = b + 1;
+end m;`);
+    expect(r.error).toMatch(/要素数/);
+  });
+});
+
+/**
+ * 条件・組込関数・宣言の既定値。
+ *
+ * どれも「黙って間違った値を返す」か「条件が発火しない」ものだった。
+ */
+describe("ROUND", () => {
+  it("BINARY でも丸まる（基数混在で half が 0 になっていた）", () => {
+    const src = `m: proc options(main);
+  dcl n fixed bin(15) init(7);
+  put list(round(n/2, 0));
+end m;`;
+    expect(out(src).trim()).toBe("4");
+  });
+
+  it("桁数が小数部より大きくても溢れず、尺度が n に揃う", () => {
+    // 実機（Iron Spring PL/I 1.4.1）で確認: round(12.5, 3) は 12.500。
+    // 以前はここを "12.5" と固定していた（元の尺度を保つ実装だった）。
+    // 桁あふれで止まっていた時期もあるので、両方をここで押さえる
+    expect(
+      out("m: proc options(main);\n  put list(round(12.5, 3));\nend m;").trim(),
+    ).toBe("12.500");
+  });
+
+  it("n を小さくすると尺度もそこへ落ちる", () => {
+    // 実機で確認: dcl x fixed dec(5,1); x = 12.5; のとき
+    // round(x,1) は 12.5、round(x,0) は 13
+    const src = (n: string) =>
+      `m: proc options(main);\n  dcl x fixed dec(5,1);\n  x = 12.5;\n  put list(round(x, ${n}));\nend m;`;
+    expect(out(src("1")).trim()).toBe("12.5");
+    expect(out(src("0")).trim()).toBe("13");
+  });
+
+  it("0 から遠い側へ丸める", () => {
+    const cases: [string, string][] = [
+      ["round(2.675, 2)", "2.68"],
+      ["round(2.4, 0)", "2"],
+      ["round(-2.5, 0)", "-3"],
+      ["round(1234.5, 0)", "1235"],
+    ];
+    for (const [expr, want] of cases) {
+      expect(
+        out(`m: proc options(main);\n  put list(${expr});\nend m;`).trim(),
+        expr,
+      ).toBe(want);
+    }
+  });
+});
+
+describe("べき乗", () => {
+  it("整数の指数は FIXED のまま", () => {
+    expect(out("m: proc options(main);\n  put list(4**2);\nend m;").trim()).toBe("16");
+    expect(out("m: proc options(main);\n  put list(2**0);\nend m;").trim()).toBe("1");
+  });
+
+  it("小数の指数は FLOAT で計算する（以前は指数を切り捨てていた）", () => {
+    const got = out("m: proc options(main);\n  put list(4**1.5);\nend m;").trim();
+    expect(Number(got.replace("E+0000", ""))).toBeCloseTo(8, 6);
+  });
+
+  it("負の指数も FLOAT（以前は FIXEDOVERFLOW だった）", () => {
+    const got = out("m: proc options(main);\n  put list(2**-1);\nend m;").trim();
+    expect(got).toMatch(/5\.0*E-0001/);
+  });
+});
+
+describe("条件の発火", () => {
+  it("FLOAT の 0 除算も ZERODIVIDE になる", () => {
+    // 条件を受けたあとは ERROR へ進んで終わるので runRaw で見る
+    const src = `m: proc options(main);
+  dcl f float dec(6) init(0);
+  on zerodivide put skip list('caught');
+  put skip list(1.0 / f);
+end m;`;
+    expect(runRaw(src).stdout).toMatch(/caught/);
+  });
+
+  it("MOD の 0 除算も ZERODIVIDE になる", () => {
+    const src = `m: proc options(main);
+  on zerodivide put skip list('caught');
+  put skip list(mod(17, 0));
+end m;`;
+    expect(runRaw(src).stdout).toMatch(/caught/);
+  });
+
+  it("SELECT でどれにも合わなければ ERROR", () => {
+    const src = `m: proc options(main);
+  on error put skip list('caught');
+  select (3);
+    when (1) put skip list('one');
+  end;
+  put skip list('ここには来ない');
+end m;`;
+    const r = runRaw(src);
+    expect(r.stdout).toMatch(/caught/);
+    expect(r.stdout).not.toMatch(/ここには来ない/);
+  });
+
+  it("OTHERWISE があれば ERROR にしない", () => {
+    const src = `m: proc options(main);
+  select (3);
+    when (1) put list('one');
+    otherwise put list('other');
+  end;
+end m;`;
+    expect(out(src).trim()).toBe("other");
+  });
+
+  it("ON ... SYSTEM は既定動作へ戻す（空の ON 単位にしない）", () => {
+    const src = `m: proc options(main);
+  dcl v fixed bin(31);
+  on endfile(sysin) put skip list('caught');
+  get list(v);
+  on endfile(sysin) system;
+  get list(v);
+  put skip list('ここには来ない');
+end m;`;
+    const r = run(src, { stdin: "1\n" });
+    expect(r.stdout).toMatch(/caught/);
+    expect(r.stdout).not.toMatch(/ここには来ない/);
+    expect(r.error).toMatch(/ENDFILE/);
+  });
+
+  it("SUBSCRIPTRANGE を受けられる", () => {
+    const src = `m: proc options(main);
+  dcl a(5) fixed bin(15);
+  on subscriptrange put skip list('caught');
+  a(7) = 1;
+end m;`;
+    expect(runRaw(src).stdout).toMatch(/caught/);
+  });
+
+  it("ON 単位が無ければ従来のメッセージで止まる", () => {
+    const src = `m: proc options(main);
+  dcl a(5) fixed bin(15);
+  a(7) = 1;
+end m;`;
+    expect(runRaw(src).error).toMatch(/添字が範囲外です/);
+  });
+});
+
+describe("型を書いていない宣言", () => {
+  it("名前の先頭文字で属性が決まる（FIXED DEC(5,0) にしない）", () => {
+    // X は FLOAT DEC(6) なので 1/3 が 0 にならない
+    const src = `m: proc options(main);
+  dcl x;
+  x = 1/3;
+  put list(x);
+end m;`;
+    expect(out(src).trim()).toMatch(/3\.33333E-0001/);
+  });
+
+  it("I〜N は FIXED BIN(15,0)", () => {
+    const src = `m: proc options(main);
+  dcl i;
+  i = 7;
+  put list(i);
+end m;`;
+    // 出力幅 9 が FIXED BIN(15,0) の証拠
+    expect(out(src)).toBe("        7 \n");
+  });
+
+  it("FIXED を書けば従来どおり DEC(5,0)", () => {
+    const src = `m: proc options(main);
+  dcl a fixed;
+  a = 1/3;
+  put list(a);
+end m;`;
+    expect(out(src).trim()).toBe("0");
+  });
+});
+
+describe("RETURNS", () => {
+  it("宣言した型へ合わせて返す", () => {
+    const src = `m: proc options(main);
+  put list(avg(7));
+  avg: proc(n) returns(fixed dec(7,2));
+    dcl n fixed dec(5);
+    return (n / 3);
+  end avg;
+end m;`;
+    expect(out(src).trim()).toBe("2.33");
+  });
+
+  it("桁を広く宣言すればそのまま返る", () => {
+    const src = `m: proc options(main);
+  put list(raw(7));
+  raw: proc(n) returns(fixed dec(15,10));
+    dcl n fixed dec(5);
+    return (n / 3);
+  end raw;
+end m;`;
+    expect(out(src).trim()).toBe("2.3333333333");
+  });
+});
+
+describe("構造体の BASED", () => {
+  it("グループ名で FREE できる", () => {
+    const src = `m: proc options(main);
+  dcl p pointer;
+  dcl 1 node based(p),
+        2 val fixed bin(31),
+        2 next pointer;
+  allocate node set(p);
+  p -> node.val = 5;
+  put list(p -> node.val);
+  free p -> node;
+end m;`;
+    expect(out(src).trim()).toBe("5");
+  });
+});
+
+describe("GET LIST の数値", () => {
+  it("指数表記を読める", () => {
+    // 最後の項目を読んだ GET で ENDFILE が上がるので ON 単位を置く
+    const src = `m: proc options(main);
+  dcl f float dec(6);
+  on endfile(sysin);
+  get list(f);
+  put list(f);
+end m;`;
+    expect(run(src, { stdin: "1.5E3\n" }).stdout.trim()).toMatch(/1\.50000E\+0003/);
+  });
+
+  it("末尾の小数点を読める", () => {
+    const src = `m: proc options(main);
+  dcl f float dec(6);
+  on endfile(sysin);
+  get list(f);
+  put list(f);
+end m;`;
+    expect(run(src, { stdin: "5.\n" }).stdout.trim()).toMatch(/5\.00000E\+0000/);
+  });
+});

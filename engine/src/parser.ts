@@ -81,23 +81,54 @@ const UNARY_OPS = new Set(["+", "-", "¬"]);
  *   numwrd.pli -> PRINT（ファイル宣言）
  *   isub.pli   -> DEFINED（iSUB 定義配列）
  */
+/**
+ * PL/I の属性だが実装していないもの。
+ *
+ * **名指しで断るための表。** ここに無い語は「属性として解釈できません」と
+ * いう素の構文エラーになり、綴り間違いと未実装の区別が付かなくなる。
+ * README が未実装として挙げている機能は、必ずここにも載せる。
+ */
 const UNIMPLEMENTED_ATTRS: Readonly<Record<string, string>> = {
-  KEYED: "索引ファイル（KEYED）は未実装",
-  AREA: "AREA 記憶域は未実装",
-  OFFSET: "AREA 記憶域は未実装",
-  BUILTIN: "BUILTIN 宣言は未実装",
-  LABEL: "LABEL 変数は未実装",
-  REFER: "自己定義構造体（REFER）は未実装",
-  UNION: "UNION は未実装",
+  KEYED: "索引ファイル",
+  REGIONAL: "直接編成ファイル",
+  AREA: "AREA 記憶域",
+  OFFSET: "AREA 記憶域",
+  BUILTIN: "BUILTIN 宣言",
+  LABEL: "LABEL 変数",
+  REFER: "自己定義構造体",
+  UNION: "記憶域の重ね合わせ",
+  LIKE: "構造体の複製",
+  EVENT: "多重処理",
+  TASK: "多重処理",
+  COMPLEX: "複素数",
+  CPLX: "複素数",
+  ALIGNED: "記憶域の境界合わせ。この処理系では意味を持たない",
+  UNALIGNED: "記憶域の境界合わせ。この処理系では意味を持たない",
+  CONTROLLED: "CONTROLLED 記憶域",
+  CTL: "CONTROLLED 記憶域",
+};
+
+/**
+ * PL/I の文だが実装していないもの。
+ *
+ * 文の先頭の語がここにあれば「未実装」と断る。
+ * 無いと「解釈できない文です」になり、やはり綴り間違いと区別が付かない。
+ */
+const UNIMPLEMENTED_STATEMENTS: Readonly<Record<string, string>> = {
+  WAIT: "多重処理",
+  DISPLAY: "PUT を使ってください",
+  DELAY: "時間待ち",
+  REVERT: "ON 単位の解除は ON ... SYSTEM; を使ってください",
+  LOCATE: "LOCATE 割り当て",
+  UNLOCK: "レコードのロック",
+  DELETE: "索引ファイルが必要",
+  EXIT: "STOP を使ってください",
+  DEFAULT: "DEFAULT 文",
+  DFT: "DEFAULT 文",
 };
 
 class Parser {
   private pos = 0;
-  /**
-   * ラベル文を1度だけ発行するための状態。
-   * `done: put list('x');` は label 文と put 文の2つに分かれる。
-   */
-  private pendingLabel: { name: string; line: number } | undefined;
 
   constructor(private readonly toks: Token[]) {}
 
@@ -179,40 +210,67 @@ class Parser {
   parseProgram(): Program {
     const body: Stmt[] = [];
     while (!this.at("eof")) {
-      body.push(this.parseStatement());
+      this.parseInto(body);
     }
     return { kind: "program", body };
   }
 
   // ---- 文 ----
 
-  /**
-   * ラベルを読み飛ばして文を解析する。
-   * PROCEDURE はラベル（手続き名）を必要とするため、ラベルを覚えておく。
-   */
-  private parseStatement(): Stmt {
-    let label: string | undefined;
+  /** ラベルを読み取る。`a: b: x = 1;` のように複数付けられる。 */
+  private takeLabels(): { name: string; line: number }[] {
     const labels: { name: string; line: number }[] = [];
     while (this.at("word") && this.peek(1).kind === "colon") {
       const lt = this.next();
-      label = lt.text;
       labels.push({ name: lt.text, line: lt.line });
       this.next(); // ':'
     }
-    // ラベルの直後が手続き・BEGIN 以外なら、GOTO の飛び先として
-    // ラベル文を1つ置いてから本体の文を続ける。
-    if (
-      labels.length > 0 &&
-      !(this.at("word") && ["PROCEDURE", "PROC", "BEGIN"].includes(this.peek().upper))
-    ) {
-      const first = labels[0]!;
-      if (this.pendingLabel === undefined) {
-        this.pendingLabel = first;
-        return { kind: "label", name: first.name, line: first.line };
-      }
-      this.pendingLabel = undefined;
-    }
+    return labels;
+  }
 
+  /** 次が手続き・BEGIN か（ラベルが名前として使われる形）。 */
+  private atBlockHead(): boolean {
+    return (
+      this.at("word") && ["PROCEDURE", "PROC", "BEGIN"].includes(this.peek().upper)
+    );
+  }
+
+  /**
+   * 文を 1 つ解析して `out` に積む。
+   *
+   * ラベル付きの文は、GOTO の飛び先となる `label` 文を**ラベルの数だけ**
+   * 先に積んでから本体を積む。`execBlock` は同じ並びの中から
+   * `kind: "label"` を探すので、飛び先は兄弟として並んでいる必要がある。
+   *
+   * 以前は「ラベル文を 1 度だけ発行する」状態を持っていたため、
+   * 2 つ目以降のラベル付き文でラベルが発行されず、
+   * `GOTO` の飛び先が実行時に見つからなかった（しかも 1 つ飛ばしで
+   * 発行されるので、単一ラベルのテストでは気づけなかった）。
+   */
+  private parseInto(out: Stmt[]): void {
+    const labels = this.takeLabels();
+    if (labels.length > 0 && !this.atBlockHead()) {
+      for (const l of labels) {
+        out.push({ kind: "label", name: l.name, line: l.line });
+      }
+    }
+    out.push(this.parseLabeled(labels));
+  }
+
+  /**
+   * ラベルを読み飛ばして文を解析する。
+   * 単独の文を取る文脈（IF の THEN など）から呼ぶ。
+   */
+  private parseStatement(): Stmt {
+    return this.parseLabeled(this.takeLabels());
+  }
+
+  /**
+   * 本体の文を解析する。
+   * PROCEDURE はラベル（手続き名）を必要とするため、ラベルを受け取る。
+   */
+  private parseLabeled(labels: { name: string; line: number }[]): Stmt {
+    const label = labels[labels.length - 1]?.name;
     const t = this.peek();
     if (t.kind === "semi") {
       this.next();
@@ -294,6 +352,20 @@ class Parser {
           return this.parseReturn();
         default:
           break;
+      }
+    }
+
+    // 知っている PL/I の文なら「未実装」と断る。
+    // 素の「解釈できない文です」だと綴り間違いと区別が付かない
+    if (t.kind === "word") {
+      const why = UNIMPLEMENTED_STATEMENTS[t.upper];
+      if (why !== undefined) {
+        throw new ParseError(
+          `${t.text.toUpperCase()} は未実装です（${why}）`,
+          t.line,
+          t.col,
+          t.file,
+        );
       }
     }
 
@@ -461,7 +533,7 @@ class Parser {
         this.expect("semi", "セミコロン");
         return body;
       }
-      body.push(this.parseStatement());
+      this.parseInto(body);
     }
   }
 
@@ -507,6 +579,7 @@ class Parser {
     let init: Expr[] | undefined;
     let defined: Ref | undefined;
     let based: { pointer?: Ref } | undefined;
+    let storage: "static" | "automatic" | undefined;
     const attr = this.parseAttributes(
       () => this.at("semi") || this.at("comma"),
       (values) => {
@@ -518,6 +591,9 @@ class Parser {
       (b) => {
         based = b;
       },
+      (sc) => {
+        storage = sc;
+      },
     );
     const item: DeclItem = { names, attr };
     if (based !== undefined) item.based = based;
@@ -525,6 +601,7 @@ class Parser {
     if (dims !== undefined) item.dims = dims;
     if (init !== undefined) item.init = init;
     if (defined !== undefined) item.defined = defined;
+    if (storage !== undefined) item.storage = storage;
     return item;
   }
 
@@ -573,6 +650,7 @@ class Parser {
     onInit?: (values: Expr[]) => void,
     onDefined?: (base: Ref) => void,
     onBased?: (based: { pointer?: Ref }) => void,
+    onStorage?: (storage: "static" | "automatic") => void,
   ): DataAttr {
     let kind:
       | "fixed" | "float" | "char" | "bit" | "file" | "entry" | "picture" | "pointer"
@@ -700,11 +778,16 @@ class Parser {
             break;
           }
           case "STATIC":
+            // 手続きを抜けても値が残る。呼び出し回数を数える定型で使う
+            onStorage?.("static");
+            break;
           case "AUTOMATIC":
           case "AUTO":
+            onStorage?.("automatic");
+            break;
           case "EXTERNAL":
           case "INTERNAL":
-            // 記憶域クラス。意味は持たせない
+            // 結合の範囲。1 ファイル完結なので意味を持たせない
             break;
           default: {
             // PL/I の属性だが実装していないもの。
@@ -751,6 +834,15 @@ class Parser {
 
         t.file,
       );
+    }
+
+    // 型を 1 語も書いていない宣言（`dcl x;`）。
+    // PL/I では未宣言と同じく**名前の先頭文字**で属性が決まる
+    // （I〜N は FIXED BIN(15,0)、それ以外は FLOAT DEC(6)）。
+    // FIXED DEC(5,0) を既定にすると `dcl x; x = 1/3;` が 0 になる。
+    // `FIXED` や基数・精度を書いていれば下の switch で FIXED になる
+    if (kind === undefined && base === undefined && nums === undefined) {
+      return { type: "implicit" };
     }
 
     switch (kind) {
@@ -1190,8 +1282,19 @@ class Parser {
     const cond = this.expect("word", "条件名");
     // ENDFILE(SYSIN) のようにファイルを取る条件
     const conditionFile = this.parseConditionFile();
-    // SNAP / SYSTEM などの修飾は読み飛ばす
-    while (this.atWord("SNAP", "SYSTEM")) this.next();
+    // SNAP は報告の指定なので読み飛ばす。
+    // SYSTEM は「既定動作へ戻す」ので、本体を持たない ON 文にする
+    let system = false;
+    while (this.atWord("SNAP", "SYSTEM")) {
+      if (this.peek().upper === "SYSTEM") system = true;
+      this.next();
+    }
+    if (system) {
+      this.expect("semi", "セミコロン");
+      return conditionFile === undefined
+        ? { kind: "on", condition: cond.upper, line }
+        : { kind: "on", condition: cond.upper, conditionFile, line };
+    }
     const body = this.parseStatement();
     return conditionFile === undefined
       ? { kind: "on", condition: cond.upper, body, line }
@@ -1359,10 +1462,32 @@ class Parser {
       case "bitstr":
         this.next();
         return { kind: "bit", value: t.value ?? "" };
-      case "hexstr":
+      case "hexstr": {
         this.next();
-        // 16進定数は文字列として扱う
-        return { kind: "str", value: t.value ?? "" };
+        // 16 進定数は 2 桁ずつ 1 文字へデコードする（`'4142'X` は `'AB'`）。
+        // 以前は 16 進数字の並びをそのまま文字列にしていたので、
+        // `'41'X` が `'41'` になっていた
+        const body = (t.value ?? "").replace(/\s+/g, "");
+        if (!/^[0-9A-Fa-f]*$/.test(body)) {
+          throw new ParseError(
+            `16 進定数に使えない文字があります: ${JSON.stringify(t.value ?? "")}`,
+            t.line,
+            t.col,
+          );
+        }
+        if (body.length % 2 !== 0) {
+          throw new ParseError(
+            "16 進定数の桁数は偶数でなければなりません（1 文字 = 2 桁）",
+            t.line,
+            t.col,
+          );
+        }
+        let decoded = "";
+        for (let k = 0; k < body.length; k += 2) {
+          decoded += String.fromCharCode(parseInt(body.slice(k, k + 2), 16));
+        }
+        return { kind: "str", value: decoded };
+      }
       case "lparen": {
         this.next();
         const e = this.parseExpr();
@@ -1424,8 +1549,10 @@ class Parser {
       name += "." + this.next().text;
     }
     const subscripts: Expr[] = [];
+    let called = false;
     if (this.at("lparen")) {
       this.next();
+      called = true;
       if (!this.at("rparen")) {
         do {
           subscripts.push(this.parseExpr());
@@ -1433,7 +1560,7 @@ class Parser {
       }
       this.expect("rparen", "閉じ括弧");
     }
-    const ref: Ref = { kind: "ref", name, subscripts };
+    const ref: Ref = { kind: "ref", name, subscripts, ...(called ? { called } : {}) };
 
     // ポインタ修飾 p -> x。左が位置指定、右が BASED 変数
     if (this.atOp("->")) {

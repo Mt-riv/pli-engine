@@ -129,7 +129,7 @@ export class ZeroDivide extends Error {
 const maxPrecision = (base: Base) => (base === "bin" ? MAX_BIN : MAX_DEC);
 const radix = (base: Base) => (base === "bin" ? 2n : 10n);
 
-function ipow(b: bigint, e: number): bigint {
+export function ipow(b: bigint, e: number): bigint {
   let r = 1n;
   for (let k = 0; k < e; k++) r *= b;
   return r;
@@ -144,9 +144,21 @@ export function makeFixed(base: Base, p: number, q: number, v: bigint): FixedVal
   return { t: "fixed", base, p, q, v };
 }
 
+/**
+ * 文字値を作る。
+ *
+ * `length` は宣言された長さ（VARYING なら**最大**長）。
+ * VARYING も最大長で切る。切らないと `dcl t char(5) varying;` に
+ * 8 文字を代入したとき 8 文字のまま保持され、`LENGTH(t)` が 8 を返す。
+ */
 export function makeChar(v: string, length?: number, varying = false): CharVal {
   const len = length ?? v.length;
-  return { t: "char", v: varying ? v : v.padEnd(len).slice(0, len), length: len, varying };
+  return {
+    t: "char",
+    v: varying ? v.slice(0, len) : v.padEnd(len).slice(0, len),
+    length: len,
+    varying,
+  };
 }
 
 export function makeBit(v: string, length?: number): BitVal {
@@ -183,14 +195,43 @@ function rescale(x: FixedVal, newQ: number): bigint {
   return x.v < 0n ? -(-x.v / div) : x.v / div;
 }
 
-/** DECIMAL を BINARY に変換する（混在時の規則）。 */
+/**
+ * DECIMAL を BINARY に変換する（混在時の規則）。
+ *
+ * PL/I の規定では、10 進の精度 (p,q) は 2 進の
+ * (ceil(p*log2(10)) + 1, ceil(q*log2(10))) になる。
+ * `log2(10) ≈ 3.32` なので、10 進 1 桁はおよそ 2 進 3.32 桁。
+ *
+ * **小数部を捨ててはいけない。** 以前は整数尺度（q=0）に落としていたため、
+ * `dcl i fixed bin(15);` に対して `i * 1.5` が 1.5 を 1 と見て
+ * 10 を返していた。`I`〜`N` の暗黙変数は FIXED BIN(15,0) なので、
+ * ごく普通のコードがこの経路を通る。比較も狂って
+ * `i = 10.5` が真になっていた。
+ *
+ * 2 進尺度に移す時点で、10 進で正確だった値が落ちることはある
+ * （`0.1` は 2 進では循環小数）。これは混在そのものの性質で、
+ * Linter の `mixed-base-arithmetic` が警告する理由でもある。
+ */
 function toBinary(x: FixedVal): FixedVal {
   if (x.base === "bin") return x;
-  // 整数尺度に落としてから2進精度へ移す。
-  // 整数（q=0）の場合を正確に扱う。
-  const intPart = rescale(x, 0);
-  const p = Math.min(MAX_BIN, Math.max(1, Math.ceil((x.p - x.q) * Math.log2(10))));
-  return makeFixed("bin", p, 0, intPart);
+  const scale = Math.log2(10);
+  const q = Math.min(MAX_BIN, Math.ceil(x.q * scale));
+  const p = Math.min(MAX_BIN, Math.max(q + 1, Math.ceil(x.p * scale) + 1));
+  // v_dec / 10^x.q を 2^q 倍した整数にする。
+  // 先に掛けてから割ることで、途中の桁落ちを防ぐ。
+  //
+  // 2 進尺度に収まらない端数は **0 方向へ切り捨てる**。
+  // 実機（Iron Spring PL/I 1.4.1）で確かめた。`dcl i fixed bin(15); i = 1;` で
+  //   (i*0.1)*16 → 1       四捨五入なら 2（0.1×2⁴ = 1.6）
+  //   (i*0.3)*16 → 4       四捨五入なら 5（0.3×2⁴ = 4.8）
+  //   (i*(-0.1))*16 → -1   床なら -2
+  // 以前は四捨五入していた（誤差が小さいから、という推測）。
+  const num = x.v * ipow(2n, q);
+  const den = ipow(10n, x.q);
+  const neg = num < 0n;
+  const abs = neg ? -num : num;
+  const truncated = abs / den;
+  return makeFixed("bin", p, q, neg ? -truncated : truncated);
 }
 
 /** 2項演算のために両辺の基数を揃える。 */
@@ -261,6 +302,39 @@ export function div(a0: FixedVal, b0: FixedVal): FixedVal {
   return checkOverflow(makeFixed(a.base, N, q, negative ? -v : v));
 }
 
+/**
+ * 指数が整数で 0 以上でなければ true。
+ *
+ * PL/I はそのとき結果を FLOAT にする。`FixedOverflow` を投げると
+ * 条件名と理由が合わなくなる（`4 ** 1.5` は桁あふれではない）。
+ */
+export function powNeedsFloat(b: FixedVal): boolean {
+  if (b.q > 0 && rescale(b, 0) * ipow(radix(b.base), b.q) !== b.v) return true;
+  return rescale(b, 0) < 0n;
+}
+
+/**
+ * `x ** y`（y は 0 以上の整数）の結果が FIXED に収まるか。
+ *
+ * PL/I の規定では結果は FIXED(p, q) で p = (p1+1)*y - 1、q = q1*y。
+ * これが最大精度を超えるなら FLOAT で計算する。
+ *
+ * 実機（Iron Spring PL/I 1.4.1）で境目を確かめた。最大精度が 18 の実機では
+ *   2**8  → 256（FIXED、p=15）
+ *   2**9  → 512（FIXED、p=17）
+ *   2**10 → 1.0E+0003（**FLOAT**。p=19 で超える）
+ *   2.0**3 → 8.000（p=8, q=3。繰り返し乗算と同じ精度）
+ * この処理系の 10 進の最大精度は 15 なので、境目は実機より早い
+ * （`2**8` までが FIXED）。最大精度の違いは README「実機と違えている点」。
+ */
+export function powFitsFixed(a: FixedVal, b: FixedVal): boolean {
+  const e = Number(rescale(b, 0));
+  if (!Number.isInteger(e) || e < 0) return false;
+  if (e === 0) return true;
+  const max = a.base === "bin" ? MAX_BIN : MAX_DEC;
+  return (a.p + 1) * e - 1 <= max && a.q * e <= max;
+}
+
 export function pow(a: FixedVal, b: FixedVal): FixedVal {
   const e = Number(rescale(b, 0));
   if (!Number.isInteger(e) || e < 0) {
@@ -274,6 +348,42 @@ export function pow(a: FixedVal, b: FixedVal): FixedVal {
 
 export function neg(a: FixedVal): FixedVal {
   return makeFixed(a.base, a.p, a.q, -a.v);
+}
+
+/**
+ * F 書式のために小数 q 桁へ丸める。**半分は 0 から遠い側へ。**
+ *
+ * 代入（`assignTo`）とは丸め方が違う。実機（Iron Spring PL/I 1.4.1）で
+ * 両方を確かめた:
+ *
+ * | | 代入 `dcl y fixed dec(5,1); y = x;` | `put edit(x)(f(6,1))` |
+ * |---|---|---|
+ * | x = 1.26 | 1.2（切り捨て） | 1.3（丸め） |
+ * | x = 1.25 | 1.2 | 1.3（0 から遠い側。偶数側ではない） |
+ * | x = -1.26 | -1.2 | -1.3 |
+ *
+ * つまり丸めは**書式の性質**で、代入の性質ではない。同じ経路で実装すると
+ * どちらかが必ず間違う。
+ *
+ * 桁あふれは見ない（F 書式は幅に収まらなければ右から詰めるだけで、
+ * 条件は上げない。これも実機で確かめた）。
+ */
+export function roundForFormat(x: FixedVal, q: number): FixedVal {
+  // 10 進の桁に対する丸めなので、まず 10 進へ移す
+  const d = x.base === "dec" ? x : toDecimal(x);
+  if (d.q === q) return d;
+  if (q > d.q) {
+    // 桁を増やすだけ（0 を足す）
+    const p = Math.min(MAX_DEC, d.p + (q - d.q));
+    return makeFixed("dec", Math.max(p, q), q, d.v * ipow(10n, q - d.q));
+  }
+  const den = ipow(10n, d.q - q);
+  const neg = d.v < 0n;
+  const abs = neg ? -d.v : d.v;
+  // (abs + den/2) / den を整数演算で。half away from zero
+  const rounded = (abs * 2n + den) / (den * 2n);
+  const p = Math.max(1, q, d.p - (d.q - q));
+  return makeFixed("dec", p, q, neg ? -rounded : rounded);
 }
 
 /** 宣言された型へ代入する（尺度を合わせ、桁が溢れたらエラー）。 */

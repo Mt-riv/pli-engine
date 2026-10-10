@@ -1,0 +1,12 @@
+/* FIXED BIN の除算の精度。q = N - ((p1-q1) + q2)、N は BIN の最大精度 31。
+   bin(31)/整数 は q=0 で整数になり、bin(15)/整数 は q=16（10 進 5 桁相当）。
+   10 進の除算は入れない（最大精度が実機 18 / この処理系 15 で桁数が違う）。 */
+bdivg: proc options(main);
+  dcl n fixed bin(31);
+  dcl m fixed bin(15);
+  n = 7;
+  m = 7;
+  put skip list('bin(31)/3 ', n / 3);
+  put skip list('bin(15)/3 ', m / 3);
+  put skip list('bin(31)/2 ', n / 2);
+end bdivg;
