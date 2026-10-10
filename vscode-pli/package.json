@@ -1,8 +1,8 @@
 {
   "name": "pli-lang",
   "displayName": "PL/I",
-  "description": "PL/I の構文強調・診断・実行。処理系は拡張に同梱されているので外部のコンパイラを必要としない。",
-  "version": "0.4.1",
+  "description": "%extension.description%",
+  "version": "0.5.0",
   "private": true,
   "publisher": "local",
   "repository": {
@@ -17,7 +17,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
-      "description": "ワークスペースの PL/I ソースを解析し、%INCLUDE と OPEN FILE で周辺のファイルを読み書きします。"
+      "description": "%capabilities.untrustedWorkspaces.description%"
     },
     "virtualWorkspaces": false
   },
@@ -57,21 +57,21 @@
     "commands": [
       {
         "command": "pli.run",
-        "title": "PL/I: 実行",
+        "title": "%command.run.title%",
         "icon": "$(play)"
       },
       {
         "command": "pli.runWithArgs",
-        "title": "PL/I: 引数を指定して実行"
+        "title": "%command.runWithArgs.title%"
       },
       {
         "command": "pli.runTests",
-        "title": "PL/I: テストを実行",
+        "title": "%command.runTests.title%",
         "icon": "$(beaker)"
       },
       {
         "command": "pli.runScreen",
-        "title": "PL/I: 画面を動かす（MFS）",
+        "title": "%command.runScreen.title%",
         "icon": "$(device-desktop)"
       }
     ],
@@ -118,31 +118,31 @@
         "pli.diagnostics.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "入力中に構文を検査して問題を表示する。"
+          "description": "%config.diagnostics.enabled%"
         },
         "pli.dli.psb": {
           "type": "string",
           "default": "",
           "pattern": "^([A-Za-z0-9$#@]{1,8})?$",
-          "patternErrorMessage": "IMS の名前は 1〜8 桁の英数字と $ # @ だけです。",
+          "patternErrorMessage": "%config.dli.psb.pattern%",
           "scope": "machine-overridable",
-          "description": "IMS/DB（DL/I）で使う PSB の名前。指定すると <名前>.psb を読み、主手続きの引数が PCB のポインタになる。空のときはソースと同じディレクトリの *.psb を使う（ちょうど 1 つあるときだけ）。それも無ければ CALL PLITDLI は PSB が無いと言って止まる。"
+          "description": "%config.dli.psb%"
         },
         "pli.run.maxSteps": {
           "type": "number",
           "default": 5000000,
           "minimum": 1,
-          "description": "実行する文の数の上限。無限ループを止めるために使う。"
+          "description": "%config.run.maxSteps%"
         },
         "pli.lint.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "入力中に Linter をかける（構文が通っているときだけ動きます）。"
+          "description": "%config.lint.enabled%"
         },
         "pli.lint.rules": {
           "type": "object",
           "default": {},
-          "markdownDescription": "規則ごとの上書き。例: `{ \"goto-outside-on-unit\": \"off\", \"implicit-declaration\": \"error\" }`",
+          "markdownDescription": "%config.lint.rules%",
           "additionalProperties": {
             "type": "string",
             "enum": [
@@ -153,11 +153,26 @@
             ]
           }
         },
+        "pli.language": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "ja",
+            "en"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "%config.language.auto%",
+            "%config.language.ja%",
+            "%config.language.en%"
+          ],
+          "description": "%config.language%"
+        },
         "pli.run.maxOutputBytes": {
           "type": "number",
           "default": 1000000,
           "minimum": 1,
-          "description": "出力の上限（文字数）。超えると打ち切る。"
+          "description": "%config.run.maxOutputBytes%"
         }
       }
     },

@@ -8,7 +8,7 @@
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PL/I エンジン</title>
+<title data-i18n>PL/I エンジン</title>
 <style>
   :root {
     --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --border: #d8d8d8;
@@ -114,28 +114,34 @@
 </head>
 <body>
 <header>
-  <h1>PL/I エンジン</h1>
+  <h1 data-i18n>PL/I エンジン</h1>
   <span class="ver" id="ver"></span>
-  <select id="sample" aria-label="サンプル"></select>
+  <select id="sample" data-i18n data-i18n-attr="aria-label" aria-label="サンプル"></select>
   <select id="snippet" aria-label="Snippet"></select>
-  <button id="run" class="primary">実行 (Ctrl+Enter)</button>
-  <button id="files">ファイル</button>
-  <button id="lint">検査</button>
-  <button id="term-btn">端末</button>
-  <button id="share">URLで共有</button>
+  <button id="run" class="primary" data-i18n>実行 (Ctrl+Enter)</button>
+  <button id="files" data-i18n>ファイル</button>
+  <button id="lint" data-i18n>検査</button>
+  <button id="term-btn" data-i18n>端末</button>
+  <button id="share" data-i18n>URLで共有</button>
   <div class="spacer"></div>
-  <span class="ver">すべてブラウザ内で動作（サーバ不要）</span>
+  <!-- 言語。既定は日本語で、選ぶと ?lang= を付けて読み直す
+       （画面の文字列もサンプルの注釈も作り直すため） -->
+  <select id="lang" data-i18n data-i18n-attr="aria-label" aria-label="言語">
+    <option value="ja">日本語</option>
+    <option value="en">English</option>
+  </select>
+  <span class="ver" data-i18n>すべてブラウザ内で動作（サーバ不要）</span>
 </header>
 
 <div class="shared hidden" id="shared">
-  <span>共有された URL のコードを読み込みました。中身を確かめてから実行してください。</span>
-  <button id="shared-run" class="primary">実行する</button>
-  <button id="shared-dismiss">閉じる</button>
+  <span data-i18n>共有された URL のコードを読み込みました。中身を確かめてから実行してください。</span>
+  <button id="shared-run" class="primary" data-i18n>実行する</button>
+  <button id="shared-dismiss" data-i18n>閉じる</button>
 </div>
 <main>
   <div class="pane">
     <div class="pane-head">
-      <span>ソース</span>
+      <span data-i18n>ソース</span>
       <span class="spacer"></span>
       <span id="pos">1:1</span>
     </div>
@@ -145,8 +151,8 @@
     </div>
     <div class="drawer hidden" id="drawer">
       <div class="pane-head">
-        <button id="tab-files" class="tab on">付随ファイル</button>
-        <button id="tab-stdin" class="tab">標準入力 (SYSIN)</button>
+        <button id="tab-files" class="tab on" data-i18n>付随ファイル</button>
+        <button id="tab-stdin" class="tab" data-i18n>標準入力 (SYSIN)</button>
         <span class="spacer"></span>
         <span class="ver" id="drawer-hint"></span>
       </div>
@@ -155,21 +161,21 @@
     </div>
   </div>
   <div class="pane">
-    <div class="pane-head"><span id="out-title">出力</span></div>
+    <div class="pane-head"><span id="out-title" data-i18n>出力</span></div>
     <div class="termwrap hidden" id="term">
       <div class="pane-head keys">
-        <label>最初の画面 <input id="term-mod" size="8" spellcheck="false" autocomplete="off"></label>
-        <button id="term-start">開始</button>
+        <label><span data-i18n>最初の画面</span> <input id="term-mod" size="8" spellcheck="false" autocomplete="off"></label>
+        <button id="term-start" data-i18n>開始</button>
         <button id="term-enter" class="primary">ENTER</button>
-        <select id="term-key" aria-label="機能キー"></select>
-        <button id="term-send">送信</button>
-        <button id="term-next">次の画面</button>
+        <select id="term-key" data-i18n data-i18n-attr="aria-label" aria-label="機能キー"></select>
+        <button id="term-send" data-i18n>送信</button>
+        <button id="term-next" data-i18n>次の画面</button>
       </div>
       <div class="screen" id="term-screen"></div>
     </div>
     <pre id="out"></pre>
     <div class="diags hidden" id="diags"></div>
-    <div class="status"><span id="status">準備完了</span></div>
+    <div class="status"><span id="status" data-i18n>準備完了</span></div>
   </div>
 </main>
 

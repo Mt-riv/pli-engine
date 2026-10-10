@@ -1,5 +1,7 @@
 # PL/I テストフレームワーク
 
+**日本語** | [English](en/test.md)
+
 PL/I で書いたテストを PL/I で走らせる。
 
 テストの中身は**ただの PL/I** で、フレームワークのための特別な構文は無い。
@@ -111,6 +113,7 @@ npm run plitest -- examples/tests --quiet          # 失敗したファイルだ
 npm run plitest -- a_test.pli --max-steps 100000   # 文の実行数の上限
 npm run plitest -- examples/tests --psb STUPSB     # DL/I（IMS/DB）を使うテスト
 npm run plitest -- a_test.pli --write              # 書き出しを実ファイルへ反映する
+npm run plitest -- examples/tests --lang en        # 報告を英語で出す（環境変数 PLI_LANG でも）
 ```
 
 **書き出しは既定で実ファイルへ反映しない。** テストを走らせるたびに

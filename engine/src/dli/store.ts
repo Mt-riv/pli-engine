@@ -16,6 +16,7 @@
  * 業務プログラムから見える違いは階層順と順序キーだけで決まる。
  */
 
+import { m } from "../i18n/index.js";
 import { DliDefError, type DbdDef, type SegmentDef } from "./types.js";
 
 /** セグメント名の欄の幅。 */
@@ -54,7 +55,7 @@ export class Database {
       const seg = dbd.segments.get(type);
       if (seg === undefined) {
         throw new DliDefError(
-          `セグメント ${type} は DBD ${dbd.name} にありません`,
+          m`セグメント ${type} は DBD ${dbd.name} にありません`,
           file,
           lineNo,
         );
@@ -64,7 +65,7 @@ export class Database {
         parent = last.get(seg.parent);
         if (parent === undefined) {
           throw new DliDefError(
-            `${type} の親 ${seg.parent} がまだ現れていません`,
+            m`${type} の親 ${seg.parent} がまだ現れていません`,
             file,
             lineNo,
           );
@@ -75,7 +76,7 @@ export class Database {
       // なり、桁ずれを見逃す（SSA は長すぎる値を断っているので揃える）
       if (raw.trimEnd().length > seg.bytes) {
         throw new DliDefError(
-          `${type} の行が長すぎます（BYTES=${seg.bytes} に対して ${raw.trimEnd().length} 桁）`,
+          m`${type} の行が長すぎます（BYTES=${seg.bytes} に対して ${raw.trimEnd().length} 桁）`,
           file,
           lineNo,
         );
@@ -242,8 +243,7 @@ export class Database {
       if (sib.type === occ.type) continue;
       if (order(sib.type) > mine) {
         throw new DliDefError(
-          `${occ.type} が ${sib.type} より後に来ています` +
-            `（兄弟は DBD の子の宣言順に並べてください）`,
+          m`${occ.type} が ${sib.type} より後に来ています（兄弟は DBD の子の宣言順に並べてください）`,
           file,
           line,
         );
@@ -257,14 +257,14 @@ export class Database {
     if (b > a) return;
     if (b === a && seg.sequence.unique) {
       throw new DliDefError(
-        `${occ.type} の順序キー ${b.trim()} が重複しています`,
+        m`${occ.type} の順序キー ${b.trim()} が重複しています`,
         file,
         line,
       );
     }
     if (b < a) {
       throw new DliDefError(
-        `${occ.type} の順序キー ${b.trim()} が ${a.trim()} より前にあります（階層順に並べてください）`,
+        m`${occ.type} の順序キー ${b.trim()} が ${a.trim()} より前にあります（階層順に並べてください）`,
         file,
         line,
       );

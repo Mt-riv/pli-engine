@@ -13,6 +13,7 @@
  * ブラウザ版と VSCode Extension は先に構文を見ているので、
  * 揃えるという意味でもここで見る。
  */
+import { m, msg, tr } from "../src/i18n/index.js";
 import { readdirSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import {
@@ -26,18 +27,19 @@ import {
   type RuleSetting,
 } from "../src/index.js";
 import { hostForFile } from "./node-host.js";
-import { fail, main, readText, usage, value } from "./cli-util.js";
+import { applyLangOption, fail, main, readText, usage, value } from "./cli-util.js";
 
 const SETTINGS = new Set(["off", "info", "warning", "error"]);
 
-const USAGE = `使い方: plilint <ファイル/ディレクトリ...> [オプション]
+const USAGE = msg(`使い方: plilint <ファイル/ディレクトリ...> [オプション]
 
   --strict                        warning も失敗として扱う
   --rule <id>=<off|info|warning|error>
                                   規則ごとの重大度を上書きする
   --quiet, -q                     指摘のあるファイルだけ表示する
   --list-rules                    規則の一覧を表示する
-  -h, --help                      この使い方を表示する`;
+  --lang ja|en                    メッセージの言語（既定 ja。環境変数 PLI_LANG でも）
+  -h, --help                      この使い方を表示する`);
 
 /**
  * ディレクトリを辿って PL/I のソースを集める。
@@ -50,7 +52,7 @@ function collect(target: string, seen = new Set<string>()): string[] {
   try {
     st = statSync(target);
   } catch {
-    fail(`読めません: ${target}`);
+    fail(m`読めません: ${target}`);
   }
   if (st.isFile()) return [target];
   if (!st.isDirectory()) return [];
@@ -75,12 +77,12 @@ function listRules(): never {
   for (const category of ["correctness", "style"] as const) {
     lines.push(`[${category}]`);
     for (const r of RULES.filter((x) => x.category === category)) {
-      lines.push(`  ${r.id}  (既定: ${r.default})`);
-      lines.push(`      ${r.summary}`);
-      lines.push(`      ${r.rationale}`);
+      lines.push(m`  ${r.id}  (既定: ${r.default})`);
+      lines.push(`      ${tr(r.summary)}`);
+      lines.push(`      ${tr(r.rationale)}`);
     }
   }
-  lines.push(`合計 ${RULES.length} 規則`);
+  lines.push(m`合計 ${RULES.length} 規則`);
   usage(lines.join("\n"));
 }
 
@@ -90,10 +92,10 @@ main(() => {
   let strict = false;
   let quiet = false;
 
-  const argv = process.argv.slice(2);
+  const argv = applyLangOption(process.argv.slice(2));
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
-    if (a === "-h" || a === "--help") usage(USAGE);
+    if (a === "-h" || a === "--help") usage(tr(USAGE));
     else if (a === "--strict") strict = true;
     else if (a === "--quiet" || a === "-q") quiet = true;
     else if (a === "--list-rules") listRules();
@@ -101,20 +103,20 @@ main(() => {
       const spec = value(argv, ++i, a);
       const [id, setting] = spec.split("=");
       if (!id || !setting || !SETTINGS.has(setting)) {
-        fail(`--rule の指定が不正です: ${JSON.stringify(spec)}`);
+        fail(m`--rule の指定が不正です: ${JSON.stringify(spec)}`);
       }
       if (!RULES.some((r) => r.id === id)) {
-        fail(`そのような規則はありません: ${id}（--list-rules で一覧）`);
+        fail(m`そのような規則はありません: ${id}（--list-rules で一覧）`);
       }
       rules[id] = setting as RuleSetting;
     } else if (a.startsWith("-")) {
-      fail(`不明なオプション: ${a}\n\n${USAGE}`);
+      fail(m`不明なオプション: ${a}\n\n${tr(USAGE)}`);
     } else targets.push(a);
   }
-  if (targets.length === 0) usage(USAGE, 2);
+  if (targets.length === 0) usage(tr(USAGE), 2);
 
   const files = targets.flatMap((t) => collect(resolve(t)));
-  if (files.length === 0) fail("PL/I のファイルが見つかりません");
+  if (files.length === 0) fail(m`PL/I のファイルが見つかりません`);
 
   let errors = 0;
   let warnings = 0;
@@ -123,7 +125,7 @@ main(() => {
   let syntaxErrors = 0;
 
   for (const file of files) {
-    const source = readText(file, "ソース");
+    const source = readText(file, m`ソース`);
     const host = hostForFile(file);
     // 文を 1 つも実行させずに構文だけ見る
     const syntax: Diagnostic[] = runProgram(source, {
@@ -136,8 +138,8 @@ main(() => {
       console.log(`--- ${basename(file)} ---`);
       for (const d of syntax) {
         const where = d.file === undefined ? "" : `${d.file} `;
-        const col = d.col === undefined ? "" : `${d.col}桁`;
-        console.log(`  ERR  ${where}${d.line}行${col}: ${d.message} [構文]`);
+        const col = d.col === undefined ? "" : m`${d.col}桁`;
+        console.log(m`  ERR  ${where}${d.line}行${col}: ${d.message} [構文]`);
       }
       console.log("");
       // 構文が通らないソースに Linter をかけても何も返らない。
@@ -165,8 +167,7 @@ main(() => {
   }
 
   console.log(
-    `=== ファイル ${files.length} / 指摘のあるファイル ${flaggedFiles} / ` +
-      `構文の誤り ${syntaxErrors} / 誤り ${errors} / 警告 ${warnings} / 情報 ${infos} ===`,
+    m`=== ファイル ${files.length} / 指摘のあるファイル ${flaggedFiles} / 構文の誤り ${syntaxErrors} / 誤り ${errors} / 警告 ${warnings} / 情報 ${infos} ===`,
   );
   process.exitCode =
     syntaxErrors > 0 || errors > 0 || (strict && warnings > 0) ? 1 : 0;

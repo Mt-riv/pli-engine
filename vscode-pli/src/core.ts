@@ -5,26 +5,32 @@
 
 import {
   checkMfs,
+  normalizeLocale,
+  type Diagnostic,
+  formatReport,
   formatWarning,
-  lint,
-  loadMfs,
-  parseKeys,
-  playKeys,
-  runProgram,
-  transcript,
+  DEFAULT_LOCALE,
+  IMS_NAME,
   isTestFileName,
   isTestSource,
-  runTestSource,
-  SNIPPETS,
-  formatReport,
-  IMS_NAME,
-  type Diagnostic,
+  lint,
   type LintMessage,
   type LintOptions,
   type LintSeverity,
+  type Locale,
+  loadMfs,
+  m,
+  parseKeys,
+  playKeys,
   type PliHost,
   type ProgramResult,
+  runProgram,
+  runTestSource,
+  SNIPPETS,
+  snippetBody,
   type TestReport,
+  tr,
+  transcript,
 } from "../../engine/src/index.js";
 
 export interface Position {
@@ -90,9 +96,9 @@ export function toEditorDiagnostics(
         : d.col - 1;
     const start = Math.max(0, Math.min(startCol, text.length));
     const end = Math.max(start + 1, text.length);
-    const col = d.col === undefined ? "" : `${d.col}桁`;
+    const col = d.col === undefined ? "" : m`${d.col}桁`;
     const message = fromInclude
-      ? `${d.file} ${d.line}行${col}: ${d.message} (${d.phase})`
+      ? m`${d.file} ${d.line}行${col}: ${d.message} (${d.phase})`
       : `${d.message} (${d.phase})`;
     return {
       range: {
@@ -174,7 +180,7 @@ export function toEditorTestResults(
         start: { line: lineIndex, character: start },
         end: { line: lineIndex, character: end },
       },
-      message: `${r.name}: ${r.message ?? (r.status === "failed" ? "表明が失敗しました" : "異常終了しました")}`,
+      message: m`${r.name}: ${r.message ?? (r.status === "failed" ? m`表明が失敗しました` : m`異常終了しました`)}`,
       severity: "error",
       source: "pli-test",
     });
@@ -235,13 +241,13 @@ export function runForEditor(
   });
 
   const head = `--- ${fileName} ---`;
-  const body = result.stdout === "" ? "(出力なし)" : result.stdout.replace(/\n$/, "");
+  const body = result.stdout === "" ? m`(出力なし)` : result.stdout.replace(/\n$/, "");
   const parts = [head, body];
 
   if (result.diagnostics.length > 0) {
     parts.push("");
     for (const d of result.diagnostics) {
-      const where = d.col === undefined ? `${d.line}行` : `${d.line}行${d.col}桁`;
+      const where = d.col === undefined ? m`${d.line}行` : m`${d.line}行${d.col}桁`;
       // 取り込み先の誤りはファイル名を添える。
       // 添えないと本体の行番号と区別が付かない
       const file = d.file === undefined ? "" : `${d.file} `;
@@ -249,8 +255,8 @@ export function runForEditor(
     }
   }
   const flags: string[] = [];
-  flags.push(result.ok ? "成功" : "失敗");
-  if (result.truncated) flags.push("出力打ち切り");
+  flags.push(result.ok ? m`成功` : m`失敗`);
+  if (result.truncated) flags.push(m`出力打ち切り`);
   flags.push(`${result.durationMs}ms`);
   parts.push("", flags.join(" / "));
 
@@ -289,7 +295,7 @@ export function runScreenForEditor(
   const head = `--- ${fileName} ---`;
   if (opts.psb === undefined || opts.psb === "") {
     return {
-      text: `${head}\n画面入出力には PSB が要ります（ソースの隣に入出力 PCB を含む *.psb を 1 つ置くか、設定 pli.dli.psb に名前を書いてください）`,
+      text: m`${head}\n画面入出力には PSB が要ります（ソースの隣に入出力 PCB を含む *.psb を 1 つ置くか、設定 pli.dli.psb に名前を書いてください）`,
       ok: false,
       diagnostics: [],
     };
@@ -299,7 +305,7 @@ export function runScreenForEditor(
   try {
     const library = loadMfs(opts.mfs);
     // 止めるほどではないが、たぶん間違いというもの
-    for (const w of checkMfs(library)) notes.push(`[書式] ${formatWarning(w)}`);
+    for (const w of checkMfs(library)) notes.push(m`[書式] ${formatWarning(w)}`);
     const played = playKeys({
       source,
       library,
@@ -321,8 +327,8 @@ export function runScreenForEditor(
   );
   const failed = steps.some((s) => s.step.diagnostics.length > 0);
   const notices = steps.filter((s) => s.step.notice !== undefined).length;
-  const flags = [failed ? "失敗" : "成功", `往復 ${steps.length - 1} 回`];
-  if (notices > 0) flags.push(`通知 ${notices} 件`);
+  const flags = [failed ? m`失敗` : m`成功`, m`往復 ${steps.length - 1} 回`];
+  if (notices > 0) flags.push(m`通知 ${notices} 件`);
   return {
     text: [head, ...notes, transcript(steps).replace(/\n$/, ""), "", flags.join(" / ")].join("\n"),
     ok: !failed,
@@ -393,9 +399,9 @@ export interface SnippetCompletion {
 export function snippetCompletions(): SnippetCompletion[] {
   return SNIPPETS.map((s) => ({
     label: s.prefix,
-    body: s.body.join("\n"),
-    detail: s.name,
-    documentation: s.description,
+    body: snippetBody(s).join("\n"),
+    detail: tr(s.name),
+    documentation: tr(s.description),
   }));
 }
 
@@ -447,10 +453,27 @@ export function choosePsb(opts: {
       name: "",
       fromDir: false,
       warning:
-        `設定 pli.dli.psb の値「${raw}」は IMS の名前として使えません` +
-        "（1〜8 桁の英数字と $ # @ だけ）。DL/I は無効にします。",
+        m`設定 pli.dli.psb の値「${raw}」は IMS の名前として使えません（1〜8 桁の英数字と $ # @ だけ）。DL/I は無効にします。`,
     };
   }
   if (opts.beside === undefined || opts.beside === "") return { name: "", fromDir: false };
   return { name: opts.beside, fromDir: true };
+}
+
+/**
+ * 表示に使う言語。
+ *
+ * 設定 `pli.language` が `auto`（既定）のときは VSCode の表示言語に合わせる。
+ * 合わせるのは、コマンド名と設定の説明（`package.nls.*.json`）が
+ * VSCode の表示言語で決まり、拡張の設定では変えられないため。
+ * ここだけ日本語に留めると、同じ画面でコマンド名が英語・
+ * メッセージが日本語という食い違いになる。
+ *
+ * 日本語でも英語でもない表示言語のときは日本語（＝既定の言語）。
+ * 中途半端に英語へ寄せるより、原文の方が確かだという判断。
+ */
+export function chooseLocale(setting: string, displayLanguage: string): Locale {
+  return (
+    normalizeLocale(setting) ?? normalizeLocale(displayLanguage) ?? DEFAULT_LOCALE
+  );
 }

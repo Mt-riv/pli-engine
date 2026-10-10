@@ -1,5 +1,7 @@
 # ゴールデンテストの期待値
 
+**日本語** | [English](README.en.md)
+
 ここの `*.expected` は、**実在の PL/I 処理系の出力**をバイト単位で固定したもの。
 `golden.test.ts` が一致を要求する。
 

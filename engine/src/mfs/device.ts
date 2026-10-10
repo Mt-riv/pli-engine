@@ -17,6 +17,7 @@
  * 必要なら行ごとに項目を分けて定義する。
  */
 
+import { m } from "../i18n/index.js";
 import {
   GAP_ATTR,
   MfsDefError,
@@ -100,8 +101,7 @@ export function layout(fmt: DeviceFormat, dpage: Dpage): ScreenField[] {
     const attrAddr = start - 1;
     if (attrAddr <= prevEnd) {
       throw new MfsDefError(
-        `${f.name ?? "固定文字"}（${f.line} 行 ${f.col} 桁）が前の項目と重なります` +
-          "（属性バイトが 1 つ前の位置を食うため、項目の間は 1 桁以上あける）",
+        m`${f.name ?? m`固定文字`}（${f.line} 行 ${f.col} 桁）が前の項目と重なります（属性バイトが 1 つ前の位置を食うため、項目の間は 1 桁以上あける）`,
         fmt.file,
         f.srcLine,
       );

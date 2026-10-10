@@ -22,6 +22,7 @@
  *   G M    図形文字
  */
 
+import { m } from "./i18n/index.js";
 import { MAX_DEC, type FixedVal, type PictureSpec as PictureSpecBase } from "./value.js";
 
 export class PictureError extends Error {
@@ -101,7 +102,7 @@ export function parsePicture(source: string): PictureSpec {
     }
 
     if (c === "V") {
-      if (seenV) throw new PictureError("PICTURE に V は 1 つだけです");
+      if (seenV) throw new PictureError(m`PICTURE に V は 1 つだけです`);
       seenV = true;
       i++;
       continue;
@@ -164,7 +165,7 @@ export function parsePicture(source: string): PictureSpec {
         continue;
       }
       if (driftSymbol !== undefined) {
-        throw new PictureError("PICTURE の浮動記号は 1 種類だけです");
+        throw new PictureError(m`PICTURE の浮動記号は 1 種類だけです`);
       }
       driftSymbol = c;
       let seenSymbol = 0;
@@ -202,12 +203,12 @@ export function parsePicture(source: string): PictureSpec {
     }
 
     throw new PictureError(
-      `PICTURE に使えない文字です: ${JSON.stringify(src[i])}（この処理系は数値編集のみ対応）`,
+      m`PICTURE に使えない文字です: ${JSON.stringify(src[i])}（この処理系は数値編集のみ対応）`,
     );
   }
 
-  if (p === 0) throw new PictureError("PICTURE に数字の位置がありません");
-  if (p > MAX_DEC) throw new PictureError(`PICTURE の桁数が多すぎます（上限 ${MAX_DEC}）`);
+  if (p === 0) throw new PictureError(m`PICTURE に数字の位置がありません`);
+  if (p > MAX_DEC) throw new PictureError(m`PICTURE の桁数が多すぎます（上限 ${MAX_DEC}）`);
 
   return {
     source,

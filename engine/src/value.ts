@@ -15,6 +15,8 @@
  *   混在  : BINARY と DECIMAL が混ざると BINARY に変換する
  */
 
+
+import { m } from "./i18n/index.js";
 /** 最大精度。PL/I では実装定義で、この処理系はこの値を使う。 */
 export const MAX_DEC = 15;
 export const MAX_BIN = 31;
@@ -447,7 +449,7 @@ export function powFitsFixed(a: FixedVal, b: FixedVal): boolean {
 export function pow(a: FixedVal, b: FixedVal): FixedVal {
   const e = Number(rescale(b, 0));
   if (!Number.isInteger(e) || e < 0) {
-    throw new FixedOverflow("整数の指数のみ対応しています");
+    throw new FixedOverflow(m`整数の指数のみ対応しています`);
   }
   let acc = makeFixed(a.base, a.p, a.q, a.v);
   if (e === 0) return makeFixed(a.base, 1, 0, 1n);

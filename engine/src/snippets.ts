@@ -8,6 +8,8 @@
  * ブラウザ版は `plainText()` で記法を取り除いて挿入する。
  */
 
+
+import { msg, tr } from "./i18n/index.js";
 export interface Snippet {
   /** 一覧に出す名前。 */
   name: string;
@@ -21,16 +23,16 @@ export interface Snippet {
 
 export const SNIPPETS: Snippet[] = [
   {
-    name: "主手続き",
+    name: msg("主手続き"),
     prefix: "main",
-    description: "OPTIONS(MAIN) を持つ主手続き",
+    description: msg("OPTIONS(MAIN) を持つ主手続き"),
     standalone: true,
     body: ["${1:prog}: proc options(main);", "  $0", "end ${1:prog};", ""],
   },
   {
     name: "Hello World",
     prefix: "hello",
-    description: "最小のプログラム",
+    description: msg("最小のプログラム"),
     standalone: true,
     body: [
       "hello: proc options(main);",
@@ -40,9 +42,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "引数を取る主手続き",
+    name: msg("引数を取る主手続き"),
     prefix: "mainarg",
-    description: "コマンドライン引数を受け取る主手続き",
+    description: msg("コマンドライン引数を受け取る主手続き"),
     standalone: true,
     body: [
       "${1:prog}: proc(parm) options(main);",
@@ -54,9 +56,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "内部手続き",
+    name: msg("内部手続き"),
     prefix: "proc",
-    description: "引数を取る内部手続き",
+    description: msg("引数を取る内部手続き"),
     body: [
       "${1:name}: proc(${2:arg});",
       "  dcl ${2:arg} fixed bin(31);",
@@ -65,9 +67,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "値を返す手続き",
+    name: msg("値を返す手続き"),
     prefix: "func",
-    description: "RETURNS を持つ手続き",
+    description: msg("RETURNS を持つ手続き"),
     body: [
       "${1:name}: proc(${2:arg}) returns(${3:fixed bin(31)});",
       "  dcl ${2:arg} fixed bin(31);",
@@ -77,9 +79,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "再帰手続き",
+    name: msg("再帰手続き"),
     prefix: "recur",
-    description: "RECURSIVE を持つ手続き",
+    description: msg("RECURSIVE を持つ手続き"),
     body: [
       "${1:fib}: proc(n) returns(fixed bin(31)) recursive;",
       "  dcl n fixed bin(31);",
@@ -89,33 +91,33 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "宣言（整数）",
+    name: msg("宣言（整数）"),
     prefix: "dclbin",
-    description: "FIXED BINARY の宣言",
+    description: msg("FIXED BINARY の宣言"),
     body: ["dcl ${1:i} fixed bin(${2:31});$0"],
   },
   {
-    name: "宣言（10進固定小数点）",
+    name: msg("宣言（10進固定小数点）"),
     prefix: "dcldec",
-    description: "FIXED DECIMAL の宣言。金額など正確な10進計算に使う",
+    description: msg("FIXED DECIMAL の宣言。金額など正確な10進計算に使う"),
     body: ["dcl ${1:amount} fixed dec(${2:15},${3:2});$0"],
   },
   {
-    name: "宣言（文字列）",
+    name: msg("宣言（文字列）"),
     prefix: "dclchar",
-    description: "CHARACTER VARYING の宣言",
+    description: msg("CHARACTER VARYING の宣言"),
     body: ["dcl ${1:s} char(${2:80}) varying;$0"],
   },
   {
-    name: "宣言（配列）",
+    name: msg("宣言（配列）"),
     prefix: "dclarr",
-    description: "初期値付きの配列",
+    description: msg("初期値付きの配列"),
     body: ["dcl ${1:a}(${2:10}) fixed bin(31) init(${3:0});$0"],
   },
   {
-    name: "宣言（構造体）",
+    name: msg("宣言（構造体）"),
     prefix: "struct",
-    description: "レベル番号を使った構造体",
+    description: msg("レベル番号を使った構造体"),
     body: [
       "dcl 1 ${1:rec},",
       "      2 ${2:name} char(${3:20}) varying,",
@@ -126,37 +128,37 @@ export const SNIPPETS: Snippet[] = [
   {
     name: "IF / THEN / ELSE",
     prefix: "if",
-    description: "条件分岐",
+    description: msg("条件分岐"),
     body: ["if ${1:cond} then", "  ${2:;}", "else", "  ${3:;}", "$0"],
   },
   {
-    name: "IF と DO 群",
+    name: msg("IF と DO 群"),
     prefix: "ifdo",
-    description: "複数文を持つ条件分岐",
+    description: msg("複数文を持つ条件分岐"),
     body: ["if ${1:cond} then", "  do;", "    $0", "  end;"],
   },
   {
-    name: "DO 反復",
+    name: msg("DO 反復"),
     prefix: "do",
-    description: "添字による繰り返し",
+    description: msg("添字による繰り返し"),
     body: ["do ${1:i} = ${2:1} to ${3:10};", "  $0", "end;"],
   },
   {
     name: "DO WHILE",
     prefix: "dowhile",
-    description: "条件が真の間繰り返す",
+    description: msg("条件が真の間繰り返す"),
     body: ["do while(${1:cond});", "  $0", "end;"],
   },
   {
     name: "DO UNTIL",
     prefix: "dountil",
-    description: "条件が真になるまで繰り返す",
+    description: msg("条件が真になるまで繰り返す"),
     body: ["do until(${1:cond});", "  $0", "end;"],
   },
   {
     name: "SELECT",
     prefix: "select",
-    description: "値による分岐",
+    description: msg("値による分岐"),
     body: [
       "select (${1:expr});",
       "  when (${2:1}) ${3:;}",
@@ -166,9 +168,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "SELECT（条件式）",
+    name: msg("SELECT（条件式）"),
     prefix: "selectw",
-    description: "条件による分岐（SELECT; 形式）",
+    description: msg("条件による分岐（SELECT; 形式）"),
     body: [
       "select;",
       "  when (${1:cond}) ${2:;}",
@@ -180,25 +182,25 @@ export const SNIPPETS: Snippet[] = [
   {
     name: "PUT LIST",
     prefix: "put",
-    description: "値を並べて出力（24桁ごとに配置される）",
+    description: msg("値を並べて出力（24桁ごとに配置される）"),
     body: ["put skip list(${1:x});$0"],
   },
   {
     name: "PUT EDIT",
     prefix: "pute",
-    description: "書式を指定して出力",
+    description: msg("書式を指定して出力"),
     body: ["put skip edit(${1:x})(${2:f(10)});$0"],
   },
   {
     name: "GET STRING",
     prefix: "gets",
-    description: "文字列から値を読み取る",
+    description: msg("文字列から値を読み取る"),
     body: ["get string(${1:text}) edit(${2:x})(${3:f(10)});$0"],
   },
   {
-    name: "ON 条件",
+    name: msg("ON 条件"),
     prefix: "on",
-    description: "条件が起きたときの処理",
+    description: msg("条件が起きたときの処理"),
     body: [
       "on ${1|error,zerodivide,fixedoverflow,conversion,subscriptrange|}",
       "  begin;",
@@ -207,27 +209,27 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "BEGIN ブロック",
+    name: msg("BEGIN ブロック"),
     prefix: "begin",
-    description: "独自の名前の有効範囲を持つブロック",
+    description: msg("独自の名前の有効範囲を持つブロック"),
     body: ["begin;", "  $0", "end;"],
   },
   {
     name: "%REPLACE",
     prefix: "replace",
-    description: "定数の定義（プリプロセッサ）",
+    description: msg("定数の定義（プリプロセッサ）"),
     body: ["%replace ${1:NAME} by ${2:1};$0"],
   },
   {
-    name: "DEFINED（別名）",
+    name: msg("DEFINED（別名）"),
     prefix: "defined",
-    description: "別の変数への別名。iSUB で添字を対応づけられる",
+    description: msg("別の変数への別名。iSUB で添字を対応づけられる"),
     body: ["dcl ${1:d}(${2:3}) fixed bin(31) def (${3:b}(1sub,1sub));$0"],
   },
   {
     name: "FizzBuzz",
     prefix: "fizzbuzz",
-    description: "動作確認用のサンプル",
+    description: msg("動作確認用のサンプル"),
     standalone: true,
     body: [
       "fb: proc options(main);",
@@ -243,9 +245,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "10進計算の例",
+    name: msg("10進計算の例"),
     prefix: "decdemo",
-    description: "FIXED DECIMAL による正確な10進計算（浮動小数では誤差が出る）",
+    description: msg("FIXED DECIMAL による正確な10進計算（浮動小数では誤差が出る）"),
     standalone: true,
     body: [
       "money: proc options(main);",
@@ -255,17 +257,17 @@ export const SNIPPETS: Snippet[] = [
       "  price = 1980.00;",
       "  rate  = 0.10;",
       "  tax   = price * rate;",
-      "  put skip list('税抜', price);",
-      "  put skip list('税額', tax);",
-      "  put skip list('税込', price + tax);",
+      msg("  put skip list('税抜', price);"),
+      msg("  put skip list('税額', tax);"),
+      msg("  put skip list('税込', price + tax);"),
       "end money;",
       "",
     ],
   },
   {
-    name: "テスト手続き",
+    name: msg("テスト手続き"),
     prefix: "test",
-    description: "pli-test のテスト手続き（TEST_ で始める）",
+    description: msg("pli-test のテスト手続き（TEST_ で始める）"),
     body: [
       "TEST_${1:name}: proc;",
       "  call ASSERT_EQ(${2:actual}, ${3:expected}, '${1:name}');",
@@ -274,9 +276,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "標準入力から読む",
+    name: msg("標準入力から読む"),
     prefix: "getlist",
-    description: "SYSIN から読み、ENDFILE で終わるループ",
+    description: msg("SYSIN から読み、ENDFILE で終わるループ"),
     standalone: true,
     body: [
       "${1:prog}: proc options(main);",
@@ -295,9 +297,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "ファイルを読む",
+    name: msg("ファイルを読む"),
     prefix: "readfile",
-    description: "名前付きファイルを開いて読み、閉じる",
+    description: msg("名前付きファイルを開いて読み、閉じる"),
     body: [
       "dcl ${1:inp} file stream input;",
       "dcl done bit(1);",
@@ -314,9 +316,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "ファイルへ書く",
+    name: msg("ファイルへ書く"),
     prefix: "writefile",
-    description: "名前付きファイルを開いて書き、閉じる",
+    description: msg("名前付きファイルを開いて書き、閉じる"),
     body: [
       "dcl ${1:rep} file stream output print;",
       "open file(${1:rep}) output linesize(${2:80});",
@@ -326,28 +328,28 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "取り込み",
+    name: msg("取り込み"),
     prefix: "include",
-    description: "宣言群を取り込む",
+    description: msg("宣言群を取り込む"),
     body: ["%include ${1:decls};", "$0"],
   },
   {
-    name: "金額のピクチャ",
+    name: msg("金額のピクチャ"),
     prefix: "picamt",
-    description: "通貨記号付きの金額（浮動する $ とカンマ）",
+    description: msg("通貨記号付きの金額（浮動する $ とカンマ）"),
     // VSCode の Snippet 記法では $ が特別なので \$ と書く
     body: ["dcl ${1:amount} pic'\\$\\$\\$,\\$\\$9V.99';", "$0"],
   },
   {
-    name: "ゼロ抑制のピクチャ",
+    name: msg("ゼロ抑制のピクチャ"),
     prefix: "piczz",
-    description: "先行ゼロを空白にする整数",
+    description: msg("先行ゼロを空白にする整数"),
     body: ["dcl ${1:count} pic'ZZZZ9';", "$0"],
   },
   {
-    name: "連結リストの節",
+    name: msg("連結リストの節"),
     prefix: "node",
-    description: "BASED の構造体とポインタ",
+    description: msg("BASED の構造体とポインタ"),
     body: [
       "dcl ${1:cur} pointer;",
       "dcl 1 ${2:node} based(${1:cur}),",
@@ -357,9 +359,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "確保して繋ぐ",
+    name: msg("確保して繋ぐ"),
     prefix: "alloc",
-    description: "ALLOCATE して先頭に挿す",
+    description: msg("ALLOCATE して先頭に挿す"),
     body: [
       "allocate ${1:node} set(${2:cur});",
       "${2:cur} -> ${1:node}.value = ${3:0};",
@@ -369,9 +371,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "リストを走査",
+    name: msg("リストを走査"),
     prefix: "walk",
-    description: "NULL まで辿る",
+    description: msg("NULL まで辿る"),
     body: [
       "${1:cur} = ${2:head};",
       "do while(${1:cur} ^= null());",
@@ -381,9 +383,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "レコードを読む",
+    name: msg("レコードを読む"),
     prefix: "readrec",
-    description: "固定長レコードを順に読む",
+    description: msg("固定長レコードを順に読む"),
     body: [
       "dcl ${1:inp} file record input env(f recsize(${2:80}));",
       "dcl 1 ${3:rec},",
@@ -402,9 +404,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "PCB マスク（DL/I）",
+    name: msg("PCB マスク（DL/I）"),
     prefix: "pcb",
-    description: "IMS/DB の DB PCB マスク。主手続きの引数で受けたポインタに重ねる",
+    description: msg("IMS/DB の DB PCB マスク。主手続きの引数で受けたポインタに重ねる"),
     body: [
       "dcl 1 ${1:db_pcb} based(${2:db_ptr}),",
       "      2 dbname     char(8),",
@@ -420,9 +422,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "DL/I の機能コード",
+    name: msg("DL/I の機能コード"),
     prefix: "dlifunc",
-    description: "よく使う DL/I の機能コードと引数個数の宣言",
+    description: msg("よく使う DL/I の機能コードと引数個数の宣言"),
     body: [
       "dcl plitdli entry;",
       "dcl (three, four, five) fixed bin(31);",
@@ -438,11 +440,11 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "DL/I で 1 件取る（GU）",
+    name: msg("DL/I で 1 件取る（GU）"),
     prefix: "dligu",
-    description: "修飾 SSA でセグメントを 1 件取り、ステータスコードを見る",
+    description: msg("修飾 SSA でセグメントを 1 件取り、ステータスコードを見る"),
     body: [
-      "/* 項目名は 8 桁、関係演算子は 2 桁。桁がずれると AJ になる */",
+      msg("/* 項目名は 8 桁、関係演算子は 2 桁。桁がずれると AJ になる */"),
       "dcl ssa char(${1:25}) init('${2:STUDENT} (${3:STUDNO}   =${4:S0001})');",
       "call plitdli(four, func_gu, ${5:db_pcb}, ${6:seg_io}, ssa);",
       "select (${5:db_pcb}.stat_code);",
@@ -454,9 +456,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "DL/I で順に読む（GN）",
+    name: msg("DL/I で順に読む（GN）"),
     prefix: "dlign",
-    description: "階層順に全件たどる。GA / GK は警告なので GB まで続ける",
+    description: msg("階層順に全件たどる。GA / GK は警告なので GB まで続ける"),
     body: [
       "do while (${1:db_pcb}.stat_code ^= 'GB');",
       "  call plitdli(three, func_gn, ${1:db_pcb}, ${2:seg_io});",
@@ -468,9 +470,9 @@ export const SNIPPETS: Snippet[] = [
     ],
   },
   {
-    name: "DL/I で書き換える（GHU + REPL）",
+    name: msg("DL/I で書き換える（GHU + REPL）"),
     prefix: "dlirepl",
-    description: "ホールド付きで取ってから置き換える。順序キーは変えられない",
+    description: msg("ホールド付きで取ってから置き換える。順序キーは変えられない"),
     body: [
       "call plitdli(four, func_ghu, ${1:db_pcb}, ${2:seg_io}, ${3:ssa});",
       "if ${1:db_pcb}.stat_code = '  ' then do;",
@@ -496,6 +498,16 @@ export function plainText(body: string[]): string {
     .replace(/\$\d+/g, "")
     // 退避した \$ を戻す（PICTURE の通貨記号など）
     .replace(/\\\$/g, "$");
+}
+
+/**
+ * 本文を今の言語で取る。
+ *
+ * 本文には日本語の注釈や出力の文字列が混じる（`put skip list('税抜', …)`
+ * のような例）。表に通してから挿す。訳が無い行はそのまま返る。
+ */
+export function snippetBody(s: Snippet): string[] {
+  return s.body.map((line) => tr(line));
 }
 
 export interface VscodeSnippet {

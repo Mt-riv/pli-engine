@@ -1,5 +1,7 @@
 # VSCode Extension マニュアル
 
+**日本語** | [English](en/vscode-manual.md)
+
 PL/I の構文強調・診断・実行・テスト・検査・Snippet を VSCode に統合します。
 **処理系を同梱している**ので、外部のコンパイラは要りません。
 
@@ -10,10 +12,10 @@ PL/I の構文強調・診断・実行・テスト・検査・Snippet を VSCode
 ### リリースから入手する（手軽）
 
 [Releases](https://github.com/Mt-riv/pli-engine/releases) から
-`pli-lang-0.4.1.vsix` をダウンロードします。ビルドは要りません。
+`pli-lang-0.5.0.vsix` をダウンロードします。ビルドは要りません。
 
 ```bash
-gh release download vscode-v0.4.1 --repo Mt-riv/pli-engine
+gh release download vscode-v0.5.0 --repo Mt-riv/pli-engine
 ```
 
 ### 自分で `.vsix` を作る
@@ -22,17 +24,17 @@ gh release download vscode-v0.4.1 --repo Mt-riv/pli-engine
 cd pli-engine/vscode-pli
 npm ci
 npm run build
-npx @vscode/vsce package      # pli-lang-0.4.1.vsix ができる
+npx @vscode/vsce package      # pli-lang-0.5.0.vsix ができる
 ```
 
 VSCode の拡張ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）→ 右上の `…` →
-**「VSIX からのインストール」** → `pli-lang-0.4.1.vsix` を選択。
+**「VSIX からのインストール」** → `pli-lang-0.5.0.vsix` を選択。
 `Developer: Reload Window` で読み込み直します。
 
 `code` コマンドを PATH に通している場合は次でも入ります。
 
 ```bash
-code --install-extension pli-lang-0.4.1.vsix
+code --install-extension pli-lang-0.5.0.vsix
 ```
 
 ### 開発しながら使う
@@ -151,6 +153,7 @@ i は宣言されていません。暗黙に FIXED BIN(15,0) として宣言さ�
 | `pli.run.maxSteps` | `5000000` | 実行する文の数の上限（無限ループ対策） |
 | `pli.run.maxOutputBytes` | `1000000` | 出力の上限（文字数） |
 | `pli.dli.psb` | `""` | IMS/DB（DL/I）で使う PSB の名前。空ならソースの隣の `*.psb` を使う（1 つだけのとき） |
+| `pli.language` | `"auto"` | メッセージと診断の言語（`auto` / `ja` / `en`）。下の「言語」 |
 
 ```jsonc
 {
@@ -162,6 +165,25 @@ i は宣言されていません。暗黙に FIXED BIN(15,0) として宣言さ�
 ```
 
 設定を変えると、開いているファイルの診断がすぐ貼り直されます（再読み込み不要）。
+
+### 言語
+
+`pli.language` で、メッセージ・診断・Linter の指摘・テストの報告・画面の文字の
+言語を決めます。
+
+| 値 | 何が起きるか |
+|----|-------------|
+| `auto`（既定） | VSCode の表示言語に合わせる。日本語なら日本語、英語なら英語。**どちらでもない表示言語（フランス語など）では日本語**になります |
+| `ja` | つねに日本語 |
+| `en` | つねに英語 |
+
+**コマンド名（「PL/I: 実行」など）と設定の説明は、この設定では変わりません。**
+VSCode 自身の仕組み（`package.nls.json` / `package.nls.en.json`）で決まるので、
+**VSCode の表示言語**に従います。既定の `auto` なら両者が揃うので、
+食い違わせたいとき以外は変えなくてかまいません。表示言語そのものを変えるには
+`Configure Display Language` を使います（VSCode の再読み込みが必要）。
+
+この設定だけを変えた場合は、次の実行と次の診断から効きます（再読み込み不要）。
 
 ## `%INCLUDE` の解決
 
@@ -204,6 +226,7 @@ IF IF = THEN THEN THEN = ELSE;
 | テストが「テストが見つかりません」 | 手続き名が `TEST_` で始まっているか、引数を取っていないかを確認 |
 | DL/I のテストが全部「PSB が指定されていません」で異常 | ソースと同じディレクトリに `*.psb` が 1 つだけあるか確認する。2 つ以上あると選べないので、設定 `pli.dli.psb` に名前を書く |
 | 「主手続きの引数 … はポインタで宣言されています」 | PCB を受け取る IMS のプログラム。上と同じく PSB が要る |
+| メッセージが英語、コマンド名が日本語（または逆） | `pli.language` と VSCode の表示言語が食い違っている。`pli.language` を `auto` に戻す |
 
 ## 開発
 

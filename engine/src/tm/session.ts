@@ -13,6 +13,7 @@
  *   次に読む書式   … 直前に送った MOD の `NXT=`
  */
 
+import { m } from "../i18n/index.js";
 import type { PliHost } from "../host.js";
 import { runProgram, type Diagnostic, type ProgramOptions, type ProgramResult } from "../run.js";
 import { MfsBlockError, type MessageDesc, type MfsLibrary } from "../mfs/blocks.js";
@@ -117,7 +118,7 @@ export class Session {
   start(): SessionStep {
     const mod = this.opts.mod;
     if (mod === undefined) {
-      return this.step({ notice: "最初に出す書式が指定されていません（MOD の名前を与えてください）" });
+      return this.step({ notice: m`最初に出す書式が指定されていません（MOD の名前を与えてください）` });
     }
     return this.show(mod, []);
   }
@@ -126,7 +127,7 @@ export class Session {
   send(input: DeviceInput): SessionStep {
     if (this.mid === undefined) {
       return this.step({
-        notice: "入力の書式が決まっていません（画面を出してから打ち込んでください）",
+        notice: m`入力の書式が決まっていません（画面を出してから打ち込んでください）`,
       });
     }
     // PA キーは IMS が物理ページングに使う。`docs/mfs.md` で
@@ -134,7 +135,7 @@ export class Session {
     // 扱って黙って別のことをするより断る
     if (input.aid.kind === "pa") {
       return this.step({
-        notice: `PA${input.aid.n}（物理ページング）は未実装です`,
+        notice: m`PA${input.aid.n}（物理ページング）は未実装です`,
       });
     }
     // CLEAR は装置の緩衝を消して、**データを伴わない AID だけ**を送る。
@@ -155,7 +156,7 @@ export class Session {
     const word = firstWord(first);
     if (word.startsWith("/")) return this.command(word, first);
     if (word === "") {
-      return this.step({ notice: "トランザクションコードがありません" });
+      return this.step({ notice: m`トランザクションコードがありません` });
     }
     return this.runTransaction(word, segments);
   }
@@ -186,7 +187,7 @@ export class Session {
     const word = firstWord(segments[0] ?? "");
     if (word.startsWith("/")) return this.command(word, segments[0] ?? "");
     if (word === "") {
-      return this.step({ notice: "CLEAR で画面を消しました（送るものがありません）" });
+      return this.step({ notice: m`CLEAR で画面を消しました（送るものがありません）` });
     }
     return this.runTransaction(word, segments);
   }
@@ -201,10 +202,10 @@ export class Session {
     for (const [name, text] of input.fields) {
       const f = fieldNamed(screen, name);
       if (f === undefined) {
-        return this.step({ notice: `項目 ${name} は画面にありません` });
+        return this.step({ notice: m`項目 ${name} は画面にありません` });
       }
       if (f.attr.protect) {
-        return this.step({ notice: `項目 ${name} は打ち込めません（PROT）` });
+        return this.step({ notice: m`項目 ${name} は打ち込めません（PROT）` });
       }
       f.text = text.padEnd(f.length).slice(0, f.length);
       f.modified = true;
@@ -232,7 +233,7 @@ export class Session {
   /** 溜まっている次の出力メッセージを出す。 */
   next(): SessionStep {
     const msg = this.pending.shift();
-    if (msg === undefined) return this.step({ notice: "次のメッセージはありません" });
+    if (msg === undefined) return this.step({ notice: m`次のメッセージはありません` });
     return this.display(msg);
   }
 
@@ -243,13 +244,13 @@ export class Session {
       const name = firstWord(segment.slice(segment.indexOf(word) + word.length))
         .replace(/\.$/, "")
         .toUpperCase();
-      if (name === "") return this.step({ notice: "/FORMAT に書式の名前がありません" });
+      if (name === "") return this.step({ notice: m`/FORMAT に書式の名前がありません` });
       // `/FORMAT` は**書式書き出し**。同じ書式を指定しても、固定文字から
       // 組み直して打ち込んだ値が消える。base を渡すとメッセージ書き出しに
       // なり、同じ書式のときに画面が 1 ビットも変わらなかった
       return this.show(name, [], { formatWrite: true });
     }
-    return this.step({ notice: `コマンド ${upper} は未実装です（/FORMAT だけを扱う）` });
+    return this.step({ notice: m`コマンド ${upper} は未実装です（/FORMAT だけを扱う）` });
   }
 
   /** トランザクションを 1 回動かす。 */
@@ -284,7 +285,7 @@ export class Session {
     // 残る。MPP の同期点は再現しない。`docs/mfs.md` に明記）
     if (!result.ok) {
       return {
-        ...this.step({ notice: "プログラムが異常終了したので出力を捨てました" }),
+        ...this.step({ notice: m`プログラムが異常終了したので出力を捨てました` }),
         stdout: result.stdout,
         diagnostics: result.diagnostics,
         ok: false,
@@ -304,9 +305,7 @@ export class Session {
         return {
           ...this.step({
             notice:
-              `会話型なのに SPA が ISRT されていません` +
-              `（最初の ISRT は ${expected} 桁の SPA。` +
-              `${spa === undefined ? "1 つも ISRT されていません" : `${spa.length} 桁でした`}）`,
+              m`会話型なのに SPA が ISRT されていません（最初の ISRT は ${expected} 桁の SPA。${spa === undefined ? m`1 つも ISRT されていません` : m`${spa.length} 桁でした`}）`,
           }),
           stdout: result.stdout,
           diagnostics: result.diagnostics,
@@ -322,7 +321,7 @@ export class Session {
     const head = messages[0];
     const shown =
       head === undefined
-        ? this.step(result.ok ? { notice: "プログラムは画面を返しませんでした" } : {})
+        ? this.step(result.ok ? { notice: m`プログラムは画面を返しませんでした` } : {})
         : this.display(head);
     return {
       ...shown,

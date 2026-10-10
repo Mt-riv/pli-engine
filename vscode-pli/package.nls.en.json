@@ -1,0 +1,19 @@
+{
+  "extension.description": "PL/I syntax highlighting, diagnostics and execution. The implementation ships inside the extension, so no external compiler is needed.",
+  "capabilities.untrustedWorkspaces.description": "Parses the PL/I sources in the workspace and reads and writes neighbouring files through %INCLUDE and OPEN FILE.",
+  "command.run.title": "PL/I: Run",
+  "command.runWithArgs.title": "PL/I: Run with arguments",
+  "command.runTests.title": "PL/I: Run tests",
+  "command.runScreen.title": "PL/I: Drive the screen (MFS)",
+  "config.diagnostics.enabled": "Check the syntax while typing and show the problems.",
+  "config.dli.psb.pattern": "An IMS name is 1 to 8 characters of A-Z, 0-9, $, # and @ only.",
+  "config.dli.psb": "Name of the PSB to use with IMS/DB (DL/I). When set, <name>.psb is read and the parameters of the main procedure become pointers to PCBs. When empty, a *.psb in the same directory as the source is used (only if there is exactly one). With neither, CALL PLITDLI stops and says that no PSB was given.",
+  "config.run.maxSteps": "Limit on the number of statements executed. It is there to stop infinite loops.",
+  "config.lint.enabled": "Run the linter while typing (only while the syntax is valid).",
+  "config.lint.rules": "Overrides per rule. For example: `{ \"goto-outside-on-unit\": \"off\", \"implicit-declaration\": \"error\" }`",
+  "config.run.maxOutputBytes": "Limit on the output (characters). Anything past it is truncated.",
+  "config.language": "Language of the messages and diagnostics. With auto, it follows the display language of VSCode (English unless that is Japanese). Command titles and setting descriptions are decided by the display language of VSCode, so changing this can make the two disagree.",
+  "config.language.auto": "Follow the display language of VSCode",
+  "config.language.ja": "Japanese",
+  "config.language.en": "English"
+}

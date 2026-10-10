@@ -1,5 +1,7 @@
 # PL/I Linter
 
+**日本語** | [English](en/lint.md)
+
 構文解析が通ったうえで、**動くけれども怪しい書き方**を指摘する。
 構文の誤りは実行時の診断が出すので、Linter は扱わない。
 構文が壊れている間は Linter は何も返さない（打鍵の途中で指摘がちらつかないようにするため）。
@@ -9,6 +11,7 @@
 ```bash
 npm run plilint -- examples/tests          # ディレクトリを再帰的に
 npm run plilint -- a.pli --strict          # 警告も失敗として扱う
+npm run plilint -- a.pli --lang en         # 指摘を英語で出す（環境変数 PLI_LANG でも）
 npm run plilint -- a.pli --rule goto-outside-on-unit=off
 npm run plilint -- --list-rules            # 規則の一覧（全 16 件）と理由
 ```

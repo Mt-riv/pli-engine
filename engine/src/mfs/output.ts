@@ -11,6 +11,7 @@
  * （`DATE` / `TIME` 組込関数を未実装にしてあるのと同じ理由）。
  */
 
+import { m } from "../i18n/index.js";
 import {
   FILL_BLANK,
   MfsBlockError,
@@ -60,8 +61,7 @@ function readAttrBytes(two: string): AttrOverride {
   const rest = b1 & 0x07;
   if ((b1 & 0x80) !== 0 && rest !== 0) {
     throw new MfsBlockError(
-      `ATTR=YES の 2 バイト目の下位ビット（X'${rest.toString(16).toUpperCase()}'）は未実装です` +
-        "（扱うのは 置き換え / 保護 / 数字 / 強調 だけ）",
+      m`ATTR=YES の 2 バイト目の下位ビット（X'${rest.toString(16).toUpperCase()}'）は未実装です（扱うのは 置き換え / 保護 / 数字 / 強調 だけ）`,
     );
   }
   return {
@@ -139,7 +139,7 @@ export function formatOutput(
   const lpage = mod.lpages[0];
   const dpage = dof.dpages[0];
   if (lpage === undefined || dpage === undefined) {
-    throw new MfsBlockError(`${mod.name} / ${dof.name} に項目の定義がありません`);
+    throw new MfsBlockError(m`${mod.name} / ${dof.name} に項目の定義がありません`);
   }
   const screen = blankScreen(dof, dpage);
   if (base !== undefined && base.format === dof.name && !dof.dsca.eraseAll) {
@@ -158,8 +158,7 @@ export function formatOutput(
   }
   if (segments.length > lpage.segs.length) {
     throw new MfsBlockError(
-      `${mod.name} のセグメントは ${lpage.segs.length} 個ですが、` +
-        `${segments.length} 個 ISRT されました`,
+      m`${mod.name} のセグメントは ${lpage.segs.length} 個ですが、${segments.length} 個 ISRT されました`,
     );
   }
   let cursorField: ScreenField | undefined;
@@ -189,7 +188,7 @@ export function formatOutput(
       if (field === undefined) {
         // 読んだ時点で照合しているので、ここに来るのは隙間の項目を
         // 指したときだけ
-        throw new MfsBlockError(`${dof.name} に項目 ${target} がありません`);
+        throw new MfsBlockError(m`${dof.name} に項目 ${target} がありません`);
       }
       const text =
         mfld.source.kind === "system" ? systemLiteral(mfld.source.which, opts) : body;
@@ -228,7 +227,7 @@ export function modNameFor(isrtName: string | undefined, mid: MessageDesc | unde
   const next = mid?.next;
   if (next === undefined) {
     throw new MfsBlockError(
-      "出力の書式が決まりません（ISRT に MOD 名を渡すか、MID に NXT= を書いてください）",
+      m`出力の書式が決まりません（ISRT に MOD 名を渡すか、MID に NXT= を書いてください）`,
     );
   }
   return next;

@@ -17,6 +17,7 @@
  * 行頭の `*` と `#` は注釈。
  */
 
+import { m } from "../i18n/index.js";
 import { DefError } from "../macro.js";
 import { renderScreen, type RenderOptions } from "../mfs/render.js";
 import { aidName, type Aid, type DeviceInput } from "../mfs/input.js";
@@ -68,14 +69,14 @@ export function parseKeys(text: string, file: string): KeyScript {
       case "LTERM":
       case "USERID":
       case "NOW": {
-        if (operand === "") throw new KeyScriptError(`${upper} に値がありません`, file, at);
+        if (operand === "") throw new KeyScriptError(m`${upper} に値がありません`, file, at);
         if (upper === "MOD") script.mod = operand.toUpperCase();
         else if (upper === "LTERM") script.lterm = operand;
         else if (upper === "USERID") script.userid = operand;
         else if (upper === "SPA") {
           const n = Number(operand);
           if (!Number.isInteger(n) || n <= 4) {
-            throw new KeyScriptError(`SPA ${operand} は 5 以上の整数ではありません`, file, at);
+            throw new KeyScriptError(m`SPA ${operand} は 5 以上の整数ではありません`, file, at);
           }
           script.spa = n;
         } else {
@@ -88,7 +89,7 @@ export function parseKeys(text: string, file: string): KeyScript {
               ? new Date(operand)
               : new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
           if (Number.isNaN(d.getTime())) {
-            throw new KeyScriptError(`NOW ${operand} は日時として読めません`, file, at);
+            throw new KeyScriptError(m`NOW ${operand} は日時として読めません`, file, at);
           }
           script.now = d;
         }
@@ -104,16 +105,16 @@ export function parseKeys(text: string, file: string): KeyScript {
         script.steps.push({ kind: "next" });
         break;
       default: {
-        const m = /^(PF|PA)(\d{1,2})$/.exec(upper);
-        if (m === null) throw new KeyScriptError(`${word} は台本の命令ではありません`, file, at);
-        const n = Number(m[2]);
-        const limit = m[1] === "PF" ? 24 : 3;
+        const pf = /^(PF|PA)(\d{1,2})$/.exec(upper);
+        if (pf === null) throw new KeyScriptError(m`${word} は台本の命令ではありません`, file, at);
+        const n = Number(pf[2]);
+        const limit = pf[1] === "PF" ? 24 : 3;
         if (n < 1 || n > limit) {
-          throw new KeyScriptError(`${upper} は 1〜${limit} の外です`, file, at);
+          throw new KeyScriptError(m`${upper} は 1〜${limit} の外です`, file, at);
         }
         script.steps.push({
           kind: "submit",
-          aid: m[1] === "PF" ? { kind: "pf", n } : { kind: "pa", n },
+          aid: pf[1] === "PF" ? { kind: "pf", n } : { kind: "pa", n },
         });
       }
     }
@@ -153,7 +154,7 @@ export function playKeys(opts: PlaybackOptions): { session: Session; steps: Play
     now: () => now,
     ...(opts.limits === undefined ? {} : { limits: opts.limits }),
   });
-  const steps: Playback[] = [{ label: "開始", typed: new Map(), step: session.start() }];
+  const steps: Playback[] = [{ label: m`開始`, typed: new Map(), step: session.start() }];
   let typed = new Map<string, string>();
   for (const s of script.steps) {
     if (s.kind === "set") {
@@ -183,11 +184,11 @@ export function transcript(steps: readonly Playback[], opts: RenderOptions = {})
     const keys = [...typed].map(([k, v]) => `${k}=${v}`).join(" ");
     out.push(`### ${label}${keys === "" ? "" : ` ${keys}`}`);
     if (step.screen !== undefined) out.push(renderScreen(step.screen, opts).replace(/\n$/, ""));
-    if (step.notice !== undefined) out.push(`通知 ${step.notice}`);
-    if (step.queued > 0) out.push(`未出力のメッセージ ${step.queued} 件`);
+    if (step.notice !== undefined) out.push(m`通知 ${step.notice}`);
+    if (step.queued > 0) out.push(m`未出力のメッセージ ${step.queued} 件`);
     const stdout = step.stdout.replace(/\n$/, "");
-    if (stdout !== "") out.push("標準出力", stdout);
-    for (const d of step.diagnostics) out.push(`診断 ${d.line} 行: ${d.message}`);
+    if (stdout !== "") out.push(m`標準出力`, stdout);
+    for (const d of step.diagnostics) out.push(m`診断 ${d.line} 行: ${d.message}`);
   }
   return out.join("\n") + "\n";
 }

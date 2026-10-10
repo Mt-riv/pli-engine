@@ -2,6 +2,8 @@
  * ブラウザ版に載せるサンプル。
  * すべて実行できることをテストで保証している。
  */
+
+import { m } from "../src/i18n/index.js";
 export interface Sample {
   name: string;
   source: string;
@@ -24,8 +26,9 @@ export interface Sample {
 // 画面入出力のサンプルは中身が長いので、一覧の後ろに置く。
 // `test/screen/dbinq.*` と同じものを使っている（あちらは画面像を
 // バイト一致で固定するゴールデンテスト）。
-const SOURCE_MFS = `/* 画面（MFS）とデータベース（DL/I）を一緒に使う。
-   PSB の先頭が入出力 PCB、2 つめが ITEM の DB PCB。 */
+function sourceMfs(): string {
+  return `/* ${m`画面（MFS）とデータベース（DL/I）を一緒に使う。`}
+   ${m`PSB の先頭が入出力 PCB、2 つめが ITEM の DB PCB。`} */
 invq: proc(io_ptr, db_ptr) options(main);
   dcl plitdli entry;
   dcl (io_ptr, db_ptr) pointer;
@@ -91,8 +94,10 @@ invq: proc(io_ptr, db_ptr) options(main);
   end;
 end invq;
 `;
+}
 
-const AUX_MFS = `::: ITEM.dbd
+function auxMfs(): string {
+  return `::: ITEM.dbd
          DBD  NAME=ITEM,ACCESS=HDAM
          SEGM NAME=ITEM,PARENT=0,BYTES=26
          FIELD NAME=(ITEMNO,SEQ,U),BYTES=6,START=1,TYPE=C
@@ -110,7 +115,7 @@ const AUX_MFS = `::: ITEM.dbd
 ITEM    000042BOLT M6 X 20
 ITEM    000100NUT M6
 ::: INVFMT.mfs
-*  在庫照会。品番を打ち込むと IMS/DB から品名を引いて返す。
+*  ${m`在庫照会。品番を打ち込むと IMS/DB から品名を引いて返す。`}
 INVFMT   FMT
          DEV   TYPE=3270-A2,FEAT=IGNORE,PFK=(PFKEY,3='/FOR INVOUT.')
          DIV   TYPE=INOUT
@@ -136,8 +141,10 @@ INVOUT   MSG   TYPE=OUTPUT,SOR=(INVFMT,IGNORE),NXT=INVIN
          MFLD  MSGOUT,LTH=40
          MSGEND
 `;
+}
 
-const KEYS_MFS = `*  ある品番と無い品番を引く。
+function keysMfs(): string {
+  return `*  ${m`ある品番と無い品番を引く。`}
 MOD   INVOUT
 NOW   2026-10-10T15:04:05
 LTERM TERM0001
@@ -146,20 +153,29 @@ ENTER
 ITEMIN=999
 ENTER
 `;
+}
 
-export const SAMPLES: Sample[] = [
+/**
+ * サンプルの一覧。
+ *
+ * 定数ではなく関数なのは、名前とソースの中の注釈が言語の設定で
+ * 変わるため。import のときに固めると、あとから setLocale しても
+ * 日本語のままになる。
+ */
+export function samples(): Sample[] {
+  return [
   {
     name: "Hello World",
-    source: `/* 最小のプログラム */
+    source: `/* ${m`最小のプログラム`} */
 hello: proc options(main);
   put list('HELLO, PL/I');
 end hello;
 `,
   },
   {
-    name: "予約語が無い例",
-    source: `/* PL/I には予約語が無い。IF/THEN/ELSE を変数名に使える。
-   これは「IF と THEN が等しければ THEN に ELSE を代入する」という文。 */
+    name: m`予約語が無い例`,
+    source: `/* ${m`PL/I には予約語が無い。IF/THEN/ELSE を変数名に使える。`}
+   ${m`これは「IF と THEN が等しければ THEN に ELSE を代入する」という文。`} */
 kw: proc options(main);
   dcl (if, then, else) fixed bin(31);
   if = 1;
@@ -186,9 +202,9 @@ end fb;
 `,
   },
   {
-    name: "固定小数点演算",
-    source: `/* FIXED DECIMAL は10進固定小数点として正確に扱われる。
-   123.45 * 6.7 は浮動小数では誤差が出るが、ここでは正確に 827.115 になる。 */
+    name: m`固定小数点演算`,
+    source: `/* ${m`FIXED DECIMAL は10進固定小数点として正確に扱われる。`}
+   ${m`123.45 * 6.7 は浮動小数では誤差が出るが、ここでは正確に 827.115 になる。`} */
 fdec: proc options(main);
   dcl x fixed dec(5,2);
   dcl y fixed dec(3,1);
@@ -202,7 +218,7 @@ end fdec;
 `,
   },
   {
-    name: "階乗",
+    name: m`階乗`,
     source: `fact: proc options(main);
   dcl i fixed dec(2,0);
   dcl f fixed dec(15,0);
@@ -215,7 +231,7 @@ end fact;
 `,
   },
   {
-    name: "ハノイの塔（再帰）",
+    name: m`ハノイの塔（再帰）`,
     source: ` hanoi: proc options(main);
 
   call dohanoi(3, 1, 3, 2);
@@ -239,7 +255,7 @@ end fact;
 `,
   },
   {
-    name: "九九（書式）",
+    name: m`九九（書式）`,
     source: `mt: proc options(main);
   dcl (i, j) fixed bin(31);
   do i = 1 to 9;
@@ -252,7 +268,7 @@ end mt;
 `,
   },
   {
-    name: "構造体",
+    name: m`構造体`,
     source: `st: proc options(main);
   dcl 1 rec,
         2 name char(10),
@@ -272,7 +288,7 @@ end st;
 `,
   },
   {
-    name: "SELECT と配列式",
+    name: m`SELECT と配列式`,
     source: `ae: proc options(main);
   dcl a(3) fixed bin(31) init(1, 2, 3);
   dcl b(3) fixed bin(31) init(10, 20, 30);
@@ -293,14 +309,14 @@ end ae;
 `,
   },
   {
-    name: "DEFINED と iSUB",
-    source: `/* d は b の対角成分への別名。1sub は「別名側の第1次元の添字」を表す。 */
+    name: m`DEFINED と iSUB`,
+    source: `/* ${m`d は b の対角成分への別名。1sub は「別名側の第1次元の添字」を表す。`} */
 isub: proc options(main);
   dcl b(3,3) bin fixed init(1,2,3, 4,5,6, 7,8,9);
   dcl d(3) bin fixed def (b(1sub,1sub));
   dcl t char(80) var init('   -1   -2   -3');
 
-  put skip list('対角成分');
+  put skip list('${m`対角成分`}');
   put skip edit('b: ', b)(a, (9)f(4));
   put skip edit('d: ', d)(a, (3)f(4));
   put skip;
@@ -323,11 +339,11 @@ end rp;
 `,
   },
   {
-    name: "テストの書き方",
-    source: `/* テストファイル。主手続きは書かない。
-   TEST_ で始まる引数なしの手続きがテストとして実行される。
-   SETUP はテストごとに走り、テストは 1 件ずつ別に実行されるので
-   あるテストが壊した状態は次のテストに漏れない。 */
+    name: m`テストの書き方`,
+    source: `/* ${m`テストファイル。主手続きは書かない。`}
+   ${m`TEST_ で始まる引数なしの手続きがテストとして実行される。`}
+   ${m`SETUP はテストごとに走り、テストは 1 件ずつ別に実行されるので`}
+   ${m`あるテストが壊した状態は次のテストに漏れない。`} */
 
 dcl counter fixed bin(31);
 
@@ -339,17 +355,17 @@ TEST_DECIMAL_IS_EXACT: proc;
   dcl x fixed dec(5,2);
   x = 0.1;
   x = x + 0.2;
-  call ASSERT_EQUALS(0.3, x, '10進なら誤差が出ない');
+  call ASSERT_EQUALS(0.3, x, '${m`10進なら誤差が出ない`}');
 end TEST_DECIMAL_IS_EXACT;
 
 TEST_SETUP_RUNS_FOR_EACH: proc;
   counter = counter + 1;
-  call ASSERT_EQUALS(1, counter, 'SETUP が毎回走る');
+  call ASSERT_EQUALS(1, counter, '${m`SETUP が毎回走る`}');
 end TEST_SETUP_RUNS_FOR_EACH;
 
 TEST_STATE_IS_ISOLATED: proc;
   counter = counter + 1;
-  call ASSERT_EQUALS(1, counter, '前のテストの値は残らない');
+  call ASSERT_EQUALS(1, counter, '${m`前のテストの値は残らない`}');
 end TEST_STATE_IS_ISOLATED;
 
 TEST_STRING: proc;
@@ -357,19 +373,19 @@ TEST_STRING: proc;
 end TEST_STRING;
 
 TEST_THIS_ONE_FAILS: proc;
-  call ASSERT_EQUALS(10, 7 + 2, 'わざと間違えた例');
+  call ASSERT_EQUALS(10, 7 + 2, '${m`わざと間違えた例`}');
 end TEST_THIS_ONE_FAILS;
 
 DISABLED_TEST_NOT_READY: proc;
-  call FAIL('DISABLED_ が付いているので実行されない');
+  call FAIL('${m`DISABLED_ が付いているので実行されない`}');
 end DISABLED_TEST_NOT_READY;
 `,
   },
   {
-    name: "IMS/DB（DL/I）",
-    source: `/* 階層型データベースを階層順に読む。
-   PCB マスクは主手続きの引数で受けたポインタに BASED で宣言する。
-   DBD・PSB・データは「ファイル」欄にある。 */
+    name: m`IMS/DB（DL/I）`,
+    source: `/* ${m`階層型データベースを階層順に読む。`}
+   ${m`PCB マスクは主手続きの引数で受けたポインタに BASED で宣言する。`}
+   ${m`DBD・PSB・データは「ファイル」欄にある。`} */
 stuprt: proc(io_ptr, db_ptr) options(main);
   dcl plitdli entry;
   dcl (io_ptr, db_ptr) pointer;
@@ -388,8 +404,8 @@ stuprt: proc(io_ptr, db_ptr) options(main);
   dcl seg_io char(13);
 
   put skip list('LEVEL SEGMENT  DATA');
-  /* GA（上の階層へ戻った）と GK（同じ階層の別の型へ移った）は
-     警告でセグメントは返るので、GB（終端）まで読み続ける。 */
+  /* ${m`GA（上の階層へ戻った）と GK（同じ階層の別の型へ移った）は`}
+     ${m`警告でセグメントは返るので、GB（終端）まで読み続ける。`} */
   do while (db_pcb.stat_code ^= 'GB');
     call plitdli(three, func_gn, db_pcb, seg_io);
     if db_pcb.stat_code ^= 'GB' then
@@ -424,9 +440,10 @@ COURSE  C001MATH
 `,
   },
   {
-    name: "画面入出力（MFS）＋ IMS/DB",
-    source: SOURCE_MFS,
-    aux: AUX_MFS,
-    keys: KEYS_MFS,
+    name: m`画面入出力（MFS）＋ IMS/DB`,
+    source: sourceMfs(),
+    aux: auxMfs(),
+    keys: keysMfs(),
   },
-];
+  ];
+}

@@ -1,6 +1,6 @@
 {
   "name": "pli-engine",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "PL/I サブセット処理系（自作）。ブラウザでも Node でも動く。",
@@ -16,6 +16,7 @@
     "web:build": "vite build",
     "web:preview": "vite preview",
     "gen:snippets": "tsx scripts/gen-snippets.ts",
+    "gen:i18n": "tsx scripts/gen-i18n.ts",
     "pli": "tsx scripts/pli.ts",
     "plitest": "tsx scripts/plitest.ts",
     "plilint": "tsx scripts/plilint.ts"

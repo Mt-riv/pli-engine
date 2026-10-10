@@ -14,6 +14,7 @@
  * `output.ts`、装置からの取り込みは `input.ts`、器は `device.ts`。
  */
 
+import { m } from "../i18n/index.js";
 import { DefError } from "../macro.js";
 
 /** MFS の記述の誤り。どのファイルの何行目かを必ず持つ。 */
@@ -230,24 +231,24 @@ export class MfsLibrary {
 
   /** MID を取る（入力用のメッセージ記述）。 */
   mid(name: string): MessageDesc {
-    const m = this.message(name);
-    if (m.type !== "INPUT") {
+    const desc = this.message(name);
+    if (desc.type !== "INPUT") {
       throw new MfsBlockError(
-        `${name} は MSG TYPE=OUTPUT（MOD）なので入力の整形には使えません`,
+        m`${name} は MSG TYPE=OUTPUT（MOD）なので入力の整形には使えません`,
       );
     }
-    return m;
+    return desc;
   }
 
   /** MOD を取る（出力用のメッセージ記述）。 */
   mod(name: string): MessageDesc {
-    const m = this.message(name);
-    if (m.type !== "OUTPUT") {
+    const desc = this.message(name);
+    if (desc.type !== "OUTPUT") {
       throw new MfsBlockError(
-        `${name} は MSG TYPE=INPUT（MID）なので出力の整形には使えません`,
+        m`${name} は MSG TYPE=INPUT（MID）なので出力の整形には使えません`,
       );
     }
-    return m;
+    return desc;
   }
 
   /** DIF を取る（装置から来るものの形）。 */
@@ -255,7 +256,7 @@ export class MfsLibrary {
     const f = this.format(name);
     if (f.div === "OUTPUT") {
       throw new MfsBlockError(
-        `${name} は DIV TYPE=OUTPUT なので入力には使えません（DIF がありません）`,
+        m`${name} は DIV TYPE=OUTPUT なので入力には使えません（DIF がありません）`,
       );
     }
     return f;
@@ -266,24 +267,24 @@ export class MfsLibrary {
     const f = this.format(name);
     if (f.div === "INPUT") {
       throw new MfsBlockError(
-        `${name} は DIV TYPE=INPUT なので出力には使えません（DOF がありません）`,
+        m`${name} は DIV TYPE=INPUT なので出力には使えません（DOF がありません）`,
       );
     }
     return f;
   }
 
   private message(name: string): MessageDesc {
-    const m = this.messages.get(name.trim().toUpperCase());
-    if (m === undefined) {
-      throw new MfsBlockError(`メッセージ記述 ${name.trim()} がありません`);
+    const found = this.messages.get(name.trim().toUpperCase());
+    if (found === undefined) {
+      throw new MfsBlockError(m`メッセージ記述 ${name.trim()} がありません`);
     }
-    return m;
+    return found;
   }
 
   private format(name: string): DeviceFormat {
     const f = this.formats.get(name.trim().toUpperCase());
     if (f === undefined) {
-      throw new MfsBlockError(`書式定義 ${name.trim()} がありません`);
+      throw new MfsBlockError(m`書式定義 ${name.trim()} がありません`);
     }
     return f;
   }

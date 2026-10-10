@@ -9,6 +9,7 @@
  * ここを使うので、循環参照を避けるために `index.ts` から分けてある。
  */
 
+import { m, withLocale } from "./i18n/index.js";
 import { LexError } from "./lexer.js";
 import { ParseError } from "./parser.js";
 import { PreprocessError } from "./preprocess.js";
@@ -19,7 +20,7 @@ import {
   type RunOptions,
 } from "./interp.js";
 
-export const VERSION = "0.4.1";
+export const VERSION = "0.5.0";
 
 export type DiagnosticPhase = "preprocess" | "lex" | "parse" | "runtime";
 
@@ -57,9 +58,14 @@ export interface ProgramResult {
   durationMs: number;
 }
 
-/** 位置情報付きのメッセージから "行:桁: " の接頭辞を取り除く。 */
+/**
+ * 位置情報付きのメッセージから "行:桁: " の接頭辞を取り除く。
+ *
+ * 字句・構文・前処理の誤りは `<行>:<桁>:` の形（数字と記号だけ）で
+ * 接頭辞を付けるので、言語によらず剥がせる。
+ */
 function stripPrefix(message: string): string {
-  return message.replace(/^\d+(:\d+)?:\s*/, "").replace(/^\d+行:\s*/, "");
+  return message.replace(/^\d+(:\d+)?:\s*/, "");
 }
 
 export interface ProgramOptions extends RunOptions {}
@@ -72,6 +78,11 @@ export function runProgram(
   source: string,
   opts: ProgramOptions = {},
 ): ProgramResult {
+  // 診断の文は実行中に作るので、実行をまるごと包む
+  return withLocale(opts.locale, () => runIn(source, opts));
+}
+
+function runIn(source: string, opts: ProgramOptions): ProgramResult {
   const started = Date.now();
   const interp = new Interpreter(opts);
   const done = (
@@ -91,7 +102,7 @@ export function runProgram(
         severity: "error",
         phase: "runtime",
         line: 1,
-        message: `ファイルの書き戻しに失敗しました: ${err.message ?? String(e)}`,
+        message: m`ファイルの書き戻しに失敗しました: ${err.message ?? String(e)}`,
       });
     }
     let stdout = interp.text();
@@ -164,7 +175,7 @@ export function runProgram(
             phase: "runtime",
             line: e.line,
             ...at(),
-            message: "出力が上限に達したため中断しました",
+            message: m`出力が上限に達したため中断しました`,
           },
         ],
         true,
@@ -181,16 +192,18 @@ export function runProgram(
         },
       ]);
     }
-    // 実行時エラー。メッセージに "<行>行: " が付いていれば分離する。
-    const err = e as Error & { line?: number };
-    const m = /^(\d+)行:\s*(.*)$/s.exec(err.message ?? "");
+    // 実行時エラー。行は例外の属性から取る。
+    // **メッセージから正規表現で剥がさない。** 接頭辞（「3行: 」/
+    // 「line 3: 」）は言語で形が変わるので、英語では剥がし損ねて
+    // 診断に二重に出る
+    const err = e as Error & { line?: number; plain?: string };
     return done([
       {
         severity: "error",
         phase: "runtime",
-        line: m ? Number(m[1]) : (err.line ?? 1),
+        line: err.line ?? 1,
         ...at(),
-        message: m ? m[2]! : (err.message ?? String(e)),
+        message: err.plain ?? err.message ?? String(e),
       },
     ]);
   }
