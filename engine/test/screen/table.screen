@@ -1,0 +1,35 @@
+### 開始
+書式 TBLFMT（24 行 × 80 桁）
+   |----+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8
+ 2 |         NAME  QTY
+カーソル (4,10)
+警報 なし
+消去 なし
+項目
+  (固定)   (2,10)      9 桁  ALPHA PROT NORM  "NAME  QTY"
+  ROW01    (4,10)      4 桁  ALPHA NOPROT NORM  ""
+  QTY01    (4,20)      3 桁  NUM NOPROT NORM  ""
+  ROW02    (6,10)      4 桁  ALPHA NOPROT NORM  ""
+  QTY02    (6,20)      3 桁  NUM NOPROT NORM  ""
+  ROW03    (8,10)      4 桁  ALPHA NOPROT NORM  ""
+  QTY03    (8,20)      3 桁  NUM NOPROT NORM  ""
+  TRANF    (24,2)     12 桁  ALPHA NOPROT NORM  ""
+### ENTER ROW01=AAA QTY01=1 ROW02=BBB QTY02=22 ROW03=CCC QTY03=333
+書式 TBLFMT（24 行 × 80 桁）
+   |----+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8
+ 2 |         NAME  QTY
+ 4 |         CCC       333
+ 6 |         BBB       022
+ 8 |         AAA       001
+カーソル (4,10)
+警報 なし
+消去 なし
+項目
+  (固定)   (2,10)      9 桁  ALPHA PROT NORM  "NAME  QTY"
+  ROW01    (4,10)      4 桁  ALPHA NOPROT NORM  "CCC"
+  QTY01    (4,20)      3 桁  NUM NOPROT NORM  "333"
+  ROW02    (6,10)      4 桁  ALPHA NOPROT NORM  "BBB"
+  QTY02    (6,20)      3 桁  NUM NOPROT NORM  "022"
+  ROW03    (8,10)      4 桁  ALPHA NOPROT NORM  "AAA"
+  QTY03    (8,20)      3 桁  NUM NOPROT NORM  "001"
+  TRANF    (24,2)     12 桁  ALPHA NOPROT NORM  ""

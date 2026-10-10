@@ -4,7 +4,7 @@
  * 構文解析が通ったうえで、**動くけれども怪しい**書き方を指摘する。
  * 構文の誤りは `run.ts` の診断が出すので、ここでは扱わない。
  *
- * 規則は 3 つに分かれる。
+ * 規則は 2 つに分かれる（`LintCategory`）。
  *   correctness — 誤りか、誤りの元になるもの
  *   style       — 読みやすさの問題
  *
@@ -37,6 +37,23 @@ export interface LintRule {
 }
 
 /** 規則の一覧。 */
+/**
+ * この処理系が実際に起こす条件。
+ *
+ * `interp.ts` の `raise` / `raiseIo` / `raiseChecked` から起こされるもの。
+ * `engine/README.md` の「発火する条件はこれだけ」と同じ 8 つ。
+ */
+const RAISED_CONDITIONS: ReadonlySet<string> = new Set([
+  "ERROR",
+  "ZERODIVIDE",
+  "FIXEDOVERFLOW",
+  "SIZE",
+  "SUBSCRIPTRANGE",
+  "CONVERSION",
+  "ENDFILE",
+  "UNDEFINEDFILE",
+]);
+
 export const RULES: readonly LintRule[] = [
   {
     id: "implicit-declaration",
@@ -47,6 +64,17 @@ export const RULES: readonly LintRule[] = [
       "PL/I は宣言の無い名前を暗黙に宣言する（I〜N は FIXED BIN(15,0)、" +
       "それ以外は FLOAT DEC(6)）。綴り間違いが黙って別の変数になるため、" +
       "気付けないまま誤った値で動き続ける。",
+  },
+  {
+    id: "unqualified-member",
+    category: "correctness",
+    default: "error",
+    summary: "構造体の項目を名前だけで指している",
+    rationale:
+      "この処理系は構造体の項目を「親.項目」の名前で持つ。項目だけを書くと、" +
+      "宣言の無い名前として**別の変数が暗黙に宣言される**。止まらず、" +
+      "代入も読み出しも意図と違う変数に対して行われるので、" +
+      "気付かないまま誤った値で動き続ける。「親.項目」と書けば解決する。",
   },
   {
     id: "undefined-procedure",
@@ -125,6 +153,17 @@ export const RULES: readonly LintRule[] = [
       "PL/I は宣言の無いファイル名に既定属性を割り当てて続行する。" +
       "綴り間違いでも通ってしまい、別のファイルを開いたことに気付けない。" +
       "SYSIN と SYSPRINT は既定で使えるので対象にしない。",
+  },
+  {
+    id: "on-never-raised",
+    category: "correctness",
+    default: "warning",
+    summary: "この処理系が起こさない条件に ON 単位を置いている",
+    rationale:
+      "`ON` はどんな条件名でも構文として受けるが、処理系が起こすのは 8 つだけ。" +
+      "それ以外に ON 単位を置くと、構文も通り誤りも出ないまま**一度も実行されない**。" +
+      "`on endpage(sysprint) put page;` と書いて 70 行出しても何も起きない。" +
+      "README には書いてあるが、ソースを見て分かる形ではないので指摘する。",
   },
   {
     id: "dli-status-unchecked",
@@ -309,6 +348,24 @@ class LintScope {
   }
 }
 
+/**
+ * その名前を項目として持つ構造体の名前。
+ *
+ * 宣言は `qualifyDeclareItems` が「親.項目」の形に直して覚えるので、
+ * 末尾が `.名前` の宣言を探せば見つかる。
+ */
+function memberOwners(name: string, scope: LintScope): string[] {
+  const suffix = `.${name}`;
+  const out: string[] = [];
+  for (let sc: LintScope | undefined = scope; sc; sc = sc.parent) {
+    for (const key of sc.vars.keys()) {
+      if (key.endsWith(suffix)) out.push(key.slice(0, -suffix.length));
+    }
+    if (out.length > 0) break;
+  }
+  return out;
+}
+
 /** 基数（FIXED の 10 進 / 2 進）。混在の判定に使う。 */
 function fixedBase(attr: DataAttr | undefined): "dec" | "bin" | undefined {
   // PICTURE は 10 進。FIXED BIN と混ぜると同じ落とし穴になる
@@ -336,6 +393,13 @@ class Linter {
   private readonly freedPointers = new Set<string>();
   /** テストファイルならフレームワークが入れる手続きを既知として扱う。 */
   private readonly injected: ReadonlySet<string>;
+  /**
+   * `SIGNAL` で起こしている条件名。
+   *
+   * 処理系が起こさない条件でも `SIGNAL` すれば ON 単位は実行されるので、
+   * 同じソースに `SIGNAL` があれば `on-never-raised` を出さない。
+   */
+  private readonly signalled = new Set<string>();
 
   constructor(
     private readonly source: string,
@@ -374,6 +438,11 @@ class Linter {
 
     const global = new LintScope();
     this.collect(program.body, global);
+    // `SIGNAL` で起こしている条件を先に集める。
+    // ON 単位の判定（`on-never-raised`）が、後ろにある SIGNAL も見る必要がある
+    forEachStmt(program.body, (s) => {
+      if (s.kind === "signal") this.signalled.add(s.condition.toUpperCase());
+    });
     this.walkBody(program.body, global, { inOnUnit: false });
     this.reportUnused(global);
 
@@ -537,7 +606,7 @@ class Linter {
       // 関数としての呼び出し
       scope.lookupProc(key)!.calls++;
     } else if (!BUILTIN_NAMES.has(key) && !this.injected.has(key) && !scope.hasName(key)) {
-      this.implicit(ref.name, line, ref.subscripts.length > 0);
+      this.implicit(ref.name, line, scope, ref.subscripts.length > 0);
     }
     if (ref.locator) this.read(ref.locator, scope, line);
     if (SHAPE_BUILTINS.has(key) && !scope.lookupVar(key)) {
@@ -567,7 +636,7 @@ class Linter {
       v.writes++;
       if (ref.locator === undefined) this.readBasedLocator(v, scope);
     } else if (!scope.hasName(key) && !this.injected.has(key)) {
-      this.implicit(ref.name, line);
+      this.implicit(ref.name, line, scope);
     }
     for (const sub of ref.subscripts) this.expr(sub, scope, line);
   }
@@ -581,8 +650,21 @@ class Linter {
    * 揃えないと、Linter が「暗黙に宣言されます」と言ったものが
    * 実行時に止まることになる。
    */
-  private implicit(name: string, line: number, asCall = false): void {
+  private implicit(name: string, line: number, scope: LintScope, asCall = false): void {
     const upperName = name.toUpperCase();
+    // 構造体の項目を名前だけで指している場合は、そう言う。
+    // 「暗黙に宣言されます」だけでは、どう直せばよいか分からない
+    const owners = memberOwners(upperName, scope);
+    if (owners.length > 0) {
+      this.report(
+        "unqualified-member",
+        line,
+        `${name} は構造体 ${owners.join(" / ")} の項目です。` +
+          `${owners.length === 1 ? `${owners[0]}.${name}` : "親.項目"} と書いてください` +
+          "（名前だけでは別の変数として暗黙に宣言されます）。",
+      );
+      return;
+    }
     // 知っている組込関数で未実装のものは、そう言う。
     // 「暗黙に宣言されます」と言うと、実行すると止まるので嘘になる
     if (UNIMPLEMENTED_BUILTINS.has(upperName)) {
@@ -631,7 +713,35 @@ class Linter {
     }
   }
 
-  /** FIXED DEC と FIXED BIN の混在。基数が混ざると BINARY に変換される。 */
+  /**
+   * 処理系が起こさない条件に置いた `ON` 単位。
+   *
+   * `SIGNAL` で明示的に起こせば実行されるので、同じソースの中に
+   * `SIGNAL` があれば指摘しない（テストが `SIGNAL ERROR` を使う）。
+   */
+  private checkOnCondition(condition: string, line: number): void {
+    if (!this.enabled("on-never-raised")) return;
+    const name = condition.toUpperCase();
+    if (RAISED_CONDITIONS.has(name)) return;
+    if (this.signalled.has(name)) return;
+    this.report(
+      "on-never-raised",
+      line,
+      `ON ${name} は一度も実行されません（この処理系は ${name} を起こしません）。` +
+        `SIGNAL ${name} で明示的に起こすことはできます。`,
+    );
+  }
+
+  /**
+   * FIXED DEC と FIXED BIN の混在。基数が混ざると BINARY に変換される。
+   *
+   * **算術定数（`0.1`）も DECIMAL として数える。** 以前は宣言した変数
+   * どうしだけを見ていたので、`value.ts` の注意書きが挙げている
+   * `i * 0.1`（`i` は FIXED BIN）を見逃していた。定数が片方にある形が
+   * いちばん当たりやすいのに、そこだけ警告していなかった。
+   *
+   * 比較と `**` も `unifyBase` を通るので同じ桁落ちが起きる。
+   */
   private checkMixedBase(
     op: string,
     left: Expr,
@@ -640,11 +750,26 @@ class Linter {
     line: number,
   ): void {
     if (!this.enabled("mixed-base-arithmetic")) return;
-    if (!"+-*/".includes(op) || op.length !== 1) return;
-    const base = (e: Expr): "dec" | "bin" | undefined =>
-      e.kind === "ref" && e.subscripts.length === 0
-        ? fixedBase(scope.lookupVar(e.name.toUpperCase())?.attr)
-        : undefined;
+    const arith = ["+", "-", "*", "/", "**"];
+    const compare = ["=", "¬=", "<", "<=", ">", ">=", "¬<", "¬>"];
+    if (!arith.includes(op) && !compare.includes(op)) return;
+    const base = (e: Expr): "dec" | "bin" | undefined => {
+      // 算術定数は FIXED DECIMAL（PL/I の規定）。ただし**小数を持つ
+      // ものだけ**を数える。`n - 1` のような整数の混在は 2 進へ
+      // 変換しても桁が落ちないので、警告すると誤検出になる
+      // （桁が落ちるのは `i * 0.1` のように 10 進の小数が入るとき）。
+      // 指数付きは FLOAT なので基数混在の話にならない
+      if (e.kind === "num") {
+        if (/[eE]/.test(e.text)) return undefined;
+        return e.text.includes(".") ? "dec" : undefined;
+      }
+      // 添字付きの参照も宣言の属性から引く（配列の要素も同じ型）。
+      // SUBSTR などの疑似変数・組込関数は変数表に無いので undefined
+      if (e.kind === "ref") {
+        return fixedBase(scope.lookupVar(e.name.toUpperCase())?.attr);
+      }
+      return undefined;
+    };
     const l = base(left);
     const r = base(right);
     if (l && r && l !== r) {
@@ -831,6 +956,7 @@ class Linter {
         if (s.otherwise) this.walk(s.otherwise, scope, ctx);
         return;
       case "on":
+        this.checkOnCondition(s.condition, s.line);
         if (s.body !== undefined) this.walk(s.body, scope, { ...ctx, inOnUnit: true });
         return;
       case "call": {

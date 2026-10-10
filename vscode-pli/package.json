@@ -2,7 +2,7 @@
   "name": "pli-lang",
   "displayName": "PL/I",
   "description": "PL/I の構文強調・診断・実行。処理系は拡張に同梱されているので外部のコンパイラを必要としない。",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "publisher": "local",
   "repository": {
@@ -68,6 +68,11 @@
         "command": "pli.runTests",
         "title": "PL/I: テストを実行",
         "icon": "$(beaker)"
+      },
+      {
+        "command": "pli.runScreen",
+        "title": "PL/I: 画面を動かす（MFS）",
+        "icon": "$(device-desktop)"
       }
     ],
     "menus": {

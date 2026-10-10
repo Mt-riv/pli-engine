@@ -1,0 +1,23 @@
+/* 論点: 算術と文字を比較したときの変換の向き。
+
+   IBM の規定では文字を算術に変換して代数比較になる（= 真）。
+   pli-engine は数値を文字にして照合順序で比べるので、
+   i = 12 と '12' が偽になり、しかも i + 0 = 12 は真という食い違いが出る。
+
+   どちらの向きかは、桁数の違う組（'012' / ' 12'）で決まる。
+   算術変換なら 3 つとも真、文字変換なら全部偽になるはず。
+   実機は日本語の文字列リテラルを素通ししないので ASCII で出す。 */
+ccmp: proc options(main);
+  dcl i fixed bin(15);
+  dcl c char(2);
+  i = 12;
+  c = '12';
+  if i = '12'  then put skip list('i = ''12''    TRUE'); else put skip list('i = ''12''    FALSE');
+  if i = c     then put skip list('i = c       TRUE'); else put skip list('i = c       FALSE');
+  if c = 12    then put skip list('c = 12      TRUE'); else put skip list('c = 12      FALSE');
+  if i = '012' then put skip list('i = ''012''   TRUE'); else put skip list('i = ''012''   FALSE');
+  if i = ' 12' then put skip list('i = '' 12''   TRUE'); else put skip list('i = '' 12''   FALSE');
+  if i < '20'  then put skip list('i < ''20''    TRUE'); else put skip list('i < ''20''    FALSE');
+  if i + 0 = 12 then put skip list('i+0 = 12    TRUE'); else put skip list('i+0 = 12    FALSE');
+  if c = '12'  then put skip list('c = ''12''    TRUE'); else put skip list('c = ''12''    FALSE');
+end ccmp;

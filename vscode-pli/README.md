@@ -11,13 +11,14 @@ PL/I の構文強調・診断・実行・テスト・Snippet・Linter を VSCode
 
 | 機能 | 内容 |
 |------|------|
-| 構文強調 | TextMate 文法。キーワード 133 語、組込関数 98 語（うち 21 種は実装済み。残りは別スコープ） |
+| 構文強調 | TextMate 文法。キーワード 133 語、組込関数 120 語（実装済み 21 種と、名前だけ知っている 99 語を別スコープで着色） |
 | 診断 | 入力中に構文を検査し、問題タブに行・桁付きで表示 |
 | 実行 | `PL/I: 実行`（`Cmd/Ctrl+Alt+R`）で出力パネルに結果を表示 |
 | 引数付き実行 | `PL/I: 引数を指定して実行` で主手続きに引数を渡す |
 | テスト | `PL/I: テストを実行`（`Cmd/Ctrl+Alt+T`） |
+| 画面（MFS） | `PL/I: 画面を動かす（MFS）` で 3270 の画面を台本どおりに動かし、画面像を出力パネルに出す。書式定義 `*.mfs` と台本 `*.keys` はソースと同じ場所から読む |
 | Snippet | 43 本。`main` `proc` `dowhile` `sel` `onerr` などを入力して展開 |
-| Linter | 入力中に 14 規則で検査。問題タブに規則 id 付きで出る |
+| Linter | 入力中に 16 規則で検査。問題タブに規則 id 付きで出る |
 | IMS/DB（DL/I） | `CALL PLITDLI` で階層型データベースを読み書きする。設定 `pli.dli.psb` に PSB の名前を入れると有効になる |
 
 対応する拡張子: `.pli` `.pl1` `.plinc` `.inc` `.cpy`
@@ -107,7 +108,7 @@ IF IF = THEN THEN THEN = ELSE;
 
 語がキーワードか変数かは**文脈でしか決まらない**ため、
 TextMate 文法による着色は原理的に近似でしかない。
-上の例では2つ目の `IF` が変数なのにキーワードとして着色される。
+上の例では 2 つ目の `IF` が変数なのにキーワードとして着色される。
 
 厳密な判定が必要な場合は**診断**を使う。こちらは同梱の処理系が
 実際に構文解析しているので、文脈を正しく解決する。
@@ -132,7 +133,7 @@ VSCode を起動せずにテストできる。
 ## 開発
 
 ```bash
-npm install
+npm ci
 npm test        # VSCode を起動せずに動く
 npm run typecheck
 npm run build   # esbuild で dist/extension.js にバンドル（エンジン同梱）
@@ -160,7 +161,7 @@ npm run build   # esbuild で dist/extension.js にバンドル（エンジン�
 npx @vscode/vsce package
 ```
 
-生成された `.vsix` は `code --install-extension pli-lang-0.3.0.vsix` で導入できる。
+生成された `.vsix` は `code --install-extension pli-lang-0.4.0.vsix` で導入できる。
 
 ## ライセンス
 

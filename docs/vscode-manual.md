@@ -10,10 +10,10 @@ PL/I の構文強調・診断・実行・テスト・検査・Snippet を VSCode
 ### リリースから入手する（手軽）
 
 [Releases](https://github.com/Mt-riv/pli-engine/releases) から
-`pli-lang-0.3.0.vsix`（約 95KB）をダウンロードします。ビルドは要りません。
+`pli-lang-0.4.0.vsix` をダウンロードします。ビルドは要りません。
 
 ```bash
-gh release download vscode-v0.3.0 --repo Mt-riv/pli-engine
+gh release download vscode-v0.4.0 --repo Mt-riv/pli-engine
 ```
 
 ### 自分で `.vsix` を作る
@@ -22,17 +22,17 @@ gh release download vscode-v0.3.0 --repo Mt-riv/pli-engine
 cd pli-engine/vscode-pli
 npm ci
 npm run build
-npx @vscode/vsce package      # pli-lang-0.3.0.vsix ができる
+npx @vscode/vsce package      # pli-lang-0.4.0.vsix ができる
 ```
 
 VSCode の拡張ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）→ 右上の `…` →
-**「VSIX からのインストール」** → `pli-lang-0.3.0.vsix` を選択。
+**「VSIX からのインストール」** → `pli-lang-0.4.0.vsix` を選択。
 `Developer: Reload Window` で読み込み直します。
 
 `code` コマンドを PATH に通している場合は次でも入ります。
 
 ```bash
-code --install-extension pli-lang-0.3.0.vsix
+code --install-extension pli-lang-0.4.0.vsix
 ```
 
 ### 開発しながら使う
@@ -52,7 +52,8 @@ Extension を直しながら試す場合は、**`vscode-pli/` フォルダを VS
 | 実行 | `PL/I: 実行`（`Ctrl+Alt+R` / `Cmd+Alt+R`） |
 | 引数付き実行 | `PL/I: 引数を指定して実行` |
 | テスト | `PL/I: テストを実行`（`Ctrl+Alt+T` / `Cmd+Alt+T`） |
-| Linter | 入力中に自動。14 規則 |
+| 画面（MFS） | `PL/I: 画面を動かす（MFS）`。台本どおりに動かして画面像を出す |
+| Linter | 入力中に自動。16 規則 |
 | Snippet | 43 本。`main` `dowhile` `getlist` などを入力して `Tab` |
 
 コマンドはすべてコマンドパレット（`Ctrl+Shift+P` / `Cmd+Shift+P`）から
@@ -104,6 +105,20 @@ end TEST_MOD;
 
 表明の一覧と設計は [`test.md`](test.md)。
 動く例が `engine/examples/tests/` にあります。
+
+## 画面を動かす（MFS）
+
+コマンドパレットから **「PL/I: 画面を動かす（MFS）」**。
+
+| 要るもの | 置き場所 |
+|---------|---------|
+| 書式定義 `*.mfs` | ソースと同じディレクトリ（全部読む） |
+| 端末の台本 `*.keys` | 同じ名前の `.keys`、無ければ同じ場所から選ぶ |
+| PSB | 設定 `pli.dli.psb`（入出力 PCB を含むもの） |
+
+画面像が出力パネルに出ます。拡張には端末が無いので、**打つ手順は台本に
+書きます**（書き方は [`mfs.md`](mfs.md)）。編集中で未保存の `.mfs` と
+`.keys` はその内容を使うので、保存しなくても直した定義で動きます。
 
 ## 検査する（Linter）
 

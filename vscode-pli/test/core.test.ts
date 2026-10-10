@@ -3,6 +3,7 @@ import {
   checkSyntax,
   looksLikeTestFile,
   runForEditor,
+  runScreenForEditor,
   runTestsForEditor,
   snippetCompletions,
   toEditorLint,
@@ -401,5 +402,89 @@ describe("取り込み先の診断", () => {
     ]);
     expect(diags[0]?.range.start.line).toBe(2);
     expect(diags[0]?.message).not.toContain("行");
+  });
+});
+
+describe("画面入出力（MFS）", () => {
+  const MFS = `F        FMT
+         DEV   TYPE=3270-A2,FEAT=IGNORE
+         DIV   TYPE=INOUT
+         DPAGE CURSOR=((2,10))
+A        DFLD  POS=(2,10),LTH=4,ATTR=(ALPHA,NOPROT)
+T        DFLD  POS=(24,2),LTH=8
+         FMTEND
+MI       MSG   TYPE=INPUT,SOR=(F,IGNORE),NXT=MO
+         SEG
+         MFLD  (T,'ECHO    '),LTH=8
+         MFLD  A,LTH=4
+         MSGEND
+MO       MSG   TYPE=OUTPUT,SOR=(F,IGNORE),NXT=MI
+         SEG
+         MFLD  A,LTH=4
+         MSGEND
+`;
+  const PSB = `         PCB  TYPE=TP
+         PSBGEN LANG=PLI,PSBNAME=P
+         END
+`;
+  const SRC = `p: proc(io_ptr) options(main);
+  dcl plitdli entry;
+  dcl io_ptr pointer;
+  dcl 1 io_pcb based(io_ptr),
+        2 lterm_name char(8), 2 reserved1 char(2), 2 stat_code char(2),
+        2 msg_date fixed dec(7,0), 2 msg_time fixed dec(7,1),
+        2 msg_seq fixed bin(31), 2 mod_name char(8), 2 user_id char(8);
+  dcl 1 msg_in, 2 i_ll fixed bin(15), 2 i_zz fixed bin(15),
+        2 i_tran char(8), 2 i_a char(4);
+  dcl 1 msg_out, 2 o_ll fixed bin(15), 2 o_zz fixed bin(15), 2 o_a char(4);
+  dcl three fixed bin(31) init(3);
+  dcl four fixed bin(31) init(4);
+  dcl func_gu char(4) init('GU  ');
+  dcl func_isrt char(4) init('ISRT');
+  dcl modname char(8) init('MO      ');
+  call plitdli(three, func_gu, io_pcb, msg_in);
+  do while (io_pcb.stat_code = '  ');
+    msg_out.o_a = msg_in.i_a;
+    msg_out.o_ll = 8;
+    msg_out.o_zz = 0;
+    call plitdli(four, func_isrt, io_pcb, msg_out, modname);
+    call plitdli(three, func_gu, io_pcb, msg_in);
+  end;
+end p;
+`;
+  const opts = (keys: string) => ({
+    host: new MemoryHost({ "P.psb": PSB }),
+    psb: "P",
+    mfs: { "f.mfs": MFS },
+    keys,
+    keysName: "k.keys",
+  });
+
+  it("台本どおりに動かして画面像を出す", () => {
+    const r = runScreenForEditor(SRC, "echo.pli", opts("MOD MO\nNOW 2026-10-10T00:00:00\nA=xy\nENTER\n"));
+    expect(r.ok).toBe(true);
+    expect(r.text).toContain("### ENTER A=xy");
+    expect(r.text).toContain(" 2 |         xy");
+    expect(r.text).toContain("往復 1 回");
+  });
+
+  it("PSB が無ければ、何が要るかを言う", () => {
+    const r = runScreenForEditor(SRC, "echo.pli", { ...opts("ENTER\n"), psb: "" });
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/PSB が要ります/);
+  });
+
+  it("台本の誤りは行番号付きで出す", () => {
+    const r = runScreenForEditor(SRC, "echo.pli", opts("MOD MO\nFOO\n"));
+    expect(r.ok).toBe(false);
+    expect(r.text).toMatch(/k\.keys 2 行/);
+  });
+
+  it("プログラムが落ちたら診断を返す", () => {
+    const bad = SRC.replace("msg_out.o_ll = 8;", "msg_out.o_ll = 0;");
+    const r = runScreenForEditor(bad, "echo.pli", opts("MOD MO\nA=xy\nENTER\n"));
+    expect(r.ok).toBe(false);
+    expect(r.diagnostics.length).toBeGreaterThan(0);
+    expect(r.text).toMatch(/セグメント長 LL/);
   });
 });

@@ -10,7 +10,7 @@
 npm run plilint -- examples/tests          # ディレクトリを再帰的に
 npm run plilint -- a.pli --strict          # 警告も失敗として扱う
 npm run plilint -- a.pli --rule goto-outside-on-unit=off
-npm run plilint -- --list-rules            # 規則の一覧（全 14 件）と理由
+npm run plilint -- --list-rules            # 規則の一覧（全 16 件）と理由
 ```
 
 既定では **error が 1 件でもあれば終了コード 1**、警告だけなら 0。
@@ -25,13 +25,14 @@ npm run plilint -- --list-rules            # 規則の一覧（全 14 件）と�
 
 ## 規則
 
-重さは `error` / `warning` / `info` の 3 段階。`off` で止められる。全 14 件。
+重さは `error` / `warning` / `info` の 3 段階。`off` で止められる。全 16 件。
 
 ### correctness — 誤りか、誤りの元になる
 
 | id | 既定 | 内容 |
 |----|------|------|
 | `implicit-declaration` | warning | 宣言していない名前を使っている |
+| `unqualified-member` | **error** | 構造体の項目を名前だけで指している |
 | `undefined-procedure` | **error** | 定義されていない手続きを呼んでいる |
 | `unused-variable` | warning | 宣言したが一度も使っていない |
 | `assigned-but-never-read` | warning | 代入しているが読んでいない |
@@ -44,15 +45,35 @@ npm run plilint -- --list-rules            # 規則の一覧（全 14 件）と�
 | `endfile-without-on` | warning | `ON ENDFILE` を置かずにファイルから読んでいる |
 | `free-then-use` | warning | `FREE` したポインタをそのまま使っている |
 | `dli-status-unchecked` | warning | DL/I を呼んだのにステータスコードを見ていない |
+| `on-never-raised` | warning | この処理系が起こさない条件に `ON` 単位を置いている |
 
 **`implicit-declaration` がこの Linter の主目的**である。PL/I は宣言の無い名前を
 暗黙に宣言する（`I`〜`N` で始まる名前は `FIXED BIN(15,0)`、それ以外は `FLOAT DEC(6)`）。
 綴り間違いが黙って別の変数になり、エラーにならないまま誤った値で動き続ける。
 予約語が無い言語なので、この種の誤りを機械が拾う価値が特に高い。
 
+`unqualified-member` は `implicit-declaration` の特に質の悪い形。この処理系は
+構造体の項目を「親.項目」の名前で持つので、項目だけを書くと**別の変数が
+暗黙に宣言される**。`msg_out.out_attr = '00E8'X;` のつもりで
+`out_attr = '00E8'X;` と書くと、止まらないまま別の変数へ代入される。
+どの構造体の項目かを添えて指摘する。
+
 `mixed-base-arithmetic` は実際に踏んだ落とし穴に対応する。基数が混ざると
 PL/I は BINARY に変換して計算するため、10 進で持っていた桁が落ちる。
 13 の階乗が FIXEDOVERFLOW になるのがその例。
+
+見るのは**小数が絡む混在**だけ。
+
+```pli
+dcl i fixed bin(15);
+i = 1;
+put list(i * 0.1);     /* 指摘する。0.1 を 2 進の尺度へ直すと端数が出る */
+if i = 10.5 then ...;  /* 指摘する。比較も基数を揃えてから行う */
+put list(i - 1);       /* 指摘しない。整数なら 2 進へ直しても桁は落ちない */
+```
+
+対象の演算子は `+` `-` `*` `/` `**` と比較 8 種。どれも `unifyBase` を
+通るので同じ端数が出る。
 
 `dli-status-unchecked` は IMS のプログラムで最も多い誤りに対応する。
 DL/I は失敗しても例外を出さず、PCB のステータスコードで知らせる。
@@ -75,15 +96,15 @@ ON 単位からの脱出には GOTO が要るので、ON 単位の中は対象�
 Linter は誤検出が出た時点で切られるので、既知の正しいコードに
 指摘が出ないことをテストで固定している。
 
-- ブラウザ版のサンプル 13 本 → 指摘 0
+- ブラウザ版のサンプル 14 本 → 指摘 0
 - `examples/tests` のテストファイル 5 本 → 指摘 0
-- `examples/dli` の例 → 指摘 0（`npm run plilint -- examples` で確認。テストには載せていない）
+- `examples/dli` の例 → 指摘 0（vitest には載せていないが、CI が `npm run plilint -- examples --strict` で見ている）
 
 判定で気を遣っている点:
 
-- **`LBOUND` / `HBOUND` / `DIM` の第1引数は値を読まない。** 配列の形を
+- **`LBOUND` / `HBOUND` / `DIM` の第 1 引数は値を読まない。** 配列の形を
   問い合わせているだけなので「値を入れる前に読んでいる」とは言わない
-- **`SUBSTR` 疑似変数への代入は第1引数への書き込み。**
+- **`SUBSTR` 疑似変数への代入は第 1 引数への書き込み。**
   `substr(s,3,2) = 'XY'` を `SUBSTR` の呼び出しと取り違えない
 - **引数は未使用の対象にしない。** 使うかどうかは呼ぶ側の都合で決まる
 - **主手続きとテスト手続き（`TEST_` / `SETUP` / `TEARDOWN`）は
@@ -95,7 +116,7 @@ Linter は誤検出が出た時点で切られるので、既知の正しいコ�
 ## プログラムから使う
 
 ```ts
-import { lint, formatLint, RULES } from "pli-engine";
+import { lint, formatLint, RULES } from "../engine/src/index.js";
 
 const messages = lint(source, {
   rules: { "goto-outside-on-unit": "off", "implicit-declaration": "error" },

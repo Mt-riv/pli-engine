@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { lint, formatLint, RULES, type LintMessage } from "../src/index.js";
-import { BUILTIN_NAMES } from "../src/interp.js";
+import { BUILTIN_NAMES, UNIMPLEMENTED_BUILTINS } from "../src/interp.js";
 import { SAMPLES } from "../web/samples.js";
 
 /** その規則の指摘だけを取り出す。 */
@@ -36,6 +36,47 @@ describe("BUILTIN_NAMES", () => {
     const cases = new Set([...body.matchAll(/case "([A-Z0-9_]+)":/g)].map((m) => m[1]!));
     expect([...cases].sort()).toEqual([...BUILTIN_NAMES].sort());
   });
+
+  /**
+   * 名前を知っていること。
+   *
+   * root README は「知らない語は『解釈できない』と答えるので、
+   * 綴り間違いと未実装は見分けられます」と約束している。表から漏れると
+   * `CHAR(x)` と書いた利用者に「未知の関数です」と答えることになり、
+   * この約束が破れる。**実務でよく使う組込関数**を並べて、
+   * 実装済みか名指しの未実装かのどちらかであることを要求する。
+   *
+   * 以前は `CHARACTER` と `CHARVAL` が表にあるのに、実際に使われる
+   * 省略形の `CHAR` が落ちている、という取りこぼし方をしていた。
+   */
+  it("実務で使う組込関数は、実装済みか名指しの未実装のどちらか", () => {
+    const expected = [
+      // 明示変換（省略形も含む）
+      "CHAR", "CHARACTER", "BIN", "BINARY", "DEC", "DECIMAL",
+      "FIXED", "FLOAT", "BIT", "PRECISION", "PREC",
+      // 文字・ビット
+      "LENGTH", "SUBSTR", "INDEX", "TRANSLATE", "VERIFY", "REPEAT",
+      "TRIM", "UPPERCASE", "LOWERCASE", "SEARCH", "SEARCHR",
+      // 算術・配列
+      "ABS", "MAX", "MIN", "MOD", "SIGN", "ROUND", "TRUNC", "CEIL", "FLOOR",
+      "DIVIDE", "MULTIPLY", "ADD", "SUM", "PROD", "POLY",
+      "ALL", "ANY", "SQRT", "EXP", "LOG",
+      // 日付・時刻
+      "DATE", "TIME", "DATETIME", "DAYS", "DAYSTODATE",
+      // 条件・記憶域
+      "ONCODE", "ONSOURCE", "ONCHAR", "ONKEY", "ONFILE", "ONCOUNT",
+      "ADDR", "NULL", "ALLOCATION", "STORAGE", "UNSPEC",
+      // 配列の境界
+      "DIM", "LBOUND", "HBOUND",
+      // ビット演算（IBM 拡張）
+      "IAND", "IOR", "IEOR", "INOT",
+      // その他
+      "LINENO", "PAGENO", "SIGNED", "UNSIGNED", "DATAFIELD",
+    ];
+    const known = new Set([...BUILTIN_NAMES, ...UNIMPLEMENTED_BUILTINS]);
+    const missing = expected.filter((n) => !known.has(n));
+    expect(missing, "どちらの表にも無い（綴り間違いと区別が付かない）").toEqual([]);
+  });
 });
 
 describe("規則の定義", () => {
@@ -49,6 +90,41 @@ describe("規則の定義", () => {
       expect(r.summary.length, r.id).toBeGreaterThan(0);
       expect(r.rationale.length, r.id).toBeGreaterThan(10);
     }
+  });
+});
+
+describe("unqualified-member", () => {
+  /**
+   * この処理系は構造体の項目を「親.項目」で持つ。項目だけを書くと
+   * 宣言の無い名前になり、**別の変数が暗黙に宣言される**。
+   * 止まらないので、名指しで言わないと気付けない。
+   */
+  it("項目だけを書いたら、親を添えて示す", () => {
+    const src = MAIN("  dcl 1 s,\n    2 a char(2);\n  a = 'xy';\n  put list(s.a);");
+    const m = only(lint(src), "unqualified-member");
+    expect(m).toHaveLength(1);
+    expect(m[0]?.message).toContain("S.a と書いてください");
+  });
+
+  it("どの構造体か決まらないときは、候補を並べる", () => {
+    const src = MAIN(
+      "  dcl 1 s,\n    2 b char(2);\n  dcl 1 t,\n    2 b char(2);\n  b = 'xy';",
+    );
+    const m = only(lint(src), "unqualified-member");
+    expect(m).toHaveLength(1);
+    expect(m[0]?.message).toContain("S / T");
+  });
+
+  it("修飾して書けば出ない", () => {
+    const src = MAIN("  dcl 1 s,\n    2 a char(2);\n  s.a = 'xy';\n  put list(s.a);");
+    expect(only(lint(src), "unqualified-member")).toEqual([]);
+  });
+
+  it("同じ名前の変数を別に宣言していれば出ない（そちらが使われる）", () => {
+    const src = MAIN(
+      "  dcl 1 s,\n    2 a char(2);\n  dcl a char(2);\n  a = 'xy';\n  put list(a, s.a);",
+    );
+    expect(only(lint(src), "unqualified-member")).toEqual([]);
   });
 });
 
@@ -183,6 +259,73 @@ describe("mixed-base-arithmetic", () => {
         "  d = 1.5;\n  e = 2;\n  r = d * e;\n  put list(r);",
     );
     expect(only(lint(src), "mixed-base-arithmetic")).toEqual([]);
+  });
+
+  /**
+   * 規則の説明が挙げている形を実際に拾えること。
+   *
+   * `value.ts` の注意書きは「`i * 1.5` が 10 を返していた」
+   * 「比較も狂って `i = 10.5` が真になっていた」を挙げ、
+   * 「Linter の mixed-base-arithmetic が警告する理由でもある」と
+   * 書いているのに、**どちらも警告されていなかった**。
+   * 宣言した変数どうしだけを見て、定数を数えていなかったため。
+   */
+  it("小数の定数との混在を拾う", () => {
+    const src = MAIN("  dcl i fixed bin(15);\n  i = 1;\n  put list(i * 0.1);");
+    expect(only(lint(src), "mixed-base-arithmetic")).toHaveLength(1);
+  });
+
+  it("比較とべき乗も拾う（どちらも基数を揃えてから計算する）", () => {
+    const cmp = MAIN(
+      "  dcl i fixed bin(15);\n  i = 1;\n  if i = 10.5 then put list('eq');",
+    );
+    expect(only(lint(cmp), "mixed-base-arithmetic")).toHaveLength(1);
+    const pow = MAIN("  dcl i fixed bin(15);\n  i = 2;\n  put list(i ** 1.5);");
+    expect(only(lint(pow), "mixed-base-arithmetic")).toHaveLength(1);
+  });
+
+  it("整数の定数との混在は拾わない（桁が落ちない）", () => {
+    // `n - 1` は 2 進へ直しても桁が落ちないので、警告は誤検出になる。
+    // 同梱サンプルのハノイの塔がこの形
+    const src = MAIN("  dcl n fixed bin(31);\n  n = 3;\n  put list(n - 1, n * 2);");
+    expect(only(lint(src), "mixed-base-arithmetic")).toEqual([]);
+  });
+});
+
+/**
+ * 起こさない条件に置いた ON 単位。
+ *
+ * `ON` はどんな条件名でも構文として受けるので、処理系が起こさない
+ * 条件に置くと、構文も通り誤りも出ないまま**一度も実行されない**。
+ * `engine/README.md` には書いてあるが、ソースを見て分かる形ではない。
+ */
+describe("on-never-raised", () => {
+  it("起こさない条件を指摘する", () => {
+    for (const c of ["endpage(sysprint)", "overflow", "underflow", "stringrange"]) {
+      const src = MAIN(`  on ${c} put skip list('x');`);
+      expect(only(lint(src), "on-never-raised"), c).toHaveLength(1);
+    }
+  });
+
+  it("起こす 8 つは指摘しない", () => {
+    for (const c of [
+      "error",
+      "zerodivide",
+      "fixedoverflow",
+      "size",
+      "subscriptrange",
+      "conversion",
+      "endfile(sysin)",
+      "undefinedfile(sysin)",
+    ]) {
+      const src = MAIN(`  on ${c} put skip list('x');`);
+      expect(only(lint(src), "on-never-raised"), c).toEqual([]);
+    }
+  });
+
+  it("SIGNAL で起こしているなら指摘しない", () => {
+    const src = MAIN("  on stringrange put skip list('sr');\n  signal stringrange;");
+    expect(only(lint(src), "on-never-raised")).toEqual([]);
   });
 });
 

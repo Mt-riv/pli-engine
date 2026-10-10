@@ -270,6 +270,9 @@ export class StreamFile {
  * こうすると、改行の無いファイルでは実機と同じ結果になる。
  */
 function splitRecord(line: string, size: number): string[] {
+  // 0 以下では 1 歩も進まない。構文解析で断っているが、
+  // ここを通る経路が増えたときに無限ループへ落ちないようにする
+  if (size < 1) return [line];
   if (line.length <= size) return [line];
   const out: string[] = [];
   for (let i = 0; i < line.length; i += size) out.push(line.slice(i, i + size));
@@ -339,7 +342,20 @@ export class FileTable {
     const existing = this.open.get(key);
     if (existing) return existing;
 
-    const attrs: FileAttributes = { ...this.declared.get(key), ...want };
+    // 用途（mode）だけは**宣言した方が強い**。`want` が渡すのは「今の
+    // 使い方」で、暗黙 OPEN では常に PUT=output / GET=input になる。
+    // これを宣言より強く効かせると、`INPUT` と宣言したファイルへの
+    // `PUT` が「出力で開く」になって中身を破壊する。
+    // PL/I では属性の食い違いは UNDEFINEDFILE。
+    // 他の属性（TITLE / PRINT / LINESIZE など）は OPEN に書いた方を採る
+    const declared = this.declared.get(key);
+    const conflict = modeConflict(declared?.mode, want.mode);
+    if (conflict !== undefined) throw new UndefinedFileError(name, conflict);
+    const attrs: FileAttributes = {
+      ...declared,
+      ...want,
+      ...(declared?.mode === undefined ? {} : { mode: declared.mode }),
+    };
     const mode: OpenMode = attrs.mode ?? (key === SYSIN ? "input" : "output");
     const title = attrs.title ?? name;
 
@@ -401,9 +417,38 @@ export class FileTable {
 }
 
 /** UNDEFINEDFILE 条件のもとになる誤り。 */
+/**
+ * 宣言した用途と、使おうとした用途の食い違い。
+ *
+ * `UPDATE` は読み書きの両方なので、`INPUT` / `OUTPUT` の
+ * どちらの使い方も受ける。片方しか宣言していなければ逆向きは断る。
+ * 食い違っていれば理由を返し、問題なければ `undefined`。
+ */
+export function modeConflict(
+  declared: OpenMode | undefined,
+  want: OpenMode | undefined,
+): string | undefined {
+  if (declared === undefined || want === undefined) return undefined;
+  if (declared === want || declared === "update") return undefined;
+  const label: Record<OpenMode, string> = {
+    input: "INPUT",
+    output: "OUTPUT",
+    update: "UPDATE",
+  };
+  return `${label[declared]} と宣言したファイルを ${label[want]} として使っています`;
+}
+
 export class UndefinedFileError extends Error {
-  constructor(readonly fileName: string) {
-    super(`ファイル ${fileName} を開けません`);
+  constructor(
+    readonly fileName: string,
+    /** 開けない理由。属性の食い違いなど、ホストの不在以外のとき。 */
+    readonly reason?: string,
+  ) {
+    super(
+      reason === undefined
+        ? `ファイル ${fileName} を開けません`
+        : `ファイル ${fileName} を開けません（${reason}）`,
+    );
     this.name = "UndefinedFileError";
   }
 }

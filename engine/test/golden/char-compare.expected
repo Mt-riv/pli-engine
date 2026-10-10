@@ -1,0 +1,9 @@
+
+i = '12'    TRUE 
+i = c       TRUE 
+c = 12      TRUE 
+i = '012'   TRUE 
+i = ' 12'   TRUE 
+i < '20'    TRUE 
+i+0 = 12    TRUE 
+c = '12'    TRUE 

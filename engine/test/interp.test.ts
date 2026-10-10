@@ -140,6 +140,71 @@ describe("FLOAT", () => {
     const r = out("m: proc options(main); x = 7; y = 2; put skip list(x / y); end m;");
     expect(r.split("\n")[1]).toHaveLength(15); // 幅14 + 空白1
   });
+
+  /**
+   * FLOAT を FIXED に直すときに文字列を経由してはいけない。
+   *
+   * JS は `|x| < 1e-6` と `|x| >= 1e21` を指数表記で文字列化するので、
+   * `fixedFromLiteral(String(v))` を通すと桁がまるごと消えて 0 になる。
+   * 表示（`render`）は `v.v` を直に見るため、**表示は正しいのに
+   * 比較と代入では 0** という食い違いになっていた。
+   */
+  describe("小さすぎる FLOAT が 0 に落ちない", () => {
+    it("表示と比較が食い違わない", () => {
+      const src = `m: proc options(main);
+  dcl a float dec(6);
+  a = 0.001;
+  put skip list(a*a*a);
+  if a*a*a > 0 then put skip list('POSITIVE');
+  if a*a*a = 0 then put skip list('ZERO');
+end m;`;
+      const r = out(src);
+      expect(r).toContain("1.00000E-0009");
+      expect(r).toContain("POSITIVE");
+      expect(r).not.toContain("ZERO");
+    });
+
+    it("代入しても桁が消えない", () => {
+      const src = `m: proc options(main);
+  dcl (a, b) float dec(6);
+  a = 0.001;
+  b = a*a;
+  b = b*a;
+  put skip list(b);
+end m;`;
+      expect(out(src)).toContain("1.00000E-0009");
+    });
+  });
+
+  /**
+   * 指数付き定数は PL/I の規定では**浮動小数点定数**。
+   * FIXED として読むと小数が消え（`2.5e-8` が 0）、
+   * 表現できない大きさでは `BigInt` の生の例外が漏れていた。
+   */
+  describe("指数付き定数", () => {
+    it("FLOAT DEC(6) として読む", () => {
+      expect(out("m: proc options(main); put skip list(1.5e3); end m;")).toContain(
+        " 1.50000E+0003",
+      );
+      expect(out("m: proc options(main); put skip list(2.5e-8); end m;")).toContain(
+        " 2.50000E-0008",
+      );
+    });
+
+    it("大きすぎる定数は名指しで断る（生の JS 例外にしない）", () => {
+      const r = runRaw("m: proc options(main); put list(1e400); end m;");
+      expect(r.error).toContain("浮動小数点定数が大きすぎます");
+    });
+
+    it("FIXED へ代入すれば丸められる", () => {
+      const src = `m: proc options(main);
+  dcl n fixed dec(7,2);
+  n = 1.5e3;
+  put skip list(n);
+end m;`;
+      expect(out(src).replace(/\s+/g, "")).toBe("1500.00");
+    });
+  });
 });
 
 describe("制御構造", () => {
@@ -158,6 +223,121 @@ describe("制御構造", () => {
   it("IF/ELSE", () =>
     expect(out("m: proc options(main); if 1=1 then put list('T'); else put list('F'); end m;"))
       .toBe("T \n"));
+
+  /**
+   * ラベル付きの `LEAVE` / `ITERATE`。
+   *
+   * ループが自分のラベルを知らないと、一番内側が必ず受け止めてしまう。
+   * 誤りも出ないので、**書いたとおりに動かないのに気づけない**。
+   */
+  describe("ラベル付きの LEAVE / ITERATE", () => {
+    it("LEAVE はラベルの付いたループを抜ける", () => {
+      const src = `m: proc options(main);
+  dcl (i,j) fixed bin(15);
+  outer: do i = 1 to 3;
+    do j = 1 to 3;
+      if j = 2 then leave outer;
+      put skip list(i, j);
+    end;
+  end;
+  put skip list('done');
+end m;`;
+      const r = out(src);
+      // 外側まで抜けるので 1 回だけ出る
+      expect(r.match(/\n/g)).toHaveLength(3); // 先頭の改行 + 2 行
+      expect(r).toContain("done");
+      expect(r.replace(/\s+/g, " ")).toBe(" 1 1 done ");
+    });
+
+    it("ITERATE はラベルの付いたループを次へ進める", () => {
+      const src = `m: proc options(main);
+  dcl (i,j) fixed bin(15);
+  outer: do i = 1 to 3;
+    do j = 1 to 3;
+      if j = 2 then iterate outer;
+      put skip list('body', i, j);
+    end;
+    put skip list('never', i);
+  end;
+end m;`;
+      const r = out(src);
+      expect(r).toContain("body");
+      // 内側を抜けた後の文は実行されない
+      expect(r).not.toContain("never");
+      expect(r.match(/body/g)).toHaveLength(3);
+    });
+
+    it("ラベルを書かなければ一番内側のループ（従来どおり）", () => {
+      const src = `m: proc options(main);
+  dcl (i,j) fixed bin(15);
+  outer: do i = 1 to 2;
+    do j = 1 to 3;
+      if j = 2 then leave;
+      put skip list(i, j);
+    end;
+  end;
+end m;`;
+      expect(out(src).replace(/\s+/g, " ")).toBe(" 1 1 2 1 ");
+    });
+
+    it("ラベル付きの DO 群も抜けられる", () => {
+      const src = `m: proc options(main);
+  blk: do;
+    put skip list('in');
+    leave blk;
+    put skip list('never');
+  end;
+  put skip list('out');
+end m;`;
+      const r = out(src);
+      expect(r).toContain("in");
+      expect(r).toContain("out");
+      expect(r).not.toContain("never");
+    });
+
+    it("対応するループが無いラベルは誤りにする", () => {
+      const r = runRaw(
+        "m: proc options(main); dcl i fixed bin(15); do i=1 to 3; leave nosuch; end; end m;",
+      );
+      expect(r.error).toContain("LEAVE nosuch に対応するループがありません");
+    });
+  });
+
+  /**
+   * 制御変数が別名（`DEFINED` / `BASED`）のとき。
+   *
+   * 書き込みは `assign`（別名を解決する）で、読み戻しは別名を解決しない
+   * 経路だったため、書いた先と読む先が食い違って**終了判定が永久に
+   * 成立しなかった**（`DEFINED`）か、変数が見つからず落ちた（`BASED`）。
+   */
+  describe("別名の制御変数でもループが終わる", () => {
+    it("DEFINED の制御変数", () => {
+      const src = `m: proc options(main);
+  dcl b(3) fixed bin(15);
+  dcl i fixed bin(15) def (b(1));
+  do i = 1 to 3;
+    put skip list(i);
+  end;
+  put skip list('after');
+end m;`;
+      const r = out(src);
+      expect(r).toContain("after");
+      expect(r.replace(/\s+/g, " ")).toBe(" 1 2 3 after ");
+    });
+
+    it("BASED の制御変数", () => {
+      const src = `m: proc options(main);
+  dcl p pointer;
+  dcl i fixed bin(15) based(p);
+  allocate i set(p);
+  do i = 1 to 3;
+    put skip list(i);
+  end;
+  put skip list('after');
+end m;`;
+      expect(out(src).replace(/\s+/g, " ")).toBe(" 1 2 3 after ");
+    });
+  });
 });
 
 describe("エラー", () => {
@@ -208,6 +388,33 @@ describe("PUT EDIT", () => {
     expect(out("m: proc options(main); put edit(1, 2)(f(3), x(2), f(3)); end m;")).toBe(
       "  1    2\n",
     );
+  });
+
+  /**
+   * データを使い切った後の後処理は、書式リストの**残り**だけを見る。
+   *
+   * `fi % fmt.length` から始めると、最後のデータ項目が書式リストの
+   * 末尾だったときに 0 へ巻き戻り、先頭の制御項目を二重に適用する。
+   * `(skip, a)` で余分な改行が入っていた。
+   */
+  it("データを使い切った後、書式の先頭へ巻き戻らない", () => {
+    const src = `m: proc options(main);
+  put edit('A')(skip, a(1));
+  put edit('B')(skip, a(1));
+  put edit('C')(a(1), skip);
+  put edit('D')(a(1));
+end m;`;
+    // SKIP が行を送るので 1 行目は空。C は B と同じ行の続きに置かれる
+    // （PL/I のストリーム出力は PUT をまたいで位置が続く）
+    expect(out(src)).toBe("\nA\nBC\nD\n");
+  });
+
+  it("後処理で COLUMN が二重に効かない", () => {
+    const src = `m: proc options(main);
+  put edit('A')(column(5), a(1));
+  put edit('B')(a(1));
+end m;`;
+    expect(out(src)).toBe("    AB\n");
   });
 });
 
@@ -301,6 +508,42 @@ end m;`;
   it("範囲外の添字はエラー", () => {
     const r = run("m: proc options(main); dcl a(3) fixed bin(31); a(5)=1; end m;");
     expect(r.error).toContain("範囲外");
+  });
+
+  /**
+   * 配列でないものへの添字。
+   *
+   * 黙って添字を捨てると `x(7)` と `x(99)` が同じ 1 個の箱を指し、
+   * 書いた値がそのまま読めてしまう（= 嘘の値を返す）。
+   * 読み・書き・暗黙宣言の 3 経路すべてで断る。
+   */
+  describe("配列でないものへの添字は断る", () => {
+    it("代入でも断る", () => {
+      const r = run("m: proc options(main); dcl x fixed bin(31); x(7)=42; end m;");
+      expect(r.error).toContain("x は配列ではありません");
+    });
+
+    it("参照でも断る", () => {
+      const r = run(
+        "m: proc options(main); dcl x fixed bin(31); x=1; put list(x(1)); end m;",
+      );
+      expect(r.error).toContain("x は配列ではありません");
+    });
+
+    it("宣言していない名前でも断る（暗黙宣言はスカラ）", () => {
+      const r = run("m: proc options(main); q(3)=9; end m;");
+      expect(r.error).toContain("q は配列ではありません");
+    });
+
+    it("構造体の葉に付けた次元は配列として通る", () => {
+      const src = `m: proc options(main);
+  dcl 1 rec, 2 nm char(4), 2 a(3) fixed bin(15);
+  rec.a(1) = 11;
+  rec.a(3) = 33;
+  put edit(rec.a(1), rec.a(3))((2)f(4));
+end m;`;
+      expect(out(src)).toBe("  11  33\n");
+    });
   });
 });
 
@@ -435,6 +678,23 @@ describe("CEIL / FLOOR の結果精度", () => {
   it("負数の CEIL / FLOOR", () => {
     expect(out("m: proc options(main); put list(ceil(-2.1)); end m;")).toContain("-2");
     expect(out("m: proc options(main); put list(floor(-2.1)); end m;")).toContain("-3");
+  });
+
+  /**
+   * `TRUNC` も同じ規則。
+   *
+   * 整数化する 3 つが違う精度を返すと、同じ値を同じ向きに丸めているのに
+   * 出力幅が変わる。以前は `TRUNC` だけが元の精度を保っていて、
+   * `trunc(1.23456)` の幅が 9、`floor(1.23456)` が 5 だった。
+   */
+  it("trunc も ceil / floor と同じ幅になる", () => {
+    const w = (expr: string) =>
+      out(`m: proc options(main); put list(${expr}); end m;`).replace(/\n/g, "").length;
+    expect(w("trunc(1.23456)")).toBe(w("floor(1.23456)"));
+    expect(w("trunc(1.23456)")).toBe(w("ceil(1.23456)"));
+    // 値は変わらない（0 方向への切り捨て）
+    expect(out("m: proc options(main); put list(trunc(3.9)); end m;")).toContain("3");
+    expect(out("m: proc options(main); put list(trunc(-3.9)); end m;")).toContain("-3");
   });
 });
 
@@ -898,6 +1158,135 @@ end m;`;
         expr,
       ).toBe(want);
     }
+  });
+
+  /**
+   * n が負のとき（整数位へ丸める）。
+   *
+   * この値モデルは尺度が 0 以上である前提で、`render` も `q <= 0` を
+   * 「整数」として扱う（`radix^(-q)` を掛け戻さない）。負の尺度の
+   * FixedVal を作ると桁が消え、`round(15,-1)` が 2 になっていた。
+   */
+  it("n が負なら整数位へ丸める（負の尺度を作らない）", () => {
+    const cases: [string, string][] = [
+      ["round(15, -1)", "20"],
+      ["round(14, -1)", "10"],
+      ["round(151, -2)", "200"],
+      ["round(149, -2)", "100"],
+      ["round(-15, -1)", "-20"],
+    ];
+    for (const [expr, want] of cases) {
+      expect(
+        out(`m: proc options(main);\n  put list(${expr});\nend m;`).trim(),
+        expr,
+      ).toBe(want);
+    }
+  });
+});
+
+/**
+ * `MOD` と `DIVIDE`。
+ *
+ * どちらも `value.ts` の演算を通さない独自実装になっていて、
+ * 他の演算（`add` / `sub` / `mul` / `div` / `compare`）とだけ食い違っていた。
+ */
+describe("MOD と DIVIDE", () => {
+  it("MOD は基数を揃える", () => {
+    // 以前は DECIMAL の辺を 2 進へ直さず、尺度だけ 2 進として扱っていた
+    const src = `m: proc options(main);
+  dcl i fixed bin(15) init(1);
+  dcl j fixed bin(31) init(7);
+  put skip list(mod(i, 0.5));
+  put skip list(mod(j, 2.5));
+  put skip list(mod(7, 2.5));
+end m;`;
+    const got = out(src).trim().split("\n").map((l) => l.trim());
+    expect(got).toEqual(["0.00", "2.00", "2.0"]);
+  });
+
+  it("MOD は第 2 引数と同じ符号（負でも非負を返す）", () => {
+    const src = "m: proc options(main); put list(mod(-7, 3)); end m;";
+    expect(out(src).trim()).toBe("2");
+  });
+
+  it("MOD(17,5) の出力幅は変わらない（golden が固定している）", () => {
+    expect(out("m: proc options(main); put list(mod(17, 5)); end m;")).toBe("   2 \n");
+  });
+
+  it("DIVIDE は指定した精度で商を作る", () => {
+    // 既定の除算精度を先に通すと、被除数の p が広いとき q=0 の
+    // 整数除算になり、あとで桁を広げても情報は戻らない
+    const src = `m: proc options(main);
+  dcl a fixed dec(15,0) init(2);
+  dcl b fixed dec(15,0) init(4);
+  put skip list(divide(a, b, 5, 4));
+  put skip list(divide(7, 2, 3, 0));
+end m;`;
+    const got = out(src).trim().split("\n").map((l) => l.trim());
+    expect(got).toEqual(["0.5000", "3"]);
+  });
+
+  it("DIVIDE の尺度が精度を超えたら断る", () => {
+    const r = runRaw("m: proc options(main); put list(divide(1, 2, 2, 5)); end m;");
+    expect(r.error).toContain("DIVIDE の尺度");
+  });
+});
+
+/**
+ * `¬<` / `¬>`（`^<` / `^>`）。
+ *
+ * 字句解析（`lexer.ts`）と構文解析（`BINARY_PRECEDENCE`）は受けていたのに
+ * 評価器の比較演算子の一覧に無く、**構文は通るのに実行時に落ちていた**。
+ * 綴り間違いと未実装の区別が付かない一番悪い形。
+ */
+describe("¬< と ¬>", () => {
+  it("否定付きの比較が動く", () => {
+    const src = `m: proc options(main);
+  dcl a fixed bin(15) init(3);
+  if a ^< 2 then put skip list('NL2');
+  if a ^> 5 then put skip list('NG5');
+  if a ^< 4 then put skip list('BAD'); else put skip list('LT4');
+end m;`;
+    const r = out(src);
+    expect(r).toContain("NL2");
+    expect(r).toContain("NG5");
+    expect(r).toContain("LT4");
+    expect(r).not.toContain("BAD");
+  });
+});
+
+/**
+ * `SIGNAL` で起こした入出力条件。
+ *
+ * 入出力条件は ON 単位から**復帰して続行する**のが PL/I の規定。
+ * 計算条件用の経路を使っていたため、`GET` で起きた ENDFILE は復帰するのに
+ * `SIGNAL ENDFILE(f)` だけが終了していた。
+ */
+describe("SIGNAL で起こす入出力条件", () => {
+  it("ON 単位から復帰して続行する", () => {
+    const src = `m: proc options(main);
+  on endfile(sysin) put skip list('RAN');
+  signal endfile(sysin);
+  put skip list('RESUMED');
+end m;`;
+    const r = out(src);
+    expect(r).toContain("RAN");
+    expect(r).toContain("RESUMED");
+  });
+
+  it("ON 単位が無ければ従来どおり終わる", () => {
+    const r = runRaw("m: proc options(main); signal endfile(sysin); end m;");
+    expect(r.error).toContain("ENDFILE");
+  });
+
+  it("計算条件は復帰しない（ERROR へ進めて終える）", () => {
+    const r = runRaw(`m: proc options(main);
+  on zerodivide put skip list('RAN');
+  signal zerodivide;
+  put skip list('NEVER');
+end m;`);
+    expect(r.stdout).toContain("RAN");
+    expect(r.stdout).not.toContain("NEVER");
   });
 });
 

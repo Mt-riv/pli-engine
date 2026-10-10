@@ -1,0 +1,28 @@
+*  DO / ENDDO で同じ形の行を 3 本作る。
+*  FMT 側が ROW01..ROW03 / QTY01..QTY03 を作り、MSG 側も同じ名前を指す。
+TBLFMT   FMT
+         DEV   TYPE=3270-A2,FEAT=IGNORE
+         DIV   TYPE=INOUT
+         DPAGE CURSOR=((4,10))
+         DFLD  'NAME  QTY',POS=(2,10),ATTR=(ALPHA,PROT)
+         DO    3,2,0
+ROW      DFLD  POS=(4,10),LTH=4,ATTR=(ALPHA,NOPROT)
+QTY      DFLD  POS=(4,20),LTH=3,ATTR=(NUM,NOPROT)
+         ENDDO
+TRANF    DFLD  POS=(24,2),LTH=12
+         FMTEND
+TBLIN    MSG   TYPE=INPUT,SOR=(TBLFMT,IGNORE),NXT=TBLOUT
+         SEG
+         MFLD  (TRANF,'TBL         '),LTH=12
+         DO    3
+         MFLD  ROW,LTH=4
+         MFLD  QTY,LTH=3,JUST=R,FILL=C'0'
+         ENDDO
+         MSGEND
+TBLOUT   MSG   TYPE=OUTPUT,SOR=(TBLFMT,IGNORE),NXT=TBLIN
+         SEG
+         DO    3
+         MFLD  ROW,LTH=4
+         MFLD  QTY,LTH=3
+         ENDDO
+         MSGEND

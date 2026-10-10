@@ -1,0 +1,24 @@
+/* 論点: FIXED BIN(p,q) への 10 進値の代入で、宣言した尺度が保たれるか。
+
+   pli-engine は assignTo が toBinary() を先に通す。toBinary は
+   「10 進 1 桁 ≒ 2 進 3.32 桁」から自前で尺度を決めるので、
+   10 進 1 桁の 0.1 はいったん 2 進 4 桁（1/16 = 0.0625）へ丸められ、
+   そのあと宣言の尺度 10 へ戻しても情報は返らない。
+   目標の尺度で直接変換するなら 0.1 × 2^10 = 102.4 → 102/1024 = 0.0996…。
+
+   2^10 = 1024 を掛け戻すと、蓄えた整数がそのまま見えるので区別できる
+   （切り捨てなら 102、いったん 4 桁へ落としていれば 64）。 */
+bscale: proc options(main);
+  dcl x fixed bin(31,10);
+  dcl y fixed bin(31,10);
+  dcl z fixed bin(15,4);
+  x = 0.1;
+  put skip list('x = 0.1      ', x);
+  put skip list('x * 1024     ', x * 1024);
+  y = 0.3;
+  put skip list('y = 0.3      ', y);
+  put skip list('y * 1024     ', y * 1024);
+  z = 0.1;
+  put skip list('z(15,4)= 0.1 ', z);
+  put skip list('z * 16       ', z * 16);
+end bscale;

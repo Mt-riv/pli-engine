@@ -1,7 +1,8 @@
 /**
- * DBDGEN / PSBGEN への入力を読む。
+ * アセンブラのマクロ命令を読む層。
  *
- * 書式はアセンブラのマクロ命令。実機の規則をそのまま使う。
+ * この書式を使う定義は 3 つある。**DBDGEN / PSBGEN への入力**（`dli/`）と
+ * **MFS の書式定義**（`mfs/`）で、どれも実機の規則をそのまま使う。
  *
  *   1 桁目が `*` なら注釈行
  *   1 桁目が非空白ならラベル、その後に命令、その後にオペランド
@@ -12,7 +13,24 @@
  * ブラウザで手書きするとき 10 桁目に揃えるのは苦しいため。
  */
 
-import { DliDefError } from "./types.js";
+/**
+ * 定義の記述の誤り。**どのファイルの何行目かを必ず持つ。**
+ *
+ * DBD・PSB・MFS で派生させる（`DliDefError` / `MfsDefError`）。
+ * 利用者から見れば「定義ファイルの何行目が悪い」という同じ話なので、
+ * 受け取る側（`interp.ts`）は基底で捕まえられる形にしてある。
+ */
+export class DefError extends Error {
+  constructor(
+    message: string,
+    readonly file: string,
+    readonly line: number,
+    name = "DefError",
+  ) {
+    super(`${file} ${line} 行: ${message}`);
+    this.name = name;
+  }
+}
 
 /** 1 つのマクロ命令。 */
 export interface MacroStmt {
@@ -23,8 +41,27 @@ export interface MacroStmt {
   op: string;
   /** `キー=値` のオペランド。キーは大文字。値は書かれたまま。 */
   operands: Map<string, string>;
-  /** `キー=` の形を取らないオペランド（`SEQ` など）。 */
+  /** `キー=` の形を取らないオペランド（`SEQ` など）。大文字にそろえる。 */
   flags: string[];
+  /**
+   * `キー=` の形を取らないオペランドを**書かれたまま**並べたもの。
+   *
+   * MFS の固定文字（`DFLD '在庫照会',POS=(1,30)`）はここから取る。
+   * `flags` と同じ並びだが、大文字化していない点が違う。
+   * 文字の並びを大文字に変えてしまうと画面に出る文字が変わるため、
+   * 両方を持つ。
+   */
+  positional: string[];
+  /**
+   * 同じものを、**書かなかった位置を空文字で残して**並べたもの。
+   *
+   * アセンブラのマクロ命令はカンマを続けて位置オペランドを省ける。
+   * `DO 3,,5` は「回数 3、行の増分は既定、桁の増分 5」で、
+   * 空を落とすと 5 が**行の増分**に入って項目が縦に並んでしまう。
+   * いっぽう `MFLD ,LTH=2`（場所取り）は空を落とす方が扱いやすいので、
+   * 両方を持って使う側が選ぶ。
+   */
+  positionalWithHoles: string[];
 }
 
 /** 継続行の印が入る桁（1 始まり）。 */
@@ -61,7 +98,7 @@ function takeWord(text: string, from: number): { word: string; next: number } {
  * 括弧の外のカンマで区切る。
  * `NAME=(A,SEQ,U),BYTES=5` を 2 つのオペランドに分けるのに使う。
  */
-export function splitTop(text: string): string[] {
+export function splitTop(text: string, keepEmpty = false): string[] {
   const out: string[] = [];
   let depth = 0;
   let quoted = false;
@@ -81,7 +118,31 @@ export function splitTop(text: string): string[] {
     }
   }
   out.push(text.slice(start));
-  return out.filter((s) => s.length > 0);
+  return keepEmpty ? out : out.filter((s) => s.length > 0);
+}
+
+/**
+ * `キー=値` の `=` の位置を探す。括弧とアポストロフィの中は見ない。
+ *
+ * 見ないのは MFS の固定文字のため。`DFLD 'A=B',POS=(1,1)` の `=` を
+ * 区切りと見ると、キーが `'A`、値が `B'` になる。
+ * 逆に `PFK=(FLD,1='/FOR X.')` は**先頭の** `=` だけを見れば正しく割れる。
+ */
+function keyValueSplit(text: string): number {
+  let depth = 0;
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quoted) {
+      if (c === "'") quoted = false;
+      continue;
+    }
+    if (c === "'") quoted = true;
+    else if (c === "(") depth++;
+    else if (c === ")") depth--;
+    else if (c === "=" && depth === 0) return i;
+  }
+  return -1;
 }
 
 /**
@@ -107,7 +168,7 @@ function joinLines(text: string, file: string): { line: number; text: string }[]
     while (continuing) {
       const cont = raw[++i];
       if (cont === undefined) {
-        throw new DliDefError("継続の印が付いていますが、続きの行がありません", file, startLine);
+        throw new DefError("継続の印が付いていますが、続きの行がありません", file, startLine);
       }
       body += cont.slice(CONTINUE_RESUME - 1, CONTINUE_COLUMN - 1).trimEnd();
       continuing = cont.length >= CONTINUE_COLUMN && cont[CONTINUE_COLUMN - 1] !== " ";
@@ -133,19 +194,40 @@ export function readMacros(text: string, file: string): MacroStmt[] {
     const operandWord = takeWord(body, opWord.next);
     // operandWord の後ろは注釈なので読まない
 
+    // オペランド欄がカンマで終わっているのに、空白を挟んで続きがある。
+    // `takeWord` は最初の空白で切って残りを注釈として捨てるので、
+    // `DFLD POS=(1,2),LTH=5, ATTR=(ALPHA,PROT)` の ATTR= が
+    // **黙って消えて既定（打ち込める項目）になっていた**
+    if (operandWord.word.endsWith(",") && body.slice(operandWord.next).trim() !== "") {
+      throw new DefError(
+        `オペランドがカンマで終わっていますが、空白を挟んで続きがあります` +
+          `（${body.slice(operandWord.next).trim()}）。` +
+          `カンマの後に空白を入れず続けるか、72 桁目に継続の印を付けてください`,
+        file,
+        line,
+      );
+    }
+
     const operands = new Map<string, string>();
-    const flags: string[] = [];
-    for (const part of splitTop(operandWord.word)) {
-      const eq = part.indexOf("=");
-      if (eq < 0) flags.push(part.trim().toUpperCase());
-      else operands.set(part.slice(0, eq).trim().toUpperCase(), part.slice(eq + 1).trim());
+    const positional: string[] = [];
+    const positionalWithHoles: string[] = [];
+    for (const part of splitTop(operandWord.word, true)) {
+      const eq = keyValueSplit(part);
+      if (eq < 0) {
+        positionalWithHoles.push(part.trim());
+        if (part.length > 0) positional.push(part.trim());
+      } else {
+        operands.set(part.slice(0, eq).trim().toUpperCase(), part.slice(eq + 1).trim());
+      }
     }
     out.push({
       line,
       ...(label === undefined ? {} : { label }),
       op: opWord.word.toUpperCase(),
       operands,
-      flags,
+      flags: positional.map((p) => p.toUpperCase()),
+      positional,
+      positionalWithHoles,
     });
   }
   return out;
@@ -155,7 +237,7 @@ export function readMacros(text: string, file: string): MacroStmt[] {
 export function required(s: MacroStmt, key: string, file: string): string {
   const v = s.operands.get(key);
   if (v === undefined) {
-    throw new DliDefError(`${s.op} 文に ${key}= がありません`, file, s.line);
+    throw new DefError(`${s.op} 文に ${key}= がありません`, file, s.line);
   }
   return v;
 }
@@ -176,7 +258,7 @@ export function requiredName(s: MacroStmt, key: string, file: string): string {
   const raw = required(s, key, file);
   const name = raw.toUpperCase();
   if (!IMS_NAME.test(name)) {
-    throw new DliDefError(
+    throw new DefError(
       `${s.op} 文の ${key}=${raw} は IMS の名前として使えません` +
         `（1〜8 桁の英数字と $ # @ だけ）`,
       file,
@@ -193,7 +275,7 @@ export function numberOf(s: MacroStmt, key: string, file: string): number {
   const text = required(s, key, file);
   const n = Number(listOf(text)[0]);
   if (!Number.isInteger(n) || n <= 0) {
-    throw new DliDefError(`${s.op} 文の ${key}=${text} は正の整数ではありません`, file, s.line);
+    throw new DefError(`${s.op} 文の ${key}=${text} は正の整数ではありません`, file, s.line);
   }
   return n;
 }

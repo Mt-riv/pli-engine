@@ -295,7 +295,7 @@ class Parser {
         case "IF":
           return this.parseIf();
         case "DO":
-          return this.parseDo();
+          return this.parseDo(labels.map((l) => l.name.toUpperCase()));
         case "GET":
           return this.parseGet();
         case "ALLOCATE":
@@ -540,17 +540,57 @@ class Parser {
   private parseDeclare(): Stmt {
     const line = this.next().line; // DECLARE / DCL
     const items: DeclItem[] = [];
+    /** 各項目の先頭の位置。構造体の次元を断るときの診断に使う。 */
+    const where: { line: number; col: number; file?: string }[] = [];
     do {
+      const t = this.peek(0);
+      where.push({ line: t.line, col: t.col, ...(t.file === undefined ? {} : { file: t.file }) });
       items.push(this.parseDeclItem());
     } while (this.eat("comma"));
     this.expect("semi", "セミコロン");
+    this.rejectGroupDimension(items, where);
     return { kind: "declare", items, line };
+  }
+
+  /**
+   * 構造体そのものに付けた次元（構造体の配列）を断る。
+   *
+   *   dcl 1 tbl(3), 2 nm char(4);   ← これ
+   *
+   * 平坦化（`declare.ts`）が中間レベルの次元を葉へ渡さないので、
+   * 受けてしまうと葉が次元を持たない 1 個の箱になり、
+   * `tbl.nm(1)` から `tbl.nm(3)` までが全部同じ箱を指す。
+   * **黙って嘘の値を返す**のが一番たちが悪いため、宣言の時点で断る。
+   */
+  private rejectGroupDimension(
+    items: DeclItem[],
+    where: { line: number; col: number; file?: string }[],
+  ): void {
+    for (const [i, item] of items.entries()) {
+      if (item.level === undefined || item.dims === undefined) continue;
+      const next = items[i + 1];
+      // 次がより深いレベルなら、この項目は子を持つ（= 構造体そのもの）
+      if (next?.level === undefined || next.level <= item.level) continue;
+      const w = where[i] ?? { line: 0, col: 0 };
+      throw new ParseError(
+        `構造体そのものに付けた次元は未実装です（構造体の配列）。` +
+          `${item.names[0] ?? ""} の次元を葉の項目へ移してください`,
+        w.line,
+        w.col,
+        w.file,
+      );
+    }
   }
 
   private parseDeclItem(): DeclItem {
     // 構造体のレベル番号（dcl 1 rec, 2 name char(10); の 1 や 2）
     let level: number | undefined;
-    if (this.at("number") && this.peek(1).kind === "word") {
+    // `2 nm char(4)` と `2 (a, b) char(4)` の両方。括弧付きの名前リストは
+    // PL/I の普通の書き方で、受けないとレベル番号で素の構文誤りになる
+    if (
+      this.at("number") &&
+      (this.peek(1).kind === "word" || this.peek(1).kind === "lparen")
+    ) {
       level = Number(this.next().text);
     }
     const names: string[] = [];
@@ -610,6 +650,18 @@ class Parser {
    * PL/I は下限を明示できる: (10) は 1..10、(0:9) は 0..9。
    */
   private parseBound(): Bound {
+    // `dcl a(n)` は未実装（記憶域の大きさを実行時に決める仕掛けが無い）。
+    // 素の「数値が必要です」にすると綴り間違いと区別が付かない
+    const t = this.peek();
+    if (t.kind === "word") {
+      throw new ParseError(
+        `可変の配列境界（${t.text} のような式で大きさを決める形）は未実装です` +
+          "（定数で書いてください）",
+        t.line,
+        t.col,
+        t.file,
+      );
+    }
     const first = this.parseSignedInt();
     if (this.eat("colon")) {
       return { lo: first, hi: this.parseSignedInt() };
@@ -696,7 +748,19 @@ class Parser {
                   this.expect("lparen", "開き括弧");
                   const n = this.expect("number", "数値");
                   this.expect("rparen", "閉じ括弧");
-                  if (e.upper === "RECSIZE") fileRecordSize = Number(n.text);
+                  if (e.upper === "RECSIZE") {
+                    const size = Number(n.text);
+                    // 0 以下だと `splitRecord` が 1 歩も進まず無限ループになる
+                    if (!Number.isInteger(size) || size < 1) {
+                      throw new ParseError(
+                        `RECSIZE は 1 以上の整数でなければなりません（${n.text}）`,
+                        n.line,
+                        n.col,
+                        n.file,
+                      );
+                    }
+                    fileRecordSize = size;
+                  }
                 } else if (e.upper === "V" || e.upper === "VB") {
                   fileVariable = true;
                 } else if (e.upper === "F" || e.upper === "FB") {
@@ -759,9 +823,20 @@ class Parser {
           case "VARYING": varying = true; break;
           case "INIT":
           case "INITIAL": {
-            this.expect("lparen", "開き括弧");
+            const lp = this.expect("lparen", "開き括弧");
             const values: Expr[] = [];
             do {
+              // 反復係数 `init((5) 0)` は未実装。素の構文誤りにすると
+              // 綴り間違いと区別が付かないので名指しで断る
+              if (this.at("lparen")) {
+                throw new ParseError(
+                  "INITIAL の繰り返し係数（init((5) 0) の形）は未実装です" +
+                    "（値を並べて書いてください）",
+                  lp.line,
+                  lp.col,
+                  lp.file,
+                );
+              }
               values.push(this.parseExpr());
             } while (this.eat("comma"));
             this.expect("rparen", "閉じ括弧");
@@ -1151,12 +1226,14 @@ class Parser {
     return stmt;
   }
 
-  private parseDo(): Stmt {
+  private parseDo(labelNames: string[] = []): Stmt {
     const line = this.next().line; // DO
+    // `LEAVE outer;` の宛先になるので、DO 自身にラベルを持たせる
+    const labels = labelNames.length > 0 ? { labels: labelNames } : {};
 
     // DO;
     if (this.eat("semi")) {
-      return { kind: "doGroup", body: this.parseBlockUntilEnd(), line };
+      return { kind: "doGroup", body: this.parseBlockUntilEnd(), ...labels, line };
     }
 
     // DO WHILE(...) / DO UNTIL(...)
@@ -1168,8 +1245,8 @@ class Parser {
       this.expect("semi", "セミコロン");
       const body = this.parseBlockUntilEnd();
       return which === "WHILE"
-        ? { kind: "doWhile", cond, body, line }
-        : { kind: "doUntil", cond, body, line };
+        ? { kind: "doWhile", cond, body, ...labels, line }
+        : { kind: "doUntil", cond, body, ...labels, line };
     }
 
     // DO var = <指定>[, <指定>...];
@@ -1203,7 +1280,7 @@ class Parser {
     } while (this.eat("comma"));
     this.expect("semi", "セミコロン");
     const body = this.parseBlockUntilEnd();
-    return { kind: "doIter", varName, specs, body, line };
+    return { kind: "doIter", varName, specs, body, ...labels, line };
   }
 
   /** SELECT(expr) ... WHEN(...) ... OTHERWISE ... END */

@@ -113,7 +113,8 @@ if db_pcb.stat_code = '  ' then put list(seg_io);
 | PL/I を書いて即実行する | [ブラウザ版（HTML 1 枚）](docs/browser-manual.md) / [VSCode Extension](docs/vscode-manual.md) |
 | 書いたコードを**テスト**する（PL/I で書くテストフレームワーク） | 両方 + CLI `npm run plitest` |
 | **階層型データベース（IMS/DB）**を読み書きする | 両方 + CLI `npm run pli -- x.pli --psb NAME` |
-| 怪しい書き方を**検査**する（Linter 14 規則） | 両方 + CLI `npm run plilint` |
+| **3270 の画面（MFS）**を読み書きする | ブラウザ版の「端末」 + CLI `npm run pli -- x.pli --psb NAME --keys x.keys` + VSCode |
+| 怪しい書き方を**検査**する（Linter 16 規則） | 両方 + CLI `npm run plilint` |
 | よく書く形を **Snippet** から入れる（43 本） | 両方 |
 
 対応している PL/I の範囲（内部の作りは [`engine/README.md`](engine/README.md)）:
@@ -137,6 +138,9 @@ if db_pcb.stat_code = '  ' then put list(seg_io);
 - **レコード入出力**（`READ` / `WRITE` / `REWRITE`、`ENVIRONMENT(F RECSIZE(n))`）
 - **IMS/DB（DL/I）**（`CALL PLITDLI` で階層型 DB を読み書き。DBD / PSB / SSA /
   PCB のステータスコード。詳細は [`docs/dli.md`](docs/dli.md)）
+- **画面入出力（MFS）と IMS TM**（`FMT` / `MSG` の書式定義から MID / MOD /
+  DIF / DOF を作り、3270 の画面を組む。入出力 PCB への `GU` / `GN` / `ISRT` /
+  `PURG`、会話型の SPA、`/FORMAT`。詳細は [`docs/mfs.md`](docs/mfs.md)）
 - 組込関数 21 種、`%REPLACE`
 
 出力書式と精度規則は、実在の PL/I 処理系の出力と突き合わせて決めています。
@@ -144,17 +148,22 @@ if db_pcb.stat_code = '  ' then put list(seg_io);
 外しました**（止まらないプログラムを作らないため。理由は
 [`engine/README.md`](engine/README.md) の「ON 条件の扱いを規定からずらした」）。
 書式や精度を推測で埋めた箇所はありません。保留していた 3 点（基数混在の端数、
-`F` 書式の丸めと桁あふれ、レコードの切り方）も実機で確かめ、**2 つは実装を
+`F(w,d)` の丸め、`F` 書式の桁あふれ）も実機で確かめ、**2 つは実装を
 直しました**（詳細は [`engine/README.md`](engine/README.md) の
 「実機と突き合わせて決めたこと」）。
 
-実機と**意図的に違えている**ところは 2 つだけで、理由を同じ README の
+実機と**意図的に違えている**ところは 5 つで、理由を同じ README の
 「実機と違えている点」に書いてあります（10 進の最大精度を IBM PL/I for
-MVS and VM 1.1 の 15 桁に合わせていること、レコードの区切りを行にしていること）。
+MVS and VM 1.1 の 15 桁に合わせていること、レコードの区切りを行にしていること、
+`GET LIST` がレコード境界を区切りと見ること、`%INCLUDE 'ファイル名'` を
+受け付けること、`ROUND(x,n)` の n が負のときに負の尺度を持たないこと）。
 
-ただし **IMS/DB（DL/I）だけは突き合わせる相手がありません**（IMS は z/OS
-専用です）。DL/I は IBM の仕様文書を正とし、各ステータスコードの意味を
-テストのコメントに引用して担保しています。
+ただし **IMS 関連（DL/I と MFS）だけは突き合わせる相手がありません**（IMS は
+z/OS 専用で、手元で動かせる実装も入手できません）。この 2 つは IBM の仕様文書を
+正とし、各規則の根拠をテストに引用して担保しています。画面像のゴールデンは
+実機由来のものと混ざらないよう別の場所（`engine/test/screen/`）に置き、
+出処の 1 行目を「IBM 仕様に基づく（実機の出力ではない）」で始めることを
+テストで機械的に確かめています。
 
 ## 必要なもの
 
@@ -221,12 +230,12 @@ xdg-open dist-web/index.html
 #### リリースから入手する（手軽）
 
 [Releases](https://github.com/Mt-riv/pli-engine/releases) から
-`pli-lang-0.3.0.vsix` をダウンロードします。ビルドは要りません。
+`pli-lang-0.4.0.vsix` をダウンロードします。ビルドは要りません。
 
 `gh` が使えるなら次でも取れます。
 
 ```bash
-gh release download vscode-v0.3.0 --repo Mt-riv/pli-engine
+gh release download vscode-v0.4.0 --repo Mt-riv/pli-engine
 ```
 
 #### 自分でビルドする
@@ -235,14 +244,14 @@ gh release download vscode-v0.3.0 --repo Mt-riv/pli-engine
 cd ../vscode-pli        # pli-engine/engine から
 npm ci
 npm run build
-npx @vscode/vsce package      # pli-lang-0.3.0.vsix ができる
+npx @vscode/vsce package      # pli-lang-0.4.0.vsix ができる
 ```
 
 #### インストール
 
 VSCode の拡張ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）→ 右上の `…` →
-**「VSIX からのインストール」** で `pli-lang-0.3.0.vsix` を選びます。
-`code` コマンドが使えるなら `code --install-extension pli-lang-0.3.0.vsix` でも入ります。
+**「VSIX からのインストール」** で `pli-lang-0.4.0.vsix` を選びます。
+`code` コマンドが使えるなら `code --install-extension pli-lang-0.4.0.vsix` でも入ります。
 
 使い方は [`docs/vscode-manual.md`](docs/vscode-manual.md)。
 
@@ -264,6 +273,7 @@ Windows でも同じコマンドが動きます（`npm run` 経由なのでパ�
 | オプション | 対象 | 内容 |
 |-----------|------|------|
 | `--psb <名前>` | `pli` / `plitest` | IMS/DB（DL/I）を使う。`plitest` は省略すると隣の `*.psb` を自動で使う |
+| `--keys <ファイル>` | `pli` | 端末の台本を流して画面を出す（MFS）。隣の `*.mfs` を書式定義として読む |
 | `--stdin <ファイル>` | `pli` | SYSIN に流し込む |
 | `--max-steps N` / `--max-output N` | `pli` | 実行の上限（1 以上の整数。不正な値は終了コード 2） |
 | `-I <ディレクトリ>` | `pli` | `%INCLUDE` とファイルの探索先を足す |
@@ -286,6 +296,7 @@ Windows でも同じコマンドが動きます（`npm run` 経由なのでパ�
 | [`docs/test.md`](docs/test.md) | テストフレームワークの設計と書き方 |
 | [`docs/lint.md`](docs/lint.md) | Linter の規則一覧と、各規則の理由 |
 | [`docs/dli.md`](docs/dli.md) | **IMS/DB（DL/I）の使い方**。DBD / PSB / データの書き方、SSA、ステータスコード |
+| [`docs/mfs.md`](docs/mfs.md) | **画面入出力（MFS）の使い方**。書式定義、入出力 PCB、台本、会話型 |
 | [`engine/README.md`](engine/README.md) | 処理系の内部。字句・構文・評価・書式の作り |
 
 ## リポジトリの構成
@@ -293,9 +304,14 @@ Windows でも同じコマンドが動きます（`npm run` 経由なのでパ�
 ```
 engine/        処理系（TypeScript、Node 非依存）
   src/           字句・構文・評価・Linter・テストフレームワーク・PICTURE・入出力
+  src/dli/       IMS/DB（DL/I）
+  src/mfs/       画面入出力（MFS）
+  src/tm/        IMS TM（メッセージキュー・画面との往復）
   web/           ブラウザ版（HTML 1 枚にビルドされる）
   examples/      PL/I で書いたテストの例（tests/）と IMS/DB の動く例（dli/）
   scripts/       CLI（pli / plitest / plilint / Snippet 生成）と実ファイル用のホスト
+  test/golden/   実機の出力を固定した期待値
+  test/screen/   画面像の期待値（出処は IBM 仕様）
 vscode-pli/    VSCode Extension（処理系を同梱）
 docs/          文書
   browser-manual.md  ブラウザ版の使い方
@@ -303,6 +319,7 @@ docs/          文書
   test.md            テストフレームワークの設計と書き方
   lint.md            Linter の規則一覧と理由
   dli.md             IMS/DB（DL/I）の使い方
+  mfs.md             画面入出力（MFS）の使い方
 ```
 
 ## 処理系の限界
@@ -311,19 +328,29 @@ PL/I のサブセットです。学習と検証には充分ですが、次は実
 
 - 索引・直接編成ファイル（`KEYED` / `REGIONAL`）
 - IMS の物理層（HDAM / HIDAM などの違い）、二次索引、論理関係、
-  IMS TM（メッセージ処理）、`EXEC DLI`、同期点（`CHKP` / `ROLB`）
+  `EXEC DLI`、AIB インタフェース、同期点（`CHKP` / `ROLB`）
+- 本物の 3270 データストリーム（`SBA` / `SF` / `IC` の並び）、tn3270 との接続、
+  DBCS / EGCS、論理・物理ページング、分割画面、`MSG OPT=2` / `OPT=3`、
+  `PASSWORD`、代替 PCB（`CHNG`）、MFS の EXIT ルーチン
+  （詳細は [`docs/mfs.md`](docs/mfs.md) の「何を再現し、何を再現しないか」）
 - `AREA` / `OFFSET`、自己定義構造体（`REFER`）、`UNION`、`LABEL` 変数
+- 構造体の配列（`dcl 1 tbl(3), 2 nm char(4);`）。次元は葉に付けてください
+  （`dcl 1 rec, 2 nm(3) char(4);`）
+- `INITIAL` の繰り返し係数（`init((5) 0)`）、可変の配列境界（`dcl a(n)`）
 - 多重処理（`TASK` / `WAIT` / `EVENT`）
 - 浮動小数点は JavaScript の数値（表示は `FLOAT DEC(6)` 相当の桁）
 - ポインタは**アドレス値を持ちません**。確保した記憶域への参照なので、
   ポインタ算術や型の違う再解釈はできません（代わりに NULL・解放済み・
   二重解放を必ず検出します）
-- 組込関数は 21 種だけです。`SQRT` / `DATE` / `ONCODE` など PL/I の
-  他の組込関数は**名前は知っていて、使うと「未実装」と断ります**
+- 組込関数は 21 種だけです。`CHAR` / `SQRT` / `DATE` / `ONCODE` など
+  実務で使う 99 語は**名前は知っていて、使うと「未実装」と断ります**
+  （名前を知らない語は「未知の関数」なので、綴り間違いと区別できます）
 
 未実装の機能に当たると、何が未実装かを名指しで報告します。
-属性（`KEYED` / `REGIONAL` / `AREA` / `UNION` / `LIKE` / `EVENT` など）と
-文（`WAIT` / `DISPLAY` / `REVERT` / `DELETE` など）、組込関数のいずれも、
+属性（`KEYED` / `REGIONAL` / `AREA` / `UNION` / `LIKE` / `EVENT` など）、
+文（`WAIT` / `DISPLAY` / `REVERT` / `DELETE` など）、
+書き方（`INITIAL` の繰り返し係数、可変の配列境界、構造体の配列）、
+組込関数、IMS の呼び出し（`CHKP` / `ROLB` / `CHNG` など）のいずれも、
 名前で区別して「未実装」と答えます。知らない語は「解釈できない」と
 答えるので、綴り間違いと未実装は見分けられます。
 
@@ -354,7 +381,7 @@ cd ../vscode-pli && npm ci && npm test  # VSCode を起動せずに動く
 このリポジトリのテストはそれが無くても動きます
 （詳細は [`engine/test/golden/README.md`](engine/test/golden/README.md)）。
 
-push と Pull Request ごとに GitHub Actions が同じものを走らせます
+main への push と Pull Request ごとに GitHub Actions が同じものを走らせます
 （[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）。
 型検査・テスト・PL/I で書いたテスト・Linter・ブラウザ版のビルド・
 vsix のパッケージまでを通し、出荷物に入る依存の脆弱性も見ています。

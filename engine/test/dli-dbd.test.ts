@@ -285,3 +285,43 @@ describe("PSB の読み取り", () => {
     expect(psb.pcbs.map((p) => p.kind)).toEqual(["io", "db"]);
   });
 });
+
+/**
+ * オペランド欄の切れ目は MFS と共通（`src/macro.ts`）。
+ *
+ * カンマの後に空白を入れると、そこから先が注釈として捨てられる。
+ * DBD / PSB でも `PROCOPT=` や `BYTES=` が黙って消えるので、
+ * 共通の層で断っていることをここでも固定する。
+ */
+describe("カンマの後に空白を入れた指定（DBD / PSB でも断る）", () => {
+  it("SEGM の BYTES= が黙って消えない", () => {
+    expect(() =>
+      parseDbd(
+        `         DBD  NAME=STUDENT,ACCESS=HDAM
+         DATASET DD1=STUDDB,DEVICE=3390
+         SEGM NAME=STUDENT,PARENT=0, BYTES=40
+         FIELD NAME=(STUDNO,SEQ,U),BYTES=5,START=1,TYPE=C
+         DBDGEN
+         FINISH
+         END
+`,
+        "STUDENT.dbd",
+      ),
+    ).toThrow(/カンマで終わっていますが/);
+  });
+
+  it("PCB の PROCOPT= が黙って消えない", () => {
+    const dbd = parseDbd(STUDENT_DBD, "STUDENT.dbd");
+    expect(() =>
+      parsePsb(
+        `         PCB  TYPE=DB,DBDNAME=STUDENT, PROCOPT=A
+         SENSEG NAME=STUDENT,PARENT=0
+         PSBGEN LANG=PLI,PSBNAME=P
+         END
+`,
+        "P.psb",
+        (name) => (name === "STUDENT" ? dbd : undefined),
+      ),
+    ).toThrow(/カンマで終わっていますが/);
+  });
+});

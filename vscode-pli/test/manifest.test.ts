@@ -60,9 +60,10 @@ describe("package.json の寄与", () => {
     }
   });
 
-  it("コマンドは 3 つ揃っている", () => {
+  it("コマンドは 4 つ揃っている", () => {
     expect(manifest.contributes.commands.map((c) => c.command).sort()).toEqual([
       "pli.run",
+      "pli.runScreen",
       "pli.runTests",
       "pli.runWithArgs",
     ]);

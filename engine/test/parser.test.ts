@@ -862,4 +862,29 @@ describe("未実装の名指し", () => {
   it("知らない語は未実装とは言わない（綴り間違いと区別する）", () => {
     expect(why(MAIN("  frobnicate x;"))).toContain("解釈できない文です");
   });
+
+  /**
+   * 構造体そのものに付けた次元（構造体の配列）。
+   *
+   * 平坦化（`declare.ts`）が中間レベルの次元を葉へ渡さないので、
+   * 受けると葉が次元を持たない 1 個の箱になり、`tbl.nm(1)` から
+   * `tbl.nm(3)` までが全部その 1 個を指して最後に書いた値を返す。
+   * 黙って嘘を出すより、宣言の時点で断る。
+   */
+  it("構造体そのものに付けた次元を名指しで断る", () => {
+    const m = why(MAIN("  dcl 1 tbl(3), 2 nm char(4);"));
+    expect(m).toContain("構造体の配列");
+    expect(m).toContain("未実装");
+    expect(m).toContain("tbl");
+  });
+
+  it("葉に付けた次元と、子を持たない項目の次元は通る", () => {
+    expect(why(MAIN("  dcl 1 rec, 2 nm char(4), 2 a(3) fixed bin(15);"))).toBe(
+      "(誤りにならなかった)",
+    );
+    // 子を持たないレベル 1 は普通の配列
+    expect(why(MAIN("  dcl 1 a(3) fixed bin(15);"))).toBe("(誤りにならなかった)");
+    // 入れ子の内側の構造体でも、子を持つ項目の次元だけを断る
+    expect(why(MAIN("  dcl 1 r, 2 s, 3 t(4) char(2);"))).toBe("(誤りにならなかった)");
+  });
 });

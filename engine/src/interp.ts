@@ -40,7 +40,8 @@ import { parsePsb } from "./dli/psb.js";
 import { Database } from "./dli/store.js";
 import { DliRuntime, DliUnsupported, type PcbState } from "./dli/dli.js";
 import { DliDefError, type DbdDef } from "./dli/types.js";
-import { IMS_NAME } from "./dli/macro.js";
+import { DefError, IMS_NAME } from "./macro.js";
+import { TmRuntime, TmUnsupported, type IoPcbState } from "./tm/tm.js";
 import {
   FixedOverflow,
   MAX_BIN,
@@ -55,10 +56,13 @@ import {
   binDigitsToDec,
   compare,
   div,
+  divideTo,
+  fixedFromFloat,
   fixedFromLiteral,
   makeBit,
   makeChar,
   makeFixed,
+  mod,
   mul,
   neg,
   pow,
@@ -112,6 +116,19 @@ class IterateSignal {
   constructor(readonly label?: string) {}
 }
 
+/**
+ * `LEAVE` / `ITERATE` が、このループ宛てかどうか。
+ *
+ * ラベルを書いていなければ一番内側のループ宛て。書いてあれば、
+ * **そのラベルが付いたループだけ**が受け止めて、他は外へ投げ直す。
+ * 投げ直さないと `leave outer;` が内側のループを抜けるだけになり、
+ * 誤りも出ないまま意味が変わる。
+ */
+function forThisLoop(e: LeaveSignal | IterateSignal, labels?: string[]): boolean {
+  if (e.label === undefined) return true;
+  return labels?.includes(e.label.toUpperCase()) ?? false;
+}
+
 /** GOTO を実装するための内部例外。飛び先のラベルを運ぶ。 */
 class GotoSignal {
   constructor(readonly label: string) {}
@@ -135,11 +152,18 @@ export class FinishSignal extends Error {
     readonly line?: number,
     /** 入出力の条件なら対象のファイル名。診断に添えて原因を分かりやすくする。 */
     readonly file?: string,
+    /**
+     * 原因が分かっているときの説明。属性の食い違いなど、
+     * 「ファイル名と TITLE を確認」が的を外す場合に差し替える。
+     */
+    readonly detail?: string,
   ) {
     super(
       file === undefined
         ? condition
-        : `${condition}（ファイル ${file}）。ON ${condition}(${file}) を置くか、` +
+        : detail !== undefined
+          ? `${condition}（ファイル ${file}）。${detail}`
+          : `${condition}（ファイル ${file}）。ON ${condition}(${file}) を置くか、` +
             "ファイル名と TITLE を確認してください",
     );
     this.name = "FinishSignal";
@@ -376,6 +400,14 @@ export interface RunOptions {
   maxStringLength?: number;
   /** ALLOCATE の回数の上限。 */
   maxAllocations?: number;
+  /**
+   * IMS TM（メッセージキュー）。
+   *
+   * 渡すと入出力 PCB への `GU` / `GN` / `ISRT` / `PURG` が使えるようになる。
+   * **キューと出来上がった出力を持つのは呼ぶ側**（画面との往復は
+   * 1 入力 = 1 回の実行で、実行の外側が回す）。
+   */
+  tm?: TmRuntime;
 }
 
 /** 記憶域の上限の既定値。ブラウザのタブを守れる程度に取る。 */
@@ -515,6 +547,21 @@ export class Interpreter {
         line,
       );
     }
+  }
+
+  /**
+   * 書式の幅・桁・行数を確かめる。
+   *
+   * `maxSteps` は**文の数**しか数えないので、1 文の中の回数には効かない。
+   * `put edit(x)(x(200000000),f(1))` は 200MB の文字列を一度に確保し、
+   * `put skip(1000000000)` は配列の上限を超えて生の `RangeError` を漏らす。
+   * 確保する前に止める。
+   */
+  private checkSpan(n: number, what: string, line: number): void {
+    if (!Number.isFinite(n)) {
+      throw new RuntimeError(`${what}が数になりません`, line);
+    }
+    this.checkLength(Math.max(0, Math.trunc(n)), line);
   }
 
   /** 文字列の長さを確かめる。VARYING は宣言の長さを超えて伸びるため。 */
@@ -824,17 +871,21 @@ export class Interpreter {
     }
     const index = this.pcbIndexFor(dli, pcbRef, scope, s.line);
     const ioRef = args[3];
+    if (dli.pcb(index).def.kind === "io") {
+      this.messageCall(s, scope, func, pcbRef, dli.pcb(index), ioRef, args[4]);
+      return;
+    }
     const ioArea =
       ioRef === undefined || ioRef.kind !== "ref"
         ? ""
-        : this.readIoArea(ioRef, scope, s.line);
+        : this.gatherLeaves(ioRef, scope, s.line, "セグメント I/O 領域");
     // SSA は構造体で組み立てるのが PL/I の IMS プログラムの典型形
     // （SSA_NAME / '(' / FIELD / OP / VALUE / ')' を並べた構造体）。
     // 値として評価すると構造体はスカラにならないので、
     // I/O 領域と同じく**葉を宣言順に連結**する。
     const ssas = args.slice(4).map((a) =>
       a.kind === "ref" && a.subscripts.length === 0
-        ? this.readIoArea(a, scope, s.line)
+        ? this.gatherLeaves(a, scope, s.line, "SSA")
         : this.asText(this.eval(a, scope, s.line)),
     );
 
@@ -846,9 +897,139 @@ export class Interpreter {
       throw e;
     }
     if (result.ioArea !== undefined && ioRef !== undefined && ioRef.kind === "ref") {
-      this.writeIoArea(ioRef, result.ioArea, scope, s.line);
+      this.scatterLeaves(ioRef, result.ioArea, scope, s.line, "セグメント I/O 領域");
     }
     this.writePcb(pcbRef, scope, dli.pcb(index), s.line);
+  }
+
+  /**
+   * 入出力 PCB への呼び出し（IMS TM）。
+   *
+   * データベースの呼び出しと違い、I/O 領域の先頭 4 バイトが
+   * `LL ZZ`（長さと予約）になる。`LL` はプログラムが入れる数値なので、
+   * 文字として扱う `gatherLeaves` では読めない。
+   */
+  private messageCall(
+    s: Extract<Stmt, { kind: "call" }>,
+    scope: Scope,
+    func: string,
+    pcbRef: Ref,
+    pcb: PcbState,
+    ioRef: Expr | undefined,
+    modRef: Expr | undefined,
+  ): void {
+    const tm = this.opts.tm;
+    if (tm === undefined) {
+      throw new RuntimeError(
+        "入出力 PCB への呼び出しにはメッセージキューが必要です" +
+          "（実行するときに MFS の書式と入力を与えてください）",
+        s.line,
+      );
+    }
+    const code = func.trim().toUpperCase();
+    const isInsert = code === "ISRT";
+    const area = ioRef !== undefined && ioRef.kind === "ref" ? ioRef : undefined;
+    let segment: string | undefined;
+    if (isInsert) {
+      if (area === undefined) {
+        throw new RuntimeError("ISRT には I/O 領域が必要です", s.line);
+      }
+      segment = this.readMessageArea(area, scope, s.line);
+    } else if (["GU", "GHU", "GN", "GHN"].includes(code) && area === undefined) {
+      // 領域が無いと取ったメッセージを誰も受け取れない。
+      // 以前は成功を返してキューを 1 件進めていたので、入力が消えていた
+      throw new RuntimeError(`${code} には I/O 領域が必要です`, s.line);
+    } else if (code === "PURG" && area !== undefined) {
+      // PURG に I/O 領域を渡す形は tm 側が断る。読んで渡す
+      segment = this.readMessageArea(area, scope, s.line);
+    }
+    const modName =
+      modRef === undefined
+        ? undefined
+        : modRef.kind === "ref"
+          ? this.asText(this.evalRef(modRef, scope, s.line))
+          : this.asText(this.eval(modRef, scope, s.line));
+
+    let result;
+    try {
+      result = tm.call(code, segment, modName);
+    } catch (e) {
+      if (e instanceof TmUnsupported) throw new RuntimeError(e.message, s.line);
+      throw e;
+    }
+    if (result.segment !== undefined && area !== undefined) {
+      this.writeMessageArea(area, result.segment, scope, s.line);
+    }
+    pcb.status = result.status;
+    this.writePcb(pcbRef, scope, pcb, s.line);
+  }
+
+  /**
+   * メッセージ I/O 領域を読む（`ISRT`）。
+   *
+   * 先頭 2 項目は `LL`（このセグメントの長さ。`LL ZZ` を含む）と `ZZ`。
+   * **`LL` の分だけを送る**（実機も `LL` を見る）。
+   */
+  private readMessageArea(ref: Ref, scope: Scope, line: number): string {
+    const leaves = this.leafCells(ref, scope, line);
+    const ll = this.messageLength(leaves, ref, line);
+    let text = "";
+    for (const l of leaves.slice(2)) {
+      const w = this.widthOfAttr(l.attr, l.key, line, "メッセージ I/O 領域");
+      const cell = l.cells[l.index];
+      text += (cell === undefined ? "" : this.asText(cell)).padEnd(w).slice(0, w);
+    }
+    if (ll <= 4) {
+      throw new RuntimeError(
+        `ISRT のセグメント長 LL が ${ll} です。LL には LL ZZ の 4 バイトを含めた長さを入れてください`,
+        line,
+      );
+    }
+    // 宣言した領域より長い LL は、黙って空白で伸ばすと「送ったつもりの
+    // 桁」と届く桁が食い違う。下限（LL <= 4）を診断しているのだから
+    // 上限も診断する
+    if (ll - 4 > text.length) {
+      throw new RuntimeError(
+        `ISRT のセグメント長 LL が ${ll} ですが、${ref.name} の項目は` +
+          `${text.length + 4} 桁ぶんしかありません`,
+        line,
+      );
+    }
+    return text.padEnd(ll - 4).slice(0, ll - 4);
+  }
+
+  /** メッセージ I/O 領域へ書く（`GU` / `GN`）。 */
+  private writeMessageArea(ref: Ref, segment: string, scope: Scope, line: number): void {
+    const leaves = this.leafCells(ref, scope, line);
+    this.messageLength(leaves, ref, line); // 形の確認
+    const ll = leaves[0]!;
+    const zz = leaves[1]!;
+    ll.cells[ll.index] = this.coerce(makeFixed("bin", MAX_BIN, 0, BigInt(segment.length + 4)), ll.attr, line);
+    zz.cells[zz.index] = this.coerce(makeFixed("bin", MAX_BIN, 0, 0n), zz.attr, line);
+    let pos = 0;
+    for (const l of leaves.slice(2)) {
+      const w = this.widthOfAttr(l.attr, l.key, line, "メッセージ I/O 領域");
+      const piece = segment.slice(pos, pos + w).padEnd(w);
+      pos += w;
+      l.cells[l.index] = this.coerce(makeChar(piece, piece.length, true), l.attr, line);
+    }
+  }
+
+  /** `LL` を読む。あわせてメッセージ I/O 領域の形を確かめる。 */
+  private messageLength(
+    leaves: { key: string; attr: DataAttr; cells: Value[]; index: number }[],
+    ref: Ref,
+    line: number,
+  ): number {
+    const shape =
+      `${ref.name} はメッセージ I/O 領域として使えません。` +
+      "DCL 1 名前, 2 LL FIXED BIN(15), 2 ZZ FIXED BIN(15), 2 … の形で宣言してください";
+    if (leaves.length < 3) throw new RuntimeError(shape, line);
+    const ll = leaves[0]!;
+    const zz = leaves[1]!;
+    if (ll.attr.type !== "fixed" || zz.attr.type !== "fixed") throw new RuntimeError(shape, line);
+    const cell = ll.cells[ll.index];
+    return cell === undefined ? 0 : Number(render(asFixed(cell, line)));
   }
 
   /** DL/I ランタイム。最初に使うときに PSB とデータベースを読む。 */
@@ -870,7 +1051,7 @@ export class Interpreter {
     try {
       this.dli = this.loadDli(this.opts.psb);
     } catch (e) {
-      if (e instanceof DliDefError) throw new RuntimeError(e.message, line);
+      if (e instanceof DefError) throw new RuntimeError(e.message, line);
       throw e;
     }
     return this.dli;
@@ -936,7 +1117,7 @@ export class Interpreter {
     for (let i = 0; i < count; i++) {
       const pcb = dli.pcb(i);
       const cells = new Map<string, Value[]>();
-      for (const slot of pcbLayout(pcb)) {
+      for (const slot of pcbLayout(pcb, this.opts.tm?.state)) {
         cells.set(slot.name, [slot.value()]);
       }
       out.push(
@@ -991,15 +1172,19 @@ export class Interpreter {
   }
 
   /**
-   * セグメント I/O 領域を読む。
-   * 項目の幅の規則はレコード入出力と同じ（文字と PICTURE だけ）。
+   * 構造体の葉を宣言順に連結して 1 本の文字列にする。
+   *
+   * レコード入出力（`WRITE ... FROM`）と DL/I のセグメント I/O 領域が
+   * **同じ規則**（文字と PICTURE の宣言幅で詰める）なので 1 つにする。
+   * 2 つ持っていたときは、片方だけが `leafCells` を使っていて
+   * BASED の構造体で黙って空白を書き出していた。
    */
-  private readIoArea(ref: Ref, scope: Scope, line: number): string {
+  private gatherLeaves(ref: Ref, scope: Scope, line: number, purpose: string): string {
     const leaves = this.leafCells(ref, scope, line);
     if (leaves.length === 0) return this.asText(this.evalRef(ref, scope, line));
     let text = "";
     for (const l of leaves) {
-      const w = this.widthOfAttr(l.attr, l.key, line);
+      const w = this.widthOfAttr(l.attr, l.key, line, purpose);
       const cell = l.cells[l.index];
       text += (cell === undefined ? "" : this.asText(cell)).padEnd(w).slice(0, w);
     }
@@ -1007,7 +1192,13 @@ export class Interpreter {
   }
 
   /** セグメント I/O 領域へ書く。 */
-  private writeIoArea(ref: Ref, record: string, scope: Scope, line: number): void {
+  private scatterLeaves(
+    ref: Ref,
+    record: string,
+    scope: Scope,
+    line: number,
+    purpose: string,
+  ): void {
     const leaves = this.leafCells(ref, scope, line);
     if (leaves.length === 0) {
       this.assign(ref, makeChar(record, record.length, true), scope, line);
@@ -1015,7 +1206,7 @@ export class Interpreter {
     }
     let pos = 0;
     for (const l of leaves) {
-      const w = this.widthOfAttr(l.attr, l.key, line);
+      const w = this.widthOfAttr(l.attr, l.key, line, purpose);
       const piece = record.slice(pos, pos + w).padEnd(w);
       pos += w;
       l.cells[l.index] = this.coerce(makeChar(piece, piece.length, true), l.attr, line);
@@ -1032,7 +1223,7 @@ export class Interpreter {
         line,
       );
     }
-    const slots = pcbLayout(pcb);
+    const slots = pcbLayout(pcb, this.opts.tm?.state);
     if (leaves.length < slots.length) {
       throw new RuntimeError(
         `PCB マスクの項目が ${leaves.length} 個しかありません（${slots.length} 個必要です）`,
@@ -1111,17 +1302,24 @@ export class Interpreter {
   }
 
   /**
-   * 入出力の条件（ENDFILE / UNDEFINEDFILE / ENDPAGE）を起こす。
+   * 入出力の条件（ENDFILE / UNDEFINEDFILE）を起こす。
+   * （`ENDPAGE` は構文として受けるが、この処理系は起こさない）
    *
    * 計算条件と違い、**ON 単位から正常に復帰したら実行を続ける**のが
    * PL/I の規定。`on endfile(sysin) done = '1'b;` と書いてループの
    * 判定に使う書き方がこれに依存する。
    * ON 単位が無ければ ERROR へ連鎖して終わる。
    */
-  private raiseIo(condition: string, scope: Scope, line: number, file: string): void {
+  private raiseIo(
+    condition: string,
+    scope: Scope,
+    line: number,
+    file: string,
+    detail?: string,
+  ): void {
     const unit =
       scope.lookupOn(`${condition}(${file.toUpperCase()})`) ?? scope.lookupOn(condition);
-    if (unit === undefined) this.raise(condition, scope, line, file);
+    if (unit === undefined) this.raise(condition, scope, line, file, detail);
     const prev = this.inCondition;
     this.inCondition = true;
     try {
@@ -1147,9 +1345,10 @@ export class Interpreter {
     scope: Scope,
     line: number,
     file?: string,
+    detail?: string,
   ): never {
     // ON 単位の中でさらに条件が起きたときに再入しないようにする
-    if (this.inCondition) throw new FinishSignal(condition, line, file);
+    if (this.inCondition) throw new FinishSignal(condition, line, file, detail);
     this.inCondition = true;
     try {
       const chain = condition === "ERROR" ? ["ERROR"] : [condition, "ERROR"];
@@ -1171,7 +1370,7 @@ export class Interpreter {
     } finally {
       this.inCondition = false;
     }
-    throw new FinishSignal(condition, line, file);
+    throw new FinishSignal(condition, line, file, detail);
   }
 
   /**
@@ -1247,7 +1446,17 @@ export class Interpreter {
         return;
       }
       case "doGroup":
-        this.execBlock(s.body, scope);
+        // ラベル付きの DO 群は `LEAVE そのラベル;` で抜けられる。
+        // ラベルなしの LEAVE は従来どおり外側のループへ渡す
+        try {
+          this.execBlock(s.body, scope);
+        } catch (e) {
+          const mine =
+            e instanceof LeaveSignal &&
+            e.label !== undefined &&
+            forThisLoop(e, s.labels);
+          if (!mine) throw e;
+        }
         return;
       case "doWhile":
         while (this.truth(this.eval(s.cond, scope, s.line), s.line)) {
@@ -1255,8 +1464,8 @@ export class Interpreter {
           try {
             this.execBlock(s.body, scope);
           } catch (e) {
-            if (e instanceof LeaveSignal) break;
-            if (!(e instanceof IterateSignal)) throw e;
+            if (e instanceof LeaveSignal && forThisLoop(e, s.labels)) break;
+            if (!(e instanceof IterateSignal) || !forThisLoop(e, s.labels)) throw e;
           }
         }
         return;
@@ -1266,8 +1475,8 @@ export class Interpreter {
           try {
             this.execBlock(s.body, scope);
           } catch (e) {
-            if (e instanceof LeaveSignal) break;
-            if (!(e instanceof IterateSignal)) throw e;
+            if (e instanceof LeaveSignal && forThisLoop(e, s.labels)) break;
+            if (!(e instanceof IterateSignal) || !forThisLoop(e, s.labels)) throw e;
           }
         } while (!this.truth(this.eval(s.cond, scope, s.line), s.line));
         return;
@@ -1414,18 +1623,27 @@ export class Interpreter {
       }
       case "close":
         for (const name of s.files) {
-          if (!this.files.close(name)) {
-            // 開いていないファイルを閉じても何もしない
-          }
+          // 開いていないファイルを閉じても何もしない
+          this.files.close(name);
         }
         return;
-      case "signal":
+      case "signal": {
+        // 入出力の条件は ON 単位から**復帰して続行する**のが PL/I の規定。
+        // 計算条件用の `raise` を使うと、`GET` で起きた ENDFILE は復帰するのに
+        // `SIGNAL ENDFILE(f)` だけが終了するという食い違いになり、しかも
+        // 診断が「ON ENDFILE(f) を置くか」と嘘をつく（置いてある）
+        const io = ["ENDFILE", "UNDEFINEDFILE", "ENDPAGE"].includes(s.condition);
+        if (io && s.conditionFile !== undefined) {
+          this.raiseIo(s.condition, scope, s.line, s.conditionFile);
+          return;
+        }
         this.raise(
           s.condition,
           scope,
           s.line,
           ...(s.conditionFile === undefined ? [] : [s.conditionFile]),
         );
+      }
       case "return": {
         if (s.value === undefined) throw new ReturnSignal();
         // 宣言した RETURNS の型へ合わせる。合わせないと
@@ -1505,7 +1723,12 @@ export class Interpreter {
       }
       return;
     }
-    if (item.attr.type === "char" && item.attr.length !== undefined) {
+    // 宣言した長さ。BIT も同じ上限で見る（CHAR だけを見ていたので
+    // `dcl b bit(600000000);` が生の `Invalid string length` を漏らしていた）
+    if (
+      (item.attr.type === "char" || item.attr.type === "bit") &&
+      item.attr.length !== undefined
+    ) {
       this.checkLength(item.attr.length, line);
     }
     for (const name of item.names) {
@@ -1591,7 +1814,6 @@ export class Interpreter {
    * LEAVE / ITERATE は内部例外で制御する。
    */
   private doIter(s: Extract<Stmt, { kind: "doIter" }>, scope: Scope): void {
-    const key = s.varName.toUpperCase();
     const target: Ref = { kind: "ref", name: s.varName, subscripts: [] };
 
     outer: for (const spec of s.specs) {
@@ -1602,8 +1824,8 @@ export class Interpreter {
         try {
           this.execBlock(s.body, scope);
         } catch (e) {
-          if (e instanceof LeaveSignal) break outer;
-          if (e instanceof IterateSignal) continue;
+          if (e instanceof LeaveSignal && forThisLoop(e, s.labels)) break outer;
+          if (e instanceof IterateSignal && forThisLoop(e, s.labels)) continue;
           throw e;
         }
         continue;
@@ -1619,28 +1841,23 @@ export class Interpreter {
       for (;;) {
         this.step();
         this.assign(target, cur, scope, s.line);
+        // 読み戻しは `evalRef`。`readVar` は DEFINED / BASED の別名を
+        // 解決しないので、`assign` で書いた先と読む先が食い違い、
+        // `do i = 1 to 3;` の i が DEFINED だと終了判定が永久に成立しない
         const c = compare(
-          asFixed(this.readVar(key, scope, s.line), s.line),
+          asFixed(this.evalRef(target, scope, s.line), s.line),
           asFixed(limit, s.line),
         );
         if (down ? c < 0 : c > 0) break;
         try {
           this.execBlock(s.body, scope);
         } catch (e) {
-          if (e instanceof LeaveSignal) break outer;
-          if (!(e instanceof IterateSignal)) throw e;
+          if (e instanceof LeaveSignal && forThisLoop(e, s.labels)) break outer;
+          if (!(e instanceof IterateSignal) || !forThisLoop(e, s.labels)) throw e;
         }
-        cur = add(asFixed(this.readVar(key, scope, s.line), s.line), step);
+        cur = add(asFixed(this.evalRef(target, scope, s.line), s.line), step);
       }
     }
-  }
-
-  private readVar(key: string, scope: Scope, line: number): Value {
-    const v = scope.lookupVar(key);
-    if (!v || v.cells[0] === undefined) {
-      throw new RuntimeError(`変数 ${key} が見つかりません`, line);
-    }
-    return v.cells[0];
   }
 
   private put(s: Extract<Stmt, { kind: "put" }>, scope: Scope): void {
@@ -1651,6 +1868,7 @@ export class Interpreter {
           const n = opt.count === undefined
             ? 1
             : Number(render(asFixed(this.eval(opt.count, scope, s.line), s.line)));
+          this.checkSpan(n, "SKIP の行数", s.line);
           w.skip(n);
           break;
         }
@@ -1660,6 +1878,7 @@ export class Interpreter {
         case "line": {
           // LINE(n): その行まで送る。既に過ぎていれば改ページする
           const at = Number(render(asFixed(this.eval(opt.at, scope, s.line), s.line)));
+          this.checkSpan(at, "LINE の行", s.line);
           if (w.lineNumber() > at) w.page();
           while (w.lineNumber() < at) w.skip();
           break;
@@ -1740,8 +1959,13 @@ export class Interpreter {
     for (const f of items) {
       if (f.kind === "repeat") {
         const n = Number(render(asFixed(this.eval(f.count, scope, line), line)));
+        this.checkSpan(n, "書式の反復係数", line);
+        const inner = this.flattenFormat(f.items, scope, line);
         for (let k = 0; k < n; k++) {
-          out.push(...this.flattenFormat(f.items, scope, line));
+          // 展開後の個数も数える。`((5000000) x(1), f(1))` は
+          // 反復係数 1 つでも 1000 万項目の配列になる
+          this.checkSpan(out.length + inner.length, "展開後の書式項目の数", line);
+          out.push(...inner);
         }
         continue;
       }
@@ -1781,16 +2005,20 @@ export class Interpreter {
         const v = values[vi++]!;
         this.emitEdit(v, f, scope, line, w);
       } else {
-        this.applyControl(f, num, w);
+        this.applyControl(f, num, w, line);
       }
       if (fi > fmt.length * (values.length + 1) + fmt.length) break;
     }
-    // データを使い切った後も、残りの書式のうち制御項目だけは適用する
-    // （PL/I は次のデータ項目を要求する書式に当たった時点で止める）
-    for (let k = fi % fmt.length; k < fmt.length; k++) {
+    // データを使い切った後も、**残り**の書式のうち制御項目だけは適用する
+    // （PL/I は次のデータ項目を要求する書式に当たった時点で止める）。
+    //
+    // `fi % fmt.length` から始めてはいけない。最後のデータ項目が書式リストの
+    // 末尾だったときに 0 へ巻き戻り、「残り」ではなく**先頭から**適用して
+    // しまう。`(skip, a)` で余分な改行が入っていた
+    for (let k = fi; k < fmt.length; k++) {
       const f = fmt[k]!;
       if (Interpreter.consumesData(f)) break;
-      this.applyControl(f, num, w);
+      this.applyControl(f, num, w, line);
     }
   }
 
@@ -1798,17 +2026,27 @@ export class Interpreter {
     f: Exclude<FlatFormat, DataFormat>,
     num: (e: Expr) => number,
     w: ListWriter,
+    line: number,
   ): void {
     switch (f.kind) {
-      case "x":
-        w.editX(num(f.width));
+      case "x": {
+        const n = num(f.width);
+        this.checkSpan(n, "X 書式の幅", line);
+        w.editX(n);
         return;
-      case "column":
-        w.column(num(f.at));
+      }
+      case "column": {
+        const at = num(f.at);
+        this.checkSpan(at, "COLUMN 書式の桁", line);
+        w.column(at);
         return;
-      case "fskip":
-        w.skip(f.count === undefined ? 1 : num(f.count));
+      }
+      case "fskip": {
+        const n = f.count === undefined ? 1 : num(f.count);
+        this.checkSpan(n, "SKIP 書式の行数", line);
+        w.skip(n);
         return;
+      }
       case "fpage":
         w.page();
         return;
@@ -1849,7 +2087,16 @@ export class Interpreter {
       }
       case "e": {
         const width = num(f.width);
+        this.checkSpan(width, "E 書式の幅", line);
         const p = f.decimals === undefined ? 6 : num(f.decimals) + 1;
+        // 仮数の桁は 10 進の最大精度までにする。これを超えると
+        // `toExponential` の生の RangeError が診断になっていた
+        if (p < 1 || p > MAX_DEC + 1) {
+          throw new RuntimeError(
+            `E 書式の小数桁は 0 から ${MAX_DEC} までです（${p - 1}）`,
+            line,
+          );
+        }
         const n = Number(render(asFixed(v, line)));
         w.editNumber(render({ t: "float", base: "dec", p, v: n }), width);
         return;
@@ -1891,9 +2138,10 @@ export class Interpreter {
       return this.files.openFile(name, want);
     } catch (e) {
       if (e instanceof UndefinedFileError) {
-        this.raiseIo("UNDEFINEDFILE", this.currentScope, line, name);
-        // ON 単位から戻っても開けていないので、ここで止めるしかない
-        throw new RuntimeError(`ファイル ${name} を開けません`, line);
+        this.raiseIo("UNDEFINEDFILE", this.currentScope, line, name, e.reason);
+        // ON 単位から戻っても開けていないので、ここで止めるしかない。
+        // 理由（属性の食い違いなど）を落とすと原因が分からなくなる
+        throw new RuntimeError(e.message, line);
       }
       throw e;
     }
@@ -2121,14 +2369,14 @@ export class Interpreter {
       if (!s.into) {
         throw new RuntimeError("READ には INTO か SET が必要です", s.line);
       }
-      this.scatterRecord(rec, s.into, scope, s.line);
+      this.scatterLeaves(s.into, rec, scope, s.line, "RECORD 入出力");
       return;
     }
 
     if (!s.from) {
       throw new RuntimeError(`${s.op.toUpperCase()} には FROM が必要です`, s.line);
     }
-    const text = this.gatherRecord(s.from, scope, s.line);
+    const text = this.gatherLeaves(s.from, scope, s.line, "RECORD 入出力");
     if (s.op === "write") {
       file.writeRecord(text);
       // レコード出力も出力上限で打ち切る。ブラウザには別プロセスが
@@ -2204,54 +2452,37 @@ export class Interpreter {
     return out;
   }
 
-  /** 項目が占める文字数。文字として表現できない型は誤りにする。 */
-  private recordWidth(v: Variable, key: string, line: number): number {
-    return this.widthOfAttr(v.attr, key, line);
-  }
-
   /**
    * 属性から項目の幅を出す。
-   * レコード入出力と DL/I のセグメント I/O 領域が同じ規則を使う。
+   * レコード入出力・DL/I のセグメント I/O 領域・IMS のメッセージ領域が
+   * 同じ規則を使う。`purpose` は診断の文面だけに使う
+   * （メッセージ領域を書いた人に「RECORD 入出力で扱えません」と
+   * 答えると、指す先が違って原因が分からなくなる）。
    */
-  private widthOfAttr(attr: DataAttr, key: string, line: number): number {
-    if (attr.type === "char") return attr.length;
+  private widthOfAttr(
+    attr: DataAttr,
+    key: string,
+    line: number,
+    purpose: string,
+  ): number {
+    if (attr.type === "char") {
+      // VARYING は実機では 2 バイトの長さ前置きを持つ。この処理系は
+      // それを持たないので、固定長として扱うと桁がずれる。
+      // 黙ってずらすより断る
+      if (attr.varying === true) {
+        throw new RuntimeError(
+          `${key} は VARYING なので${purpose}で扱えません` +
+            "（長さ前置きを持たないため桁がずれます。CHAR(n) で宣言してください）",
+          line,
+        );
+      }
+      return attr.length;
+    }
     if (attr.type === "picture") return parsePicture(attr.picture).width;
     throw new RuntimeError(
-      `${key} は RECORD 入出力で扱えません（文字か PICTURE の項目にしてください）`,
+      `${key} は${purpose}で扱えません（文字か PICTURE の項目にしてください）`,
       line,
     );
-  }
-
-  /** レコードの内容を変数（または構造体の葉）へ配る。 */
-  private scatterRecord(rec: string, target: Ref, scope: Scope, line: number): void {
-    const leaves = this.leavesOf(target.name, scope);
-    if (leaves.length === 0) {
-      // スカラ（ふつうは char）へそのまま入れる
-      this.assign(target, makeChar(rec, rec.length, true), scope, line);
-      return;
-    }
-    let pos = 0;
-    for (const { key, v } of leaves) {
-      const w = this.recordWidth(v, key, line);
-      const piece = rec.slice(pos, pos + w).padEnd(w);
-      pos += w;
-      v.cells[0] = this.coerce(makeChar(piece, piece.length, true), v.attr, line);
-    }
-  }
-
-  /** 変数（または構造体の葉）からレコードの内容を組み立てる。 */
-  private gatherRecord(source: Ref, scope: Scope, line: number): string {
-    const leaves = this.leavesOf(source.name, scope);
-    if (leaves.length === 0) {
-      return this.asText(this.evalRef(source, scope, line));
-    }
-    let text = "";
-    for (const { key, v } of leaves) {
-      const w = this.recordWidth(v, key, line);
-      const cell = v.cells[0];
-      text += (cell === undefined ? "" : this.asText(cell)).padEnd(w).slice(0, w);
-    }
-    return text;
   }
 
   /**
@@ -2429,7 +2660,12 @@ export class Interpreter {
   }
 
   private indexOf(v: Variable, ref: Ref, scope: Scope, line: number): number {
-    if (!v.dims || ref.subscripts.length === 0) return 0;
+    if (ref.subscripts.length === 0) return 0;
+    if (!v.dims) {
+      // 添字を黙って捨てると、`x(7)` と `x(99)` が同じ 1 個の箱を指して
+      // 嘘の値を返す。配列でないものへの添字は断る
+      throw new RuntimeError(`${ref.name} は配列ではありません`, line);
+    }
     return this.flatIndex(
       v,
       ref.subscripts.map((e) =>
@@ -2470,7 +2706,9 @@ export class Interpreter {
           return assignTo(f, attr.base, attr.p, attr.q);
         }
         case "float": {
-          const n = Number(render(this.toFixed(value, line)));
+          // 既に FLOAT なら、そのまま持つ。FIXED を経由させると
+          // 10 進 15 桁に丸められ、1e-9 のような値が 0 になる
+          const n = value.t === "float" ? value.v : Number(render(this.toFixed(value, line)));
           return { t: "float", base: attr.base, p: attr.p, v: n };
         }
         case "char": {
@@ -2515,7 +2753,12 @@ export class Interpreter {
       throw new RuntimeError("ポインタは数値として扱えません", line);
     }
     if (v.t === "fixed") return v;
-    if (v.t === "float") return fixedFromLiteral(String(v.v));
+    if (v.t === "float") {
+      if (!Number.isFinite(v.v)) {
+        this.raiseChecked("CONVERSION", `FIXED にできません: ${v.v}`, line);
+      }
+      return fixedFromFloat(v.v);
+    }
     if (v.t === "bit") return makeFixed("bin", Math.max(1, v.v.length), 0, BigInt(parseInt(v.v || "0", 2)));
     const s = v.v.trim();
     if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(s)) {
@@ -2529,6 +2772,16 @@ export class Interpreter {
   private eval(e: Expr, scope: Scope, line: number): Value {
     switch (e.kind) {
       case "num":
+        // PL/I の指数付き定数は**浮動小数点定数**。FIXED として読むと
+        // 小数が消える（`2.5e-8` が 0 になっていた）。
+        // GET の入力と同じ扱い（FLOAT DEC(6)）に揃える
+        if (/[eE]/.test(e.text)) {
+          const n = Number(e.text);
+          if (!Number.isFinite(n)) {
+            this.raiseChecked("CONVERSION", `浮動小数点定数が大きすぎます: ${e.text}`, line);
+          }
+          return { t: "float", base: "dec", p: 6, v: n };
+        }
         return fixedFromLiteral(e.text);
       case "isub":
         // iSUB は DEFINED の解決時に実際の添字へ置き換えられる。
@@ -2632,8 +2885,6 @@ export class Interpreter {
   }
 
   private applyBinary(op: string, a: Value, b: Value, line: number): Value {
-    const e = { op } as { op: string };
-    void e;
 
     // 連結は文字列として扱う（数値は暗黙変換される）
     if (op === "||") {
@@ -2666,7 +2917,9 @@ export class Interpreter {
     }
 
     // 比較
-    if (["=", "¬=", "<", "<=", ">", ">="].includes(op)) {
+    // `¬<` / `¬>`（`^<` / `^>`）も比較演算子。字句解析と構文解析は
+    // 受けているので、ここに無いと**構文は通るのに実行時に落ちる**
+    if (["=", "¬=", "<", "<=", ">", ">=", "¬<", "¬>"].includes(op)) {
       const c = this.compareValues(a, b, line);
       const r =
         op === "=" ? c === 0
@@ -2674,6 +2927,8 @@ export class Interpreter {
         : op === "<" ? c < 0
         : op === "<=" ? c <= 0
         : op === ">" ? c > 0
+        : op === "¬<" ? c >= 0
+        : op === "¬>" ? c <= 0
         : c >= 0;
       return makeBit(r ? "1" : "0", 1);
     }
@@ -2717,6 +2972,26 @@ export class Interpreter {
   }
 
   private compareValues(a: Value, b: Value, line: number): number {
+    /*
+     * 片方が文字で片方が算術なら、**文字を算術に変換して**代数比較する
+     * （PL/I の規定）。実機でも全部 TRUE になることを確認した:
+     *
+     *   dcl i fixed bin(15); i = 12;
+     *   i = '12'   → 真      i = '012' → 真      i = ' 12' → 真
+     *
+     * 以前は数値を文字に直して照合順序で比べていたので、どれも偽になり、
+     * しかも `i + 0 = 12` は真という食い違いが出ていた
+     * （`asText` は数値を出力フィールド幅へ右詰めするため、
+     * `"       12"` と `"12       "` の比較になって必ず外れる）。
+     */
+    const arithmetic = (v: Value): boolean =>
+      v.t === "fixed" || v.t === "float";
+    if (a.t === "char" && arithmetic(b)) {
+      return this.compareValues(this.toFixed(a, line), b, line);
+    }
+    if (b.t === "char" && arithmetic(a)) {
+      return this.compareValues(a, this.toFixed(b, line), line);
+    }
     if (a.t === "char" || b.t === "char") {
       const x = this.asText(a);
       const y = this.asText(b);
@@ -2741,6 +3016,14 @@ export class Interpreter {
     }
     if (a.t === "bit" && b.t === "bit") {
       return a.v === b.v ? 0 : a.v < b.v ? -1 : 1;
+    }
+    if (a.t === "float" || b.t === "float") {
+      // FLOAT はこの処理系では JavaScript の数値なので、比較もそれで行う。
+      // FIXED に直してから比べると、10 進 15 桁より細かい値や
+      // 大きすぎる値が丸められて `1e-9 > 0` が偽になる
+      const x = numberOfValue(a, line);
+      const y = numberOfValue(b, line);
+      return x === y ? 0 : x < y ? -1 : 1;
     }
     return compare(asFixed(a, line), asFixed(b, line));
   }
@@ -2871,12 +3154,12 @@ export class Interpreter {
       }
       case "MOD": {
         // 除算の精度規則（結果が FIXED(N, N-...) になる）を使うと
-        // MOD(17,5) が 0 になってしまう。整数剰余として直接計算する。
-        // PL/I の MOD は第2引数と同じ符号の結果を返す。
+        // MOD(17,5) が 0 になってしまう。整数剰余として直接計算する
+        // （`value.ts` の `mod`。他の演算と同じく基数を揃える）。
         const a = fx(0);
         const b = fx(1);
         if (b.v === 0n) this.raise("ZERODIVIDE", scope, line);
-        return modFixed(a, b);
+        return mod(a, b);
       }
       case "ABS": {
         const a = fx(0);
@@ -2907,8 +3190,12 @@ export class Interpreter {
         return makeFixed("bin", 15, 0, BigInt(hay.indexOf(needle) + 1));
       }
       case "TRUNC": {
+        // 結果の精度は CEIL / FLOOR と同じ規則。整数化する 3 つが
+        // 違う精度を返すと、同じ値でも出力幅が変わる
+        // （以前は元の p を保っていたので `trunc(1.23456)` の幅が 9、
+        // `floor(1.23456)` が 5 になっていた）
         const a = fx(0);
-        return assignTo(a, a.base, a.p, 0);
+        return assignTo(a, a.base, integerPrecision(a), 0);
       }
       case "CEIL":
       case "FLOOR": {
@@ -2916,8 +3203,7 @@ export class Interpreter {
         // 1 を足し引きして実装すると加算の精度規則で p が広がり、
         // 出力幅（ceil(2.1) で 5）と合わなくなる。
         const a = fx(0);
-        const N = a.base === "bin" ? MAX_BIN : MAX_DEC;
-        const p = Math.min(N, Math.max(a.p - a.q, 1) + 1);
+        const p = integerPrecision(a);
         const truncated = assignTo(a, a.base, a.p, 0);
         let v = truncated.v;
         const isUp = name === "CEIL";
@@ -2955,7 +3241,12 @@ export class Interpreter {
         const abs = neg ? -a.v : a.v;
         // 0 から遠い側へ丸める（half away from zero）
         const rounded = (abs * 2n + scale) / (scale * 2n);
-        return makeFixed(a.base, roundPrecision(a, n), n, neg ? -rounded : rounded);
+        // 負の尺度は作らない。この値モデルは尺度が 0 以上である前提で、
+        // `render` も `q <= 0` を「整数」として扱う（`radix^(-q)` を
+        // 掛け戻さない）。`round(15,-1)` が 2 になっていた
+        const q = Math.max(0, n);
+        const v = n < 0 ? rounded * ipow(r, -n) : rounded;
+        return makeFixed(a.base, roundPrecision(a, n), q, neg ? -v : v);
       }
       case "SIGN": {
         // 出力幅 9 なので FIXED BIN(15,0)
@@ -2964,14 +3255,22 @@ export class Interpreter {
         return makeFixed("bin", 15, 0, r);
       }
       case "DIVIDE": {
-        // DIVIDE(a, b, p, q) は結果の精度を明示する除算
+        // DIVIDE(a, b, p, q) は結果の精度を明示する除算。
+        // `div` を先に通してはいけない（既定の除算精度で q=0 の
+        // 整数除算になり、あとで桁を広げても情報は戻らない）。
+        // 基数は両辺を揃えた結果に従う
         const a = fx(0);
         const b = fx(1);
         if (b.v === 0n) this.raise("ZERODIVIDE", scope, line);
         const p = int(2);
         const q = args.length > 3 ? int(3) : 0;
-        const quotient = div(a, b);
-        return assignTo(quotient, "dec", p, q);
+        if (q > p) {
+          throw new RuntimeError(
+            `DIVIDE の尺度 ${q} が精度 ${p} を超えています`,
+            line,
+          );
+        }
+        return divideTo(a, b, p, q);
       }
       case "TRANSLATE": {
         // TRANSLATE(s, to, from) は from の各文字を to の対応文字に置き換える
@@ -3029,35 +3328,6 @@ export class Interpreter {
 }
 
 /**
- * PL/I の MOD。第2引数と同じ符号の剰余を返す。
- * 両辺の尺度を揃えて BigInt の剰余で計算する。
- *
- * 結果の精度は PL/I の規定どおり第2引数に基づく
- *   p = min(N, p2 - q2 + max(q1,q2)), q = max(q1,q2)
- * （剰余は必ず第2引数より小さいため）。
- * mod(17,5) はフィールド幅 4（= p+3 で p=1）で出力され、
- * 第2引数 5 の精度 DEC(1,0) に由来することが確認できる。
- */
-function modFixed(a: FixedVal, b: FixedVal): FixedVal {
-  const base = a.base === b.base ? a.base : "bin";
-  const q = Math.max(a.q, b.q);
-  const N = base === "bin" ? MAX_BIN : MAX_DEC;
-  const p = Math.min(N, Math.max(1, b.p - b.q + q));
-  const r = base === "bin" ? 2n : 10n;
-  const scale = (x: FixedVal): bigint => {
-    if (x.q === q) return x.v;
-    let m = 1n;
-    for (let k = 0; k < q - x.q; k++) m *= r;
-    return x.v * m;
-  };
-  const va = scale(a);
-  const vb = scale(b);
-  let rem = va % vb;
-  if (rem !== 0n && (rem < 0n) !== (vb < 0n)) rem += vb;
-  return makeFixed(base, p, q, rem);
-}
-
-/**
  * FLOAT の出力フィールド幅。
  * FLOAT DEC(6) は ' 3.50000E+0000'（幅14）で出力されるので
  *   仮数(1 + '.' + (p-1)桁) + 指数('E±dddd' = 6) + 符号(1) = p + 8
@@ -3076,6 +3346,19 @@ export function floatWidth(p: number): number {
  *   dcl x fixed dec(5,1) に round(x,3) → 幅 11（p=8, q=3）
  *   round(1.005, 2) → 幅 7（p=4, q=2）
  */
+/**
+ * 整数化する組込関数（`CEIL` / `FLOOR` / `TRUNC`）の結果の精度。
+ *
+ * PL/I の規定は 3 つとも同じ `min(N, max(p-q,1)+1)`。
+ * 1 箇所に置かないと、同じ値を同じ向きに丸めているのに
+ * 出力幅が違う、という食い違いが出る（実際に `TRUNC` だけが
+ * 元の精度を保っていた）。
+ */
+function integerPrecision(a: FixedVal): number {
+  const N = a.base === "bin" ? MAX_BIN : MAX_DEC;
+  return Math.min(N, Math.max(a.p - a.q, 1) + 1);
+}
+
 function roundPrecision(a: FixedVal, n: number): number {
   return Math.min(
     a.base === "bin" ? MAX_BIN : MAX_DEC,
@@ -3083,12 +3366,22 @@ function roundPrecision(a: FixedVal, n: number): number {
   );
 }
 
+/**
+ * JavaScript の数値として取り出す。
+ *
+ * FLOAT はこの処理系では JS の数値そのものなので、FLOAT が絡む
+ * 演算と比較はこれを通す。FIXED を経由させると 10 進 15 桁に
+ * 丸められ、`1e-9` のような値が 0 になる。
+ */
+function numberOfValue(v: Value, line: number): number {
+  if (v.t === "float") return v.v;
+  if (v.t === "fixed") return Number(render(v));
+  if (v.t === "bit") return parseInt(v.v || "0", 2);
+  throw new RuntimeError("数値として扱えません", line);
+}
+
 function floatArith(op: string, a: Value, b: Value, line: number): Value {
-  const num = (v: Value): number => {
-    if (v.t === "float") return v.v;
-    if (v.t === "fixed") return Number(render(v));
-    throw new RuntimeError("数値として扱えません", line);
-  };
+  const num = (v: Value): number => numberOfValue(v, line);
   // 結果の精度は両辺の精度の大きい方。**FIXED の辺も数に入れる**
   // （FIXED(p,q) は FLOAT(p) に変換されてから演算されるため）。
   // 実機で確認: 4**1.5 / 9**0.5 / 2**10 はどれも FLOAT DEC(2) で
@@ -3182,7 +3475,12 @@ function asFixed(v: Value, line: number): FixedVal {
     throw new RuntimeError("ポインタは数値として扱えません", line);
   }
   if (v.t === "fixed") return v;
-  if (v.t === "float") return fixedFromLiteral(String(v.v));
+  if (v.t === "float") {
+    if (!Number.isFinite(v.v)) {
+      throw new RuntimeError(`FIXED にできません: ${v.v}`, line);
+    }
+    return fixedFromFloat(v.v);
+  }
   if (v.t === "bit") {
     return makeFixed("bin", Math.max(1, v.v.length), 0, BigInt(parseInt(v.v || "0", 2)));
   }
@@ -3237,12 +3535,37 @@ export const BUILTIN_SUBROUTINE_NAMES: ReadonlySet<string> = new Set([
 /** PCB マスクの規定の並び。葉の名前ではなく、この順で結び付ける。 */
 function pcbLayout(
   pcb: PcbState,
+  io?: IoPcbState,
 ): { name: string; attr: DataAttr; value: () => Value }[] {
   const chars = (v: string, n: number): Value => makeChar(v, n, false);
   const num = (n: number): Value => makeFixed("bin", MAX_BIN, 0, BigInt(n));
   const keylen = Math.max(1, pcb.def.keylen);
   const char = (length: number): DataAttr => ({ type: "char", length, varying: false });
   const binary: DataAttr = { type: "fixed", base: "bin", p: MAX_BIN, q: 0 };
+  if (pcb.def.kind === "io") {
+    // 入出力 PCB。DB の PCB とは並びも項目も違う
+    const dec = (p: number, q: number): DataAttr => ({ type: "fixed", base: "dec", p, q });
+    const packed = (v: number, q: number): Value => makeFixed("dec", 7, q, BigInt(Math.round(v * 10 ** q)));
+    const state: IoPcbState = io ?? {
+      lterm: "",
+      status: pcb.status,
+      date: 0,
+      time: 0,
+      seq: 0,
+      modName: "",
+      userid: "",
+    };
+    return [
+      { name: "LTERM_NAME", attr: char(8), value: () => chars(state.lterm, 8) },
+      { name: "RESERVED1", attr: char(2), value: () => chars("", 2) },
+      { name: "STAT_CODE", attr: char(2), value: () => chars(pcb.status, 2) },
+      { name: "DATE", attr: dec(7, 0), value: () => packed(state.date, 0) },
+      { name: "TIME", attr: dec(7, 1), value: () => packed(state.time, 1) },
+      { name: "MSG_SEQ", attr: binary, value: () => num(state.seq) },
+      { name: "MOD_NAME", attr: char(8), value: () => chars(state.modName, 8) },
+      { name: "USER_ID", attr: char(8), value: () => chars(state.userid, 8) },
+    ];
+  }
   return [
     { name: "DBNAME", attr: char(8), value: () => chars(pcb.def.dbdName ?? "", 8) },
     {
@@ -3276,16 +3599,23 @@ function pcbLayout(
  */
 export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
   "ACOS",
+  "ACOSD",
   "ADD",
+  "ALL",
   "ALLOCATION",
+  "ANY",
   "ASIN",
+  "ASIND",
   "ATAN",
   "ATAND",
   "ATANH",
+  "BIN",
+  "BINARY",
   "BINARYVALUE",
   "BIT",
   "BOOL",
   "BYTE",
+  "CHAR",
   "CHARACTER",
   "CHARVAL",
   "COLLATE",
@@ -3297,10 +3627,12 @@ export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
   "COSH",
   "COUNT",
   "CURRENTSTORAGE",
+  "DATAFIELD",
   "DATE",
   "DATETIME",
   "DAYS",
   "DAYSTODATE",
+  "DEC",
   "DECAT",
   "DECIMAL",
   "DIMENSION",
@@ -3313,12 +3645,17 @@ export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
   "HEX",
   "HEXIMAGE",
   "HIGH",
+  "IAND",
+  "IEOR",
   "IMAG",
+  "INOT",
+  "IOR",
   "LINENO",
   "LOG",
   "LOG10",
   "LOG2",
   "LOW",
+  "LOWERCASE",
   "MAXLENGTH",
   "MULTIPLY",
   "OFFSET",
@@ -3326,18 +3663,24 @@ export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
   "ONCHAR",
   "ONCODE",
   "ONCONDID",
+  "ONCOUNT",
   "ONFILE",
   "ONKEY",
   "ONLOC",
   "ONSOURCE",
   "PAGENO",
   "POINTER",
+  "POLY",
   "PREC",
   "PRECISION",
+  "PROD",
   "RANDOM",
   "RANK",
   "REAL",
   "REVERSE",
+  "SEARCH",
+  "SEARCHR",
+  "SIGNED",
   "SIN",
   "SIND",
   "SINH",
@@ -3350,7 +3693,9 @@ export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
   "TANH",
   "TIME",
   "TRIM",
+  "UNSIGNED",
   "UNSPEC",
+  "UPPERCASE",
   "VALID",
 ]);
 

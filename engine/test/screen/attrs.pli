@@ -1,0 +1,51 @@
+/* 打ち込まれた値が LOCK なら、その項目を保護・強調にしてカーソルを置く。
+   ATTR=YES の 2 バイトの意味
+     1 バイト目 先頭 2 ビットが 11 なら、この項目にカーソルを置く
+     2 バイト目 先頭ビット 指定あり / 次 置き換え（0 なら論理和）
+                次 保護 / 次 数字 / 次 強調 */
+att: proc(io_ptr) options(main);
+  dcl plitdli entry;
+  dcl io_ptr pointer;
+  dcl 1 io_pcb based(io_ptr),
+        2 lterm_name char(8),
+        2 reserved1  char(2),
+        2 stat_code  char(2),
+        2 msg_date   fixed dec(7,0),
+        2 msg_time   fixed dec(7,1),
+        2 msg_seq    fixed bin(31),
+        2 mod_name   char(8),
+        2 user_id    char(8);
+  dcl 1 msg_in,
+        2 in_ll    fixed bin(15),
+        2 in_zz    fixed bin(15),
+        2 in_tran  char(12),
+        2 in_state char(8);
+  dcl 1 msg_out,
+        2 out_ll    fixed bin(15),
+        2 out_zz    fixed bin(15),
+        2 out_attr  char(2),
+        2 out_state char(8);
+  dcl three fixed bin(31) init(3);
+  dcl four  fixed bin(31) init(4);
+  dcl func_gu   char(4) init('GU  ');
+  dcl func_isrt char(4) init('ISRT');
+  dcl modname   char(8) init('ATTOUT  ');
+
+  call plitdli(three, func_gu, io_pcb, msg_in);
+  do while (io_pcb.stat_code = '  ');
+    if msg_in.in_state = 'LOCK    ' then
+      do;
+        msg_out.out_attr = 'C0E8'X;            /* カーソル + 置き換え + 保護 + 強調 */
+        msg_out.out_state = 'LOCKED';
+      end;
+    else
+      do;
+        msg_out.out_attr = '0088'X;            /* 論理和で強調だけを足す */
+        msg_out.out_state = msg_in.in_state;
+      end;
+    msg_out.out_ll = 14;
+    msg_out.out_zz = 0;
+    call plitdli(four, func_isrt, io_pcb, msg_out, modname);
+    call plitdli(three, func_gu, io_pcb, msg_in);
+  end;
+end att;

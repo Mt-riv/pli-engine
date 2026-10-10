@@ -7,15 +7,12 @@
  * 層を分けておくと、DL/I の意味論だけを単体で試験できる。
  */
 
+import { DefError } from "../macro.js";
+
 /** DBD / PSB の記述の誤り。どのファイルの何行目かを必ず持つ。 */
-export class DliDefError extends Error {
-  constructor(
-    message: string,
-    readonly file: string,
-    readonly line: number,
-  ) {
-    super(`${file} ${line} 行: ${message}`);
-    this.name = "DliDefError";
+export class DliDefError extends DefError {
+  constructor(message: string, file: string, line: number) {
+    super(message, file, line, "DliDefError");
   }
 }
 

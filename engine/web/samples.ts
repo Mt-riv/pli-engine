@@ -11,7 +11,141 @@ export interface Sample {
    * サンプルを選んだときに付随ファイル欄へ一緒に入れる。
    */
   aux?: string;
+  /**
+   * 端末の操作の台本（`src/tm/keys.ts`）。
+   *
+   * 画面入出力（MFS）のサンプルは、人が打たないと何も起きない。
+   * 台本を添えておくと、ブラウザでは最初に出す画面の名前を拾えるし、
+   * テストでは**全サンプルが動くことの保証**を続けられる。
+   */
+  keys?: string;
 }
+
+// 画面入出力のサンプルは中身が長いので、一覧の後ろに置く。
+// `test/screen/dbinq.*` と同じものを使っている（あちらは画面像を
+// バイト一致で固定するゴールデンテスト）。
+const SOURCE_MFS = `/* 画面（MFS）とデータベース（DL/I）を一緒に使う。
+   PSB の先頭が入出力 PCB、2 つめが ITEM の DB PCB。 */
+invq: proc(io_ptr, db_ptr) options(main);
+  dcl plitdli entry;
+  dcl (io_ptr, db_ptr) pointer;
+  dcl 1 io_pcb based(io_ptr),
+        2 lterm_name char(8),
+        2 reserved1  char(2),
+        2 stat_code  char(2),
+        2 msg_date   fixed dec(7,0),
+        2 msg_time   fixed dec(7,1),
+        2 msg_seq    fixed bin(31),
+        2 mod_name   char(8),
+        2 user_id    char(8);
+  dcl 1 db_pcb based(db_ptr),
+        2 dbname     char(8),
+        2 seg_level  char(2),
+        2 db_stat    char(2),
+        2 proc_opt   char(4),
+        2 reserved2  fixed bin(31),
+        2 seg_name   char(8),
+        2 len_kfb    fixed bin(31),
+        2 no_senseg  fixed bin(31),
+        2 key_fb     char(6);
+  dcl 1 msg_in,
+        2 in_ll   fixed bin(15),
+        2 in_zz   fixed bin(15),
+        2 in_tran char(12),
+        2 in_item char(6);
+  dcl 1 msg_out,
+        2 out_ll   fixed bin(15),
+        2 out_zz   fixed bin(15),
+        2 out_name char(20),
+        2 out_date char(8),
+        2 out_note char(40);
+  dcl 1 seg_io,
+        2 s_itemno char(6),
+        2 s_name   char(20);
+  dcl ssa char(26);
+  dcl three fixed bin(31) init(3);
+  dcl four  fixed bin(31) init(4);
+  dcl func_gu   char(4) init('GU  ');
+  dcl func_isrt char(4) init('ISRT');
+  dcl modname   char(8) init('INVOUT  ');
+
+  call plitdli(three, func_gu, io_pcb, msg_in);
+  do while (io_pcb.stat_code = '  ');
+    ssa = 'ITEM    (ITEMNO   =' || msg_in.in_item || ')';
+    call plitdli(four, func_gu, db_pcb, seg_io, ssa);
+    if db_pcb.db_stat = '  ' then
+      do;
+        msg_out.out_name = seg_io.s_name;
+        msg_out.out_note = 'FOUND';
+      end;
+    else
+      do;
+        msg_out.out_name = ' ';
+        msg_out.out_note = 'NOT FOUND (STATUS ' || db_pcb.db_stat || ')';
+      end;
+    msg_out.out_date = ' ';
+    msg_out.out_ll = 72;
+    msg_out.out_zz = 0;
+    call plitdli(four, func_isrt, io_pcb, msg_out, modname);
+    call plitdli(three, func_gu, io_pcb, msg_in);
+  end;
+end invq;
+`;
+
+const AUX_MFS = `::: ITEM.dbd
+         DBD  NAME=ITEM,ACCESS=HDAM
+         SEGM NAME=ITEM,PARENT=0,BYTES=26
+         FIELD NAME=(ITEMNO,SEQ,U),BYTES=6,START=1,TYPE=C
+         FIELD NAME=ITEMNAME,BYTES=20,START=7,TYPE=C
+         DBDGEN
+         FINISH
+         END
+::: INVPSB.psb
+         PCB  TYPE=TP
+         PCB  TYPE=DB,DBDNAME=ITEM,PROCOPT=A,KEYLEN=6
+         SENSEG NAME=ITEM,PARENT=0
+         PSBGEN LANG=PLI,PSBNAME=INVPSB
+         END
+::: ITEM.dat
+ITEM    000042BOLT M6 X 20
+ITEM    000100NUT M6
+::: INVFMT.mfs
+*  在庫照会。品番を打ち込むと IMS/DB から品名を引いて返す。
+INVFMT   FMT
+         DEV   TYPE=3270-A2,FEAT=IGNORE,PFK=(PFKEY,3='/FOR INVOUT.')
+         DIV   TYPE=INOUT
+         DPAGE CURSOR=((5,20))
+         DFLD  'INVENTORY INQUIRY',POS=(1,30),ATTR=(ALPHA,PROT,HI)
+         DFLD  'ITEM NO:',POS=(5,10),ATTR=(ALPHA,PROT)
+ITEMIN   DFLD  POS=(5,20),LTH=6,ATTR=(NUM,NOPROT,HI)
+         DFLD  'NAME:',POS=(7,10),ATTR=(ALPHA,PROT)
+NAMEOUT  DFLD  POS=(7,20),LTH=20,ATTR=(ALPHA,PROT)
+SYSDATE  DFLD  POS=(1,2),LTH=8,ATTR=(ALPHA,PROT)
+MSGOUT   DFLD  POS=(23,2),LTH=40,ATTR=(ALPHA,PROT,HI)
+PFKEY    DFLD  POS=(24,2),LTH=12
+         FMTEND
+INVIN    MSG   TYPE=INPUT,SOR=(INVFMT,IGNORE),NXT=INVOUT
+         SEG
+         MFLD  (PFKEY,'INVQ        '),LTH=12
+         MFLD  ITEMIN,LTH=6,JUST=R,FILL=C'0'
+         MSGEND
+INVOUT   MSG   TYPE=OUTPUT,SOR=(INVFMT,IGNORE),NXT=INVIN
+         SEG
+         MFLD  NAMEOUT,LTH=20
+         MFLD  (SYSDATE,DATE2)
+         MFLD  MSGOUT,LTH=40
+         MSGEND
+`;
+
+const KEYS_MFS = `*  ある品番と無い品番を引く。
+MOD   INVOUT
+NOW   2026-10-10T15:04:05
+LTERM TERM0001
+ITEMIN=42
+ENTER
+ITEMIN=999
+ENTER
+`;
 
 export const SAMPLES: Sample[] = [
   {
@@ -288,5 +422,11 @@ COURSE  C002PHYS
 STUDENT S0002TSUKIMI
 COURSE  C001MATH
 `,
+  },
+  {
+    name: "画面入出力（MFS）＋ IMS/DB",
+    source: SOURCE_MFS,
+    aux: AUX_MFS,
+    keys: KEYS_MFS,
   },
 ];

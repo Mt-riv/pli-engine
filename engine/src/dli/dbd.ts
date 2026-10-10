@@ -8,7 +8,7 @@
  */
 
 import { DliDefError, type DbdDef, type FieldDef, type SegmentDef } from "./types.js";
-import { listOf, numberOf, readMacros, required, requiredName, type MacroStmt } from "./macro.js";
+import { listOf, numberOf, readMacros, required, requiredName, type MacroStmt } from "../macro.js";
 
 /**
  * `TYPE=` を読む。

@@ -1,0 +1,54 @@
+/* 会話型。SPA の作業域に前回の品番を残し、次の画面で見せる。
+   SPA は LL(2) + ZZZZ(4) + トランザクションコード(8) + 作業域(6) = 20 桁。
+   先頭 6 桁（LL と ZZZZ）は触ってはいけない。
+   トランザクションコードを空白にして返すと会話が終わる。 */
+conv: proc(io_ptr) options(main);
+  dcl plitdli entry;
+  dcl io_ptr pointer;
+  dcl 1 io_pcb based(io_ptr),
+        2 lterm_name char(8),
+        2 reserved1  char(2),
+        2 stat_code  char(2),
+        2 msg_date   fixed dec(7,0),
+        2 msg_time   fixed dec(7,1),
+        2 msg_seq    fixed bin(31),
+        2 mod_name   char(8),
+        2 user_id    char(8);
+  dcl 1 spa,
+        2 s_ll   fixed bin(15),
+        2 s_zz   fixed bin(15),
+        2 s_zz2  char(2),
+        2 s_tran char(8),
+        2 s_save char(6);
+  dcl 1 msg_in,
+        2 in_ll   fixed bin(15),
+        2 in_zz   fixed bin(15),
+        2 in_tran char(12),
+        2 in_item char(6);
+  dcl 1 msg_out,
+        2 out_ll   fixed bin(15),
+        2 out_zz   fixed bin(15),
+        2 out_prev char(20);
+  dcl three fixed bin(31) init(3);
+  dcl four  fixed bin(31) init(4);
+  dcl func_gu   char(4) init('GU  ');
+  dcl func_gn   char(4) init('GN  ');
+  dcl func_isrt char(4) init('ISRT');
+  dcl modname   char(8) init('CNVOUT  ');
+
+  call plitdli(three, func_gu, io_pcb, spa);
+  call plitdli(three, func_gn, io_pcb, msg_in);
+  if spa.s_save = '      ' then
+    msg_out.out_prev = '(first time)';
+  else
+    msg_out.out_prev = spa.s_save;
+  spa.s_save = msg_in.in_item;
+  /* 品番 999999 で会話を終える */
+  if msg_in.in_item = '999999' then spa.s_tran = ' ';
+  spa.s_ll = 20;
+  spa.s_zz = 0;
+  msg_out.out_ll = 24;
+  msg_out.out_zz = 0;
+  call plitdli(three, func_isrt, io_pcb, spa);
+  call plitdli(four, func_isrt, io_pcb, msg_out, modname);
+end conv;

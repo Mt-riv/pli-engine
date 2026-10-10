@@ -1,0 +1,45 @@
+/* 3 行の表を受け取り、順番を逆にして返す。
+   DO / ENDDO が作る ROW01..ROW03 / QTY01..QTY03 に、
+   I/O 領域の項目が宣言順で対応する。 */
+tbl: proc(io_ptr) options(main);
+  dcl plitdli entry;
+  dcl io_ptr pointer;
+  dcl 1 io_pcb based(io_ptr),
+        2 lterm_name char(8),
+        2 reserved1  char(2),
+        2 stat_code  char(2),
+        2 msg_date   fixed dec(7,0),
+        2 msg_time   fixed dec(7,1),
+        2 msg_seq    fixed bin(31),
+        2 mod_name   char(8),
+        2 user_id    char(8);
+  dcl 1 msg_in,
+        2 in_ll   fixed bin(15),
+        2 in_zz   fixed bin(15),
+        2 in_tran char(12),
+        2 in_r1 char(4), 2 in_q1 char(3),
+        2 in_r2 char(4), 2 in_q2 char(3),
+        2 in_r3 char(4), 2 in_q3 char(3);
+  dcl 1 msg_out,
+        2 out_ll fixed bin(15),
+        2 out_zz fixed bin(15),
+        2 o_r1 char(4), 2 o_q1 char(3),
+        2 o_r2 char(4), 2 o_q2 char(3),
+        2 o_r3 char(4), 2 o_q3 char(3);
+  dcl three fixed bin(31) init(3);
+  dcl four  fixed bin(31) init(4);
+  dcl func_gu   char(4) init('GU  ');
+  dcl func_isrt char(4) init('ISRT');
+  dcl modname   char(8) init('TBLOUT  ');
+
+  call plitdli(three, func_gu, io_pcb, msg_in);
+  if io_pcb.stat_code = '  ' then
+    do;
+      msg_out.o_r1 = msg_in.in_r3; msg_out.o_q1 = msg_in.in_q3;
+      msg_out.o_r2 = msg_in.in_r2; msg_out.o_q2 = msg_in.in_q2;
+      msg_out.o_r3 = msg_in.in_r1; msg_out.o_q3 = msg_in.in_q1;
+      msg_out.out_ll = 25;
+      msg_out.out_zz = 0;
+      call plitdli(four, func_isrt, io_pcb, msg_out, modname);
+    end;
+end tbl;

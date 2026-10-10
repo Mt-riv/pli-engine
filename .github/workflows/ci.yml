@@ -34,14 +34,19 @@ jobs:
       - run: npm ci
       - name: 型検査
         run: npm run typecheck
+      # **テストより先に建てる。** `test/web.test.ts` は
+      # `dist-web/index.html` が無いとまるごと省略されるので、順番が逆だと
+      # 単一 HTML の検査（埋め込みが壊れていないか、外部を読まないか、
+      # 大きさ）が CI で一度も走らない。実際にそれで 0.3.0 の
+      # ブラウザ版が壊れたまま出てしまった
+      - name: ブラウザ版のビルド
+        run: npm run web:build
       - name: テスト
         run: npm test
       - name: PL/I で書いたテスト
         run: npm run plitest -- examples/tests
       - name: Linter（同梱の例に指摘が出ないこと）
         run: npm run plilint -- examples --strict
-      - name: ブラウザ版のビルド
-        run: npm run web:build
       - name: 出荷物に runtime 依存の脆弱性が無いこと
         run: npm audit --omit=dev --audit-level=low
 

@@ -1,0 +1,4 @@
+::: TBLPSB.psb
+         PCB  TYPE=TP
+         PSBGEN LANG=PLI,PSBNAME=TBLPSB
+         END

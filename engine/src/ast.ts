@@ -186,15 +186,21 @@ export type Stmt =
   | { kind: "assign"; target: Ref; value: Expr; line: number }
   | { kind: "put"; options: PutOption[]; file?: string; line: number }
   | { kind: "if"; cond: Expr; then: Stmt; else?: Stmt; line: number }
-  | { kind: "doGroup"; body: Stmt[]; line: number }
-  | { kind: "doWhile"; cond: Expr; body: Stmt[]; line: number }
-  | { kind: "doUntil"; cond: Expr; body: Stmt[]; line: number }
+  | { kind: "doGroup"; body: Stmt[]; labels?: string[]; line: number }
+  | { kind: "doWhile"; cond: Expr; body: Stmt[]; labels?: string[]; line: number }
+  | { kind: "doUntil"; cond: Expr; body: Stmt[]; labels?: string[]; line: number }
   | {
       kind: "doIter";
       varName: string;
       /** 複数指定（`do i = 1 to 3, 7 to 9;`）に対応するため配列で持つ。 */
       specs: DoSpec[];
       body: Stmt[];
+      /**
+       * この DO に付いた文ラベル（大文字）。`LEAVE outer;` が
+       * どのループを抜けるかの判定に要る。持たせないと、ラベルを
+       * 書いても必ず内側のループが受け止めてしまう。
+       */
+      labels?: string[];
       line: number;
     }
   | { kind: "beginBlock"; body: Stmt[]; line: number }

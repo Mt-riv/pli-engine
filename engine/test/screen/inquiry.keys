@@ -1,0 +1,7 @@
+*  最初の画面を出し、品番を打ち込んで送る。PF3 でメニューへ。
+MOD   INVOUT
+NOW   2026-10-10T15:04:05
+LTERM TERM0001
+ITEMIN=42
+ENTER
+PF3

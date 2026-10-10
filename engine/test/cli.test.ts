@@ -222,3 +222,119 @@ describe("plitest", () => {
     expect(run("plitest.ts", ["--help"]).code).toBe(0);
   });
 });
+
+describe("pli --keys（画面入出力）", () => {
+  let scr: string;
+
+  beforeAll(() => {
+    scr = mkdtempSync(join(tmpdir(), "pli-mfs-"));
+    writeFileSync(
+      join(scr, "echo.mfs"),
+      `F        FMT
+         DEV   TYPE=3270-A2,FEAT=IGNORE
+         DIV   TYPE=INOUT
+         DPAGE CURSOR=((2,10))
+A        DFLD  POS=(2,10),LTH=4,ATTR=(ALPHA,NOPROT)
+T        DFLD  POS=(24,2),LTH=8
+         FMTEND
+MI       MSG   TYPE=INPUT,SOR=(F,IGNORE),NXT=MO
+         SEG
+         MFLD  (T,'ECHO    '),LTH=8
+         MFLD  A,LTH=4
+         MSGEND
+MO       MSG   TYPE=OUTPUT,SOR=(F,IGNORE),NXT=MI
+         SEG
+         MFLD  A,LTH=4
+         MSGEND
+`,
+    );
+    writeFileSync(
+      join(scr, "ECHOPSB.psb"),
+      "         PCB  TYPE=TP\n         PSBGEN LANG=PLI,PSBNAME=ECHOPSB\n         END\n",
+    );
+    writeFileSync(
+      join(scr, "echo.pli"),
+      `p: proc(io_ptr) options(main);
+  dcl plitdli entry;
+  dcl io_ptr pointer;
+  dcl 1 io_pcb based(io_ptr),
+        2 lterm_name char(8), 2 reserved1 char(2), 2 stat_code char(2),
+        2 msg_date fixed dec(7,0), 2 msg_time fixed dec(7,1),
+        2 msg_seq fixed bin(31), 2 mod_name char(8), 2 user_id char(8);
+  dcl 1 msg_in, 2 i_ll fixed bin(15), 2 i_zz fixed bin(15),
+        2 i_tran char(8), 2 i_a char(4);
+  dcl 1 msg_out, 2 o_ll fixed bin(15), 2 o_zz fixed bin(15), 2 o_a char(4);
+  dcl three fixed bin(31) init(3);
+  dcl four fixed bin(31) init(4);
+  dcl func_gu char(4) init('GU  ');
+  dcl func_isrt char(4) init('ISRT');
+  dcl modname char(8) init('MO      ');
+  call plitdli(three, func_gu, io_pcb, msg_in);
+  do while (io_pcb.stat_code = '  ');
+    msg_out.o_a = msg_in.i_a;
+    msg_out.o_ll = 8;
+    msg_out.o_zz = 0;
+    call plitdli(four, func_isrt, io_pcb, msg_out, modname);
+    call plitdli(three, func_gu, io_pcb, msg_in);
+  end;
+end p;
+`,
+    );
+    writeFileSync(
+      join(scr, "echo.keys"),
+      "MOD MO\nNOW 2026-10-10T00:00:00\nA=xy\nENTER\n",
+    );
+  });
+
+  afterAll(() => {
+    rmSync(scr, { recursive: true, force: true });
+  });
+
+  it("台本どおりに動かして画面を出す", () => {
+    const r = run("pli.ts", [
+      join(scr, "echo.pli"),
+      "--psb",
+      "ECHOPSB",
+      "--keys",
+      join(scr, "echo.keys"),
+    ]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("### ENTER A=xy");
+    expect(r.stdout).toContain(" 2 |         xy");
+  });
+
+  it("--psb が無ければ断る", () => {
+    const r = run("pli.ts", [join(scr, "echo.pli"), "--keys", join(scr, "echo.keys")]);
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toMatch(/--psb も必要/);
+  });
+
+  it("書式定義が無ければ断る", () => {
+    const empty = mkdtempSync(join(tmpdir(), "pli-mfs-none-"));
+    writeFileSync(join(empty, "x.pli"), "p: proc options(main); end p;\n");
+    writeFileSync(join(empty, "x.keys"), "ENTER\n");
+    const r = run("pli.ts", [
+      join(empty, "x.pli"),
+      "--psb",
+      "NOPE",
+      "--keys",
+      join(empty, "x.keys"),
+    ]);
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toMatch(/書式定義（\*\.mfs）が見つかりません/);
+    rmSync(empty, { recursive: true, force: true });
+  });
+
+  it("台本の誤りは行番号付きで断る", () => {
+    writeFileSync(join(scr, "bad.keys"), "MOD MO\nFOO\n");
+    const r = run("pli.ts", [
+      join(scr, "echo.pli"),
+      "--psb",
+      "ECHOPSB",
+      "--keys",
+      join(scr, "bad.keys"),
+    ]);
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toMatch(/bad\.keys 2 行/);
+  });
+});

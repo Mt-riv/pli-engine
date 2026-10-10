@@ -171,18 +171,74 @@ export function makeBit(v: string, length?: number): BitVal {
  * PL/I の算術定数は FIXED DECIMAL で、桁数がそのまま精度になる。
  */
 export function fixedFromLiteral(text: string): FixedVal {
-  if (/[eE]/.test(text)) {
-    // 指数表記は FLOAT として扱う
-    return makeFixed("dec", MAX_DEC, 0, BigInt(Math.trunc(Number(text))));
-  }
   const neg = text.startsWith("-");
   const body = text.replace(/^[+-]/, "");
-  const dot = body.indexOf(".");
-  const digits = body.replace(".", "");
-  const q = dot < 0 ? 0 : body.length - dot - 1;
-  const p = Math.max(digits.length, 1);
-  const v = BigInt(digits === "" ? "0" : digits);
+  // 指数の部分。PL/I の指数付き定数は浮動小数点定数なので、
+  // ふつうはここへ来ない（`interp.ts` が FLOAT の値にする）。
+  // それでも**小数点の位置をずらして**正しく持つ。以前は
+  // `BigInt(Math.trunc(Number(text)))` で整数に切っていて、
+  // `2.5e-8` が 0 になり `1e400` では生の JS 例外が漏れていた
+  const eAt = body.search(/[eE]/);
+  const exp = eAt < 0 ? 0 : Number(body.slice(eAt + 1));
+  const mant = eAt < 0 ? body : body.slice(0, eAt);
+  const dot = mant.indexOf(".");
+  const digits = mant.replace(".", "");
+  // 精度は**書かれた桁数**（PL/I の規定）。`0.1` は 2 桁なので p=2。
+  // ここを値の桁数にすると算術の精度規則が変わり、出力幅がずれる
+  // （golden の mixed-radix が `0.06` の幅で固定している）
+  let p = Math.max(digits.length, 1);
+  let q = (dot < 0 ? 0 : mant.length - dot - 1) - exp;
+  let v = BigInt(digits === "" ? "0" : digits);
+  if (q < 0) {
+    // 小数点が右へ出る分は整数側へ寄せる
+    v *= ipow(10n, -q);
+    p += -q;
+    q = 0;
+  } else {
+    p = Math.max(p, q);
+  }
   return makeFixed("dec", p, q, neg ? -v : v);
+}
+
+/**
+ * FLOAT の値を FIXED DECIMAL にする。
+ *
+ * `fixedFromLiteral(String(v))` を通してはいけない。JavaScript は
+ * `|x| < 1e-6` と `|x| >= 1e21` を指数表記で文字列化するので、
+ * 以前はその経路で**桁がまるごと消えて 0 になっていた**
+ * （`a = 0.001` のとき `a*a*a` の表示は `1.00000E-0009` なのに
+ * 比較では 0 になり、`a*a*a > 0` が偽になった）。
+ *
+ * 仮数と指数を分けて、10 進の尺度付き整数として組む。
+ * 10 進の最大精度（15 桁）に収まらない小さな値は 0 方向へ切り捨てる
+ * （FIXED への代入と同じ向き）。呼ぶ前に `Number.isFinite` を確かめること。
+ */
+export function fixedFromFloat(x: number): FixedVal {
+  if (x === 0) return makeFixed("dec", 1, 0, 0n);
+  const [mant, expText] = x.toExponential(MAX_DEC - 1).split("e");
+  const exp = Number(expText);
+  const neg = mant!.startsWith("-");
+  // 仮数の数字だけ（MAX_DEC 桁）。末尾の 0 は尺度を無駄に増やすので落とす
+  const digits = mant!.replace(/^[+-]/, "").replace(".", "").replace(/0+$/, "") || "0";
+  // digits は 10^(digits.length - 1) の位から始まる整数
+  let q = digits.length - 1 - exp;
+  let v = BigInt(digits);
+  if (q < 0) {
+    v *= ipow(10n, -q);
+    q = 0;
+  } else if (q > MAX_DEC) {
+    // FIXED DEC(15,15) より細かい桁は持てない
+    v = truncateScale(v, q - MAX_DEC);
+    q = MAX_DEC;
+  }
+  const p = Math.max(v.toString().length, q, 1);
+  return makeFixed("dec", p, q, neg ? -v : v);
+}
+
+/** 10 進で n 桁ぶん 0 方向へ切り捨てる。 */
+function truncateScale(v: bigint, n: number): bigint {
+  const div = ipow(10n, n);
+  return v < 0n ? -(-v / div) : v / div;
 }
 
 /** 尺度を newQ に合わせる（切り捨て）。 */
@@ -281,6 +337,59 @@ export function mul(a0: FixedVal, b0: FixedVal): FixedVal {
     v = v < 0n ? -(-v / d) : v / d;
   }
   return checkOverflow(makeFixed(a.base, p, q, v));
+}
+
+/**
+ * `MOD(a,b)`。
+ *
+ * 両辺の尺度を揃えて BigInt の剰余で計算する。
+ * 結果の精度は PL/I の規定どおり第 2 引数に基づく
+ *   p = min(N, p2 - q2 + max(q1,q2)), q = max(q1,q2)
+ * （剰余は必ず第 2 引数より小さいため）。
+ * `mod(17,5)` はフィールド幅 4（= p+3 で p=1）で出力され、
+ * 第 2 引数 5 の精度 DEC(1,0) に由来することが確認できる。
+ *
+ * **他の演算と同じく `unifyBase` を通す。** 以前は `interp.ts` に
+ * 独自実装があり、DECIMAL の辺を 2 進へ直さないまま尺度だけ 2 進として
+ * 扱っていたので、`mod(i, 0.5)`（i は FIXED BIN）が 1.0、
+ * `mod(j, 2.5)` が 7.0 になっていた（どちらも正解は 0.0 と 2.0）。
+ */
+export function mod(a0: FixedVal, b0: FixedVal): FixedVal {
+  const [a, b] = unifyBase(a0, b0);
+  if (b.v === 0n) throw new ZeroDivide();
+  const q = Math.max(a.q, b.q);
+  const N = maxPrecision(a.base);
+  const p = Math.min(N, Math.max(1, b.p - b.q + q));
+  const va = rescale(a, q);
+  const vb = rescale(b, q);
+  let rem = va % vb;
+  // PL/I の MOD は第 2 引数と同じ符号（数学的な剰余）
+  if (rem !== 0n && (rem < 0n) !== (vb < 0n)) rem += vb;
+  return makeFixed(a.base, p, q, rem);
+}
+
+/**
+ * 商を指定の精度で求める（`DIVIDE(a,b,p,q)`）。
+ *
+ * `div` を通してはいけない。`div` は既定の除算精度
+ * （q = N - ((p1-q1) + q2)）で先に商を作るので、被除数の精度が広いと
+ * q=0 の整数除算になり、あとで桁を広げても情報は戻らない
+ * （`dcl a fixed dec(15,0) init(2); divide(a,4,5,4)` が 0.0000 になっていた）。
+ */
+export function divideTo(a0: FixedVal, b0: FixedVal, p: number, q: number): FixedVal {
+  const [a, b] = unifyBase(a0, b0);
+  if (b.v === 0n) throw new ZeroDivide();
+  const r = radix(a.base);
+  const shift = q + b.q - a.q;
+  let num = a.v;
+  let den = b.v;
+  if (shift >= 0) num *= ipow(r, shift);
+  else den *= ipow(r, -shift);
+  const negative = (num < 0n) !== (den < 0n);
+  const an = num < 0n ? -num : num;
+  const ad = den < 0n ? -den : den;
+  const v = an / ad;
+  return checkOverflow(makeFixed(a.base, p, q, negative ? -v : v));
 }
 
 export function div(a0: FixedVal, b0: FixedVal): FixedVal {
@@ -418,8 +527,10 @@ export function render(x: Value): string {
     case "bit":
       return x.v;
     case "float": {
-      // FLOAT DEC(p) は仮数 p 桁 + 4桁指数（' 3.50000E+0000' の形）
-      const digits = Math.max(1, x.p - 1);
+      // FLOAT DEC(p) は仮数 p 桁 + 4桁指数（' 3.50000E+0000' の形）。
+      // `toExponential` は 0..100 しか受けないので、ここで収める
+      // （超えると生の RangeError が診断になる）
+      const digits = Math.min(100, Math.max(1, x.p - 1));
       const s = x.v.toExponential(digits);
       const m = /^(-?[\d.]+)e([+-])(\d+)$/.exec(s);
       if (!m) return s;

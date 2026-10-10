@@ -70,7 +70,10 @@ export class ListWriter {
   private readonly lineSize: number;
   private readonly print: boolean;
   private readonly pageSize: number;
-  /** 今のページに書いた行数。ENDPAGE の判定に使う。 */
+  /**
+   * 今のページに書いた行数。`LINENO` 組込関数と `LINE(n)` が使う。
+   * （`ENDPAGE` 条件はこの処理系では起こさない。`engine/README.md` 参照）
+   */
   private linesOnPage = 0;
   /**
    * 確定済みの行の合計文字数（改行を含む）。
@@ -121,11 +124,6 @@ export class ListWriter {
     this.lines.push("\f");
     this.flushed += 2;
     this.linesOnPage = 0;
-  }
-
-  /** ページがあふれたか（ENDPAGE 条件の判定）。 */
-  pageOverflow(): boolean {
-    return this.print && this.linesOnPage >= this.pageSize;
   }
 
   /**
@@ -234,11 +232,6 @@ export class ListWriter {
     if (this.cur !== "") this.flush();
   }
 
-  /** 何も書かれていないか。ファイルを書き戻すかの判定に使う。 */
-  isEmpty(): boolean {
-    return this.lines.length === 0 && this.cur === "";
-  }
-
   /** これまでに書いた文字数。出力上限の判定に使う。 */
   length(): number {
     return this.flushed + this.cur.length;
@@ -247,6 +240,10 @@ export class ListWriter {
   /** 組み立てた全文。 */
   text(): string {
     if (this.lines.length === 0 && this.cur === "") return "";
-    return [...this.lines, this.cur].join("\n");
+    // spread を使うと、行数が多いときに `RangeError: Invalid array length`
+    // が出る。`runProgram` は「例外を投げず必ず結果オブジェクトを返す」と
+    // 約束しているので、ここで落ちてはいけない
+    if (this.lines.length === 0) return this.cur;
+    return `${this.lines.join("\n")}\n${this.cur}`;
   }
 }

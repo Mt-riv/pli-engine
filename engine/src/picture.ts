@@ -123,13 +123,10 @@ export function parsePicture(source: string): PictureSpec {
     }
 
     if (c === "Z" || c === "*") {
-      if (seenV) {
-        // 小数部のゼロ抑制は値全体がゼロのときだけ効く。
-        // 桁としては通常の数字と同じに扱う
-        positions.push({ kind: "digit", suppress: c === "Z" ? "blank" : "star" });
-      } else {
-        positions.push({ kind: "digit", suppress: c === "Z" ? "blank" : "star" });
-      }
+      // 小数部（`V` の後ろ）のゼロ抑制も、桁としては整数部と同じに扱う。
+      // 抑制が効くかどうかは下の `suppressUntil` が位置で決めるので、
+      // ここで `V` の前後を分ける必要はない
+      positions.push({ kind: "digit", suppress: c === "Z" ? "blank" : "star" });
       if (c === "*") fill = "*";
       countDigit();
       i++;
@@ -258,12 +255,10 @@ export function editPicture(spec: PictureSpec, value: FixedVal): string {
   let di = 0;
   let firstSignificant = -1; // 有効数字が現れた最初の位置
   let lastIntegerDigitPos = -1;
-  let digitIndexAt: number[] = [];
 
   spec.positions.forEach((pos, idx) => {
     if (pos.kind !== "digit") {
       out.push(null);
-      digitIndexAt.push(-1);
       return;
     }
     const d = digits[di]!;
@@ -271,13 +266,32 @@ export function editPicture(spec: PictureSpec, value: FixedVal): string {
     if (isInteger) lastIntegerDigitPos = idx;
     if (firstSignificant < 0 && d !== "0" && isInteger) firstSignificant = idx;
     out.push(d);
-    digitIndexAt.push(di);
     di++;
   });
 
-  // 整数部が全部ゼロなら、最後の整数桁までを抑制の対象にする
+  /*
+   * 値が 0 で、**桁がすべて抑制できる**（`9` が 1 つも無い）なら、
+   * 小数点と挿入文字まで含めて欄全体が詰め文字になる。実機で確認:
+   *
+   *   PIC'ZZV.ZZ'  に 0   → "     "（小数点も消える）
+   *   PIC'**V.**'  に 0   → "*****"
+   *   PIC'ZZ,ZZZ'  に 0   → "      "（カンマも消える）
+   *   PIC'ZZV.Z9'  に 0   → "  .00"（9 があるので欄全体にはならない）
+   *   PIC'ZZ9V.ZZ' に 0   → "  0.00"
+   *   PIC'ZZV.ZZ'  に 0.05 → "  .05"（値が 0 でないので整数部だけ）
+   *
+   * 以前は整数部までしか抑制していなかったので `  .00` になっていた。
+   */
+  const allZero = digits.split("").every((d) => d === "0");
+  const allSuppressible = spec.positions.every(
+    (pos) => pos.kind !== "digit" || pos.suppress !== "none",
+  );
   const suppressUntil =
-    firstSignificant >= 0 ? firstSignificant : lastIntegerDigitPos + 1;
+    allZero && allSuppressible
+      ? spec.positions.length
+      : firstSignificant >= 0
+        ? firstSignificant
+        : lastIntegerDigitPos + 1;
 
   // 抑制できない桁（9）があればそこで抑制を打ち切る
   let effectiveUntil = 0;
