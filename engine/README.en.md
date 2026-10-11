@@ -390,21 +390,21 @@ is not visible from the source, so the linter rule `on-never-raised` reports
 it (it does not report one you raise yourself with `SIGNAL`).
 
 **`ENDPAGE` is not raised, but its implicit action, the page break, happens.**
-Losing the rule "Implicit action: A new page is started" (p.409) would make a
+Losing that implicit action (p.409) would make a
 report written with `PAGESIZE` come out **silently different in shape**
 (fixed 2026-10-11).
 
 **Conditions chain to `ERROR`.** A normal return from that condition's ON-unit
-raises `ERROR` (p.418/421, "Normal return: The ERROR condition is raised").
+raises `ERROR` (p.418/421: a normal return from that condition raises `ERROR`).
 Using `ON ERROR` as the common clean-up is the main use the reference calls out
 (p.395), so writing a per-condition ON-unit must not make `ON ERROR` be skipped.
 With no ON-unit anywhere, the condition name alone would not say what happened,
 so it stays the ordinary run-time error it was.
 
 **A condition raised by `SIGNAL` returns to the statement after it** (except
-`ERROR`; p.403, "If a condition (except the ERROR condition) has been raised by
-the SIGNAL statement, the normal return is always to the statement immediately
-following SIGNAL"). The deliberate difference below is about computational
+`ERROR`; p.403 states that, for a condition raised by `SIGNAL`, the normal
+return always goes to the statement immediately after it). The deliberate
+difference below is about computational
 conditions raised **by an operation**; a `SIGNAL` has no operation to retry.
 
 `ON ... SYSTEM;` goes back to the default action (dropping the ON units set so
@@ -468,6 +468,25 @@ They come down to ten clusters.
 changed too: `MOD` with a negative divisor (see "Where the real compiler was
 broken"), a miscopied precision formula for `CEIL` / `FLOOR` / `TRUNC`, and the
 grounds for "the standard retries and loops forever" (see below).
+
+### About the source
+
+The comparison was made against the **IBM Enterprise PL/I for z/OS 6.2 Language
+Reference** (SC27-8940, First Edition June 2025, (C) Copyright IBM Corp. 1999,
+2025).
+
+**No text from that publication is kept in this repository.** What is kept is
+the page numbers of the rules and summaries of them written in my own words.
+IBM allows its publications to be reproduced for personal, noncommercial use;
+distributing them, displaying them publicly or making derivative works needs
+IBM's consent (see the Terms of use on ibm.com and the Product legal notices of
+each publication). A public repository counts as distribution, so the rules are
+written as summaries rather than quoted. The **rules themselves** (that `MOD`
+returns a nonnegative value, and so on) are not copyrightable, so implementing
+them and summarising them is fine.
+
+IBM, PL/I, z/OS and IMS are trademarks of IBM. This implementation is not an IBM
+product; it was written independently of IBM.
 
 **The evaluator and the linter held different rules in three places** (a
 trailing `DECLARE`, name resolution in an ON-unit, and an unqualified structure
@@ -559,9 +578,9 @@ agree, so it is enough not to put the broken combinations into the goldens
 
 **The note about `MOD` with a negative divisor is withdrawn.** It used to say
 that the real compiler returning 1 for `mod(7,-3)` was wrong (that it should be
--2), but **the language reference had been misread**. The rule is "MOD returns
-the smallest **nonnegative** value, R, such that (x - R)/y = n" (p.552), and the
-examples are `mod(+10,-8)=2` and `mod(-10,-8)=6` (p.553). `(7-1)/(-3) = -2` is an
+-2), but **the language reference had been misread**. The rule is that `MOD` returns the smallest **nonnegative** R for which
+`(x - R)/y` is an integer (p.552), and the examples are `mod(+10,-8)=2` and
+`mod(-10,-8)=6` (p.553). `(7-1)/(-3) = -2` is an
 integer, so **1 is right and the real compiler agreed**. "The result has the sign
 of the second argument" is the definition of another dialect. Fixed 2026-10-11.
 

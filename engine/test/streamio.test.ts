@@ -322,7 +322,7 @@ end p;
   });
 
   /**
-   * 「Opening a file that is already open does not affect the file」
+   * すでに開いているファイルの OPEN は、そのファイルに影響しない
    * （IBM 解説書 p.338）。
    *
    * 以前はここを誤りにしていた。使う前に開く補助手続きを置く書き方

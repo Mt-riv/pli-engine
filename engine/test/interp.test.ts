@@ -930,9 +930,8 @@ describe("16 進定数", () => {
 describe("PICTURE の小数点", () => {
   /**
    * 尺度を決めるのは `V` と `F` だけ（IBM 解説書 p.332/334）。
-   * 「They [insertion characters] never cause decimal point or decimal
-   * comma alignment … Decimal alignment is controlled by the picture
-   * characters V and F」。`V` が無ければ**右端に V があるものとして**
+   * 挿入文字（`.` `,` `/` `B`）は小数点の位置を決めない。
+   * `V` が無ければ**右端に V があるものとして**
    * 扱うので、`ZZ9.99` は整数 5 桁を表し、12.34 は 12 に丸められて
    * `  0.12` と出る。小数を出したいなら `ZZ9V.99` と書く。
    *
@@ -1305,9 +1304,8 @@ end m;`;
 
   /**
    * `SIGNAL` で起こした条件は、ON 単位のあと**次の文へ復帰する**
-   * （IBM 解説書 p.403「If a condition (except the ERROR condition) has
-   * been raised by the SIGNAL statement, the normal return is always to
-   * the statement immediately following SIGNAL」）。
+   * （IBM 解説書 p.403。ERROR を除き、`SIGNAL` で起こした条件の
+   * 正常復帰は必ず `SIGNAL` の次の文へ戻る）。
    *
    * 以前は計算条件だけ復帰しない形に固定していた。README の意図的な
    * 非互換は「**演算で**起きた計算条件の ON 単位から復帰しても演算を
