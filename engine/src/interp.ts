@@ -183,8 +183,8 @@ const RESUMABLE = new Set(["ZERODIVIDE", "FIXEDOVERFLOW", "OVERFLOW", "UNDERFLOW
 /**
  * `SIGNAL` で起こしたとき、ON 単位が無くても続行する条件。
  *
- * 規定の各条件の「Implicit action」が「Execution continues」や
- * 「A new page is started」のように**終わらせない**ものを挙げる
+ * 規定の各条件の暗黙動作が実行を続けるや
+ * 暗黙動作は改ページのように**終わらせない**ものを挙げる
  * （p.403-420）。ここに無い条件は暗黙動作で ERROR へ連鎖する。
  */
 const RESUME_WITHOUT_UNIT: ReadonlySet<string> = new Set([
@@ -1626,8 +1626,7 @@ export class Interpreter {
           throw e;
         }
         // **ここで止めない。** その条件の ON 単位から正常復帰したら
-        // ERROR 条件が起きる（規定 p.418/421 の「Normal return: The ERROR
-        // condition is raised」）。止めると、共通の後始末を `ON ERROR` に
+        // ERROR 条件が起きる（規定 p.418/421 の正常復帰で ERROR 条件が起きる）。止めると、共通の後始末を `ON ERROR` に
         // 置く定石が、条件ごとの ON 単位を書いた途端に飛ばされる
       }
     } finally {
@@ -1652,7 +1651,7 @@ export class Interpreter {
    * 字句解析は `'abc'b` を定数の段で断っているので、変換の側も断る。
    */
   /**
-   * 値を BIT 列にする（規定 p.121 の「All non-BIT data is converted to BIT」）。
+   * 値を BIT 列にする（規定 p.121 のBIT でないデータは BIT へ変換される）。
    * 文字は 0/1 だけ、算術は精度から決まる中間ビット列。
    */
   private toBitString(v: Value, line: number): string {
@@ -1681,10 +1680,7 @@ export class Interpreter {
    * 条件を起こす。ただし ON 単位がどこにも無ければ、
    * 条件名だけでは何が起きたか分からないので**意味の分かる誤り**にする。
    *
-   * `ON ERROR` だけが置かれている場合も通す（規定 p.395「The implicit
-   * action for many conditions is to raise the ERROR condition. This
-   * provides a common condition that can be used to check for a number of
-   * different conditions」）。通さないと、共通の後始末を `ON ERROR` に
+   * `ON ERROR` だけが置かれている場合も通す（規定 p.395。多くの条件の暗黙動作は ERROR 条件を起こすことで、いろいろな条件をまとめて受けるのに使える）。通さないと、共通の後始末を `ON ERROR` に
    * 置く定石が黙って飛ばされる。
    */
   private raiseChecked(condition: string, message: string, line: number): never {
@@ -1835,8 +1831,7 @@ export class Interpreter {
           this.execBlockScoped(s.body, new Scope(scope));
         } catch (e) {
           // `LEAVE` / `ITERATE` はブロックの境界を越えない
-          // （規定 p.280「The LEAVE statement and the referenced or implied
-          // DO statement must not be in different blocks」）。
+          // （規定 p.280。LEAVE と、対応する（または省略された）DO 文は、別のブロックにあってはならない）。
           // 越えさせると、ブロックの中の `leave;` が外のループを
           // 誤りも出さずに抜ける
           if (e instanceof LeaveSignal || e instanceof IterateSignal) {
@@ -1888,8 +1883,7 @@ export class Interpreter {
           if (f.attrs.title !== undefined) {
             attrs.title = this.asText(this.eval(f.attrs.title, scope, s.line)).trim();
           }
-          // 「Opening a file that is already open does not affect the
-          // file」（規定 p.338）。誤りにすると、使う前に開く補助手続きを
+          // すでに開いているファイルの OPEN はそのファイルに影響しない（規定 p.338）。誤りにすると、使う前に開く補助手続きを
           // 置く書き方が通らない
           if (this.files.isOpen(f.name)) continue;
           this.openForUse(f.name, attrs, s.line);
@@ -1982,10 +1976,7 @@ export class Interpreter {
       case "signal": {
         /*
          * `SIGNAL` で起こした条件は、ON 単位を実行したあと
-         * **次の文へ復帰する**（規定 p.403「If a condition (except the
-         * ERROR condition) has been raised by the SIGNAL statement, the
-         * normal return is always to the statement immediately following
-         * SIGNAL」）。
+         * **次の文へ復帰する**（規定 p.403。ERROR を除き、SIGNAL で起こした条件の正常復帰は必ず SIGNAL の次の文へ戻る）。
          *
          * 以前は ERROR 以外も `raise` を通していたので、ON 単位を 1 回
          * 走らせてプログラムが終わっていた。Linter が「この処理系は
@@ -2009,7 +2000,7 @@ export class Interpreter {
             return;
           }
           // ON 単位が無い場合は暗黙動作。続行する条件（規定 p.403-420 で
-          // 「Execution continues」と書かれているもの）はそのまま進む
+          // 実行を続けると書かれているもの）はそのまま進む
           if (RESUME_WITHOUT_UNIT.has(s.condition)) return;
         }
         this.raise(
@@ -2021,8 +2012,7 @@ export class Interpreter {
       }
       case "return": {
         if (s.value === undefined) throw new ReturnSignal();
-        // 「A RETURN statement with an expression is not valid in a
-        // procedure without the RETURNS option」（規定 p.176）。
+        // RETURNS を書いていない手続きでは RETURN に式を書けない（規定 p.176）。
         // 黙って値を捨てると、返すつもりで書いた `return(x);` が消える
         if (scope.returns === undefined) {
           throw new RuntimeError(
@@ -2282,7 +2272,7 @@ export class Interpreter {
         this.step();
         this.assign(target, cur, scope, s.line);
         // UPTHRU / DOWNTHRU は本体の後に判定するので、最初の 1 回は
-        // 上限を見ない（規定 p.265「The loop is executed at least once」）
+        // 上限を見ない（規定 p.265。本体は少なくとも 1 回実行される）
         if (limit !== undefined && !(spec.thru === true && first)) {
           // 読み戻しは `evalRef`。`readVar` は DEFINED / BASED の別名を
           // 解決しないので、`assign` で書いた先と読む先が食い違い、
@@ -2649,8 +2639,7 @@ export class Interpreter {
         }
         const n = Number(render(asFixed(v, line)));
         const text = render({ t: "float", base: "dec", p, v: n });
-        // 「If the field width is such that significant digits or the sign
-        // are lost, the SIZE condition is raised」（規定 p.323）。
+        // 幅のせいで有効桁や符号が失われるときは SIZE 条件（規定 p.323）。
         // 右から切ると仮数が丸ごと消えて `E+0004` という数値として
         // 読めない文字列が残る（F 書式の桁あふれとは規定が違う）
         if (text.length > width) {
@@ -2756,8 +2745,7 @@ export class Interpreter {
      * 読めた値をその場で代入する。
      *
      * **データリストの読み終わりまで遅らせない**（規定 p.311）。
-     * 「A value read into a variable can be used in a format item that is
-     * associated with another variable later in the data list」。
+     * 読み込んだ値を、データリストの後ろの項目の書式に使える。
      * 遅らせると `get edit(m,s)(f(2),a(m))` の `a(m)` が 0 を見て、
      * 「幅省略の A」＝行の残り全部になる。
      */
@@ -2894,7 +2882,7 @@ export class Interpreter {
   private emit(v: Value, w: ListWriter): void {
     switch (v.t) {
       case "pointer":
-        // 「the data type might also be POINTER」（規定 p.302）。
+        // PUT ではポインタも書ける（規定 p.302）。
         // 枝が無いと項目が黙って消え、書いた行が出ない理由が分からない
         w.putChar(render(v));
         return;
@@ -2984,8 +2972,7 @@ export class Interpreter {
     }
 
     if (!s.from) {
-      // 「REWRITE without FROM … has no effect on the record in the data
-      // set」（規定 p.293。`READ INTO` で読んだ場合）。誤りにすると
+      // FROM の無い REWRITE はレコードに影響しない（規定 p.293。`READ INTO` で読んだ場合）。誤りにすると
       // `READ SET` + 更新 + `REWRITE` の形が書けない
       if (s.op === "rewrite") return;
       throw new RuntimeError(m`${s.op.toUpperCase()} には FROM が必要です`, s.line);
@@ -3604,8 +3591,7 @@ export class Interpreter {
       return this.dataList([e], scope, line);
     }
     // 組込関数の配列引数（規定 p.430）。
-    // 「Specifying an array argument is equivalent to placing the function
-    // reference ... in a do-group」。要素ごとに呼んで配列を返す。
+    // 配列の引数を書くことは、関数参照を do 群に入れることと同じ。要素ごとに呼んで配列を返す。
     // `ADDR` と配列処理関数（`DIM` / `LBOUND` / `HBOUND`）はスカラを返す
     if (e.kind === "ref" && e.subscripts.length > 0) {
       const key = e.name.toUpperCase();
@@ -3861,9 +3847,7 @@ export class Interpreter {
   /**
    * 条件式を評価する。`&` と `|` は**短絡する**（規定 p.278-279）。
    *
-   * 「If the IF expression consists of a logical OR of 2 expressions and
-   * the first of these expressions is true, the second expression will not
-   * be evaluated」。規定が挙げている例そのものが
+   * IF の式が 2 つの式の論理和で、左が真なら右は評価されない。規定が挙げている例そのものが
    * `if P = sysnull() | P->BX = 0 then` で、短絡しないと NULL をたどる。
    *
    * 短絡するのは**両辺が条件（BIT(1) になる式）のとき**だけ。
@@ -3992,10 +3976,8 @@ export class Interpreter {
    * `CEIL` / `FLOOR` / `TRUNC` に `(y/z)` の形の引数が来たときの特例
    * （規定 p.473/499/620）。
    *
-   * 「If the expression x has the form (y/z) where y is an unscaled
-   * FIXED BIN expression and z is an unscaled FIXED expression, then
-   * CEIL(x) will be evaluated by computing the integral quotient and then
-   * rounding it up by one if ... the remainder of (y/z) is not zero」。
+   * 引数が (y/z) の形で、y が尺度なしの FIXED BIN、z が尺度なしの FIXED なら、
+   * 整数の商を求めてから、商が非負で剰余が 0 でなければ 1 繰り上げる（FLOOR は繰り下げる）。
    *
    * `FIXED BIN` の除算は整数なので、`/` を評価した時点で剰余が消える。
    * 規定がこの特例を置いているのはそのためで、無いと
@@ -4091,8 +4073,7 @@ export class Interpreter {
          * MOD(17,5) が 0 になってしまう。整数剰余として直接計算する
          * （`value.ts` の `mod`。他の演算と同じく基数を揃える）。
          *
-         * 結果は**非負の最小値**（規定 p.552「MOD returns the smallest
-         * nonnegative value, R, such that (x - R)/y = n」）。規定の例は
+         * 結果は**非負の最小値**（規定 p.552。MOD は (x - R)/y が整数になる非負の最小値 R を返す）。規定の例は
          * `mod(+10,-8)=2` / `mod(-10,-8)=6`（p.553）。
          * 除数の絶対値で剰余を取れば、その定義になる。
          * 「結果は第 2 引数と同じ符号」は他方言の定義で、
@@ -4285,7 +4266,7 @@ export class Interpreter {
         if (b.v === 0n) this.raise("ZERODIVIDE", scope, line);
         const p = int(2);
         const q = args.length > 3 ? int(3) : 0;
-        // 「if not omitted, it must be nonnegative」（規定 p.487）。
+        // 省略しないなら 0 以上でなければならない（規定 p.487）。
         // 負を通すと結果が黙って 0 になる
         if (q < 0) {
           throw new RuntimeError(m`DIVIDE の尺度 ${q} は 0 以上でなければなりません`, line);
@@ -4359,7 +4340,7 @@ export class Interpreter {
       }
       case "REPEAT": {
         const s = tx(0);
-        // 「If y is zero or negative, the string x is returned」（規定 p.592）。
+        // 第 2 引数が 0 以下なら元の文字列を返す（規定 p.592）。
         // 0 と負を同じく「1 個ぶん」にする（以前は負で空文字になり、
         // 計算で出した回数が負になった場面で文字列が黙って消えていた）
         if (int(1) <= 0) return makeChar(s, undefined, true);
@@ -4814,7 +4795,7 @@ const BUILTIN_ARITY: Readonly<Record<string, readonly [number, number]>> = {
 
 /**
  * 配列を渡してもスカラを返す組込関数（規定 p.430）。
- * 「the array handling functions and ADDR return a scalar」。
+ * 配列処理関数と ADDR はスカラを返す。
  */
 const AGGREGATE_SCALAR_BUILTINS: ReadonlySet<string> = new Set([
   "ADDR",

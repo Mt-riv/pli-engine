@@ -535,9 +535,7 @@ function toDecimal(x: FixedVal): FixedVal {
 /**
  * FLOAT の 10 進の有効桁数。
  *
- * 「FLOAT BINARY (p1): The floating-point binary precision (p1) first
- * converts to the equivalent floating-point decimal precision (p), where
- * p=CEIL(p1/3.32)」（規定 p.136）。換算しないと `FLOAT BIN(21)` が
+ * FLOAT BINARY(p1) は、まず 10 進の精度 CEIL(p1/3.32) へ換算してから FLOAT DECIMAL と同じ規則で扱う（規定 p.136）。換算しないと `FLOAT BIN(21)` が
  * 10 進 21 桁を出し、型が持てない桁まで見せることになる。
  */
 export function floatDecDigits(x: FloatVal): number {

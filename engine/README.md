@@ -354,22 +354,19 @@ IBM の規定では `FIXEDOVERFLOW` / `SIZE` の正常復帰は「演算の**直
 （`SIGNAL` で明示的に起こしているなら指摘しない）。
 
 **`ENDPAGE` は起こさないが、暗黙動作の改ページは行う。** 規定の
-「Implicit action: A new page is started」（p.409）が落ちていると、
+暗黙動作（p.409）が落ちていると、
 `PAGESIZE` を書いた帳票が**見た目だけ静かに違う**出力になるため
 （2026-10-11 に直した）。
 
 **条件は `ERROR` へ連鎖する。** その条件の ON 単位から正常復帰したら
-`ERROR` 条件が起きる（規定 p.418/421 の「Normal return: The ERROR
-condition is raised」）。`ON ERROR` を共通の後始末に使うのは規定が明記した
+`ERROR` 条件が起きる（規定 p.418/421 の正常復帰で ERROR 条件が起きる）。`ON ERROR` を共通の後始末に使うのは規定が明記した
 主要な使い方（p.395）なので、条件ごとの ON 単位を書いた途端に
 `ON ERROR` が飛ばされてはいけない。ON 単位がどこにも無ければ、
 条件名だけでは何が起きたか分からないので従来どおり
 意味の分かる実行時誤り（「添字が範囲外です」など）にする。
 
 **`SIGNAL` で起こした条件は、ON 単位のあと次の文へ復帰する**
-（`ERROR` を除く。規定 p.403「If a condition (except the ERROR condition)
-has been raised by the SIGNAL statement, the normal return is always to the
-statement immediately following SIGNAL」）。下の「実機と違えている点」は
+（`ERROR` を除く。規定 p.403。ERROR を除き、SIGNAL で起こした条件の正常復帰は必ず SIGNAL の次の文へ戻る）。下の「実機と違えている点」は
 **演算で**起きた計算条件の話で、`SIGNAL` には再試行する演算が無い。
 
 `ON ... SYSTEM;` は既定動作へ戻す（それまでに置いた ON 単位の解除）。
@@ -430,6 +427,23 @@ statement immediately following SIGNAL」）。下の「実機と違えている
 `MOD` の除数が負のとき（下の「実機の側が壊れていたもの」参照）、
 `CEIL` / `FLOOR` / `TRUNC` の精度式の写し違い、
 「規定では再試行して無限ループになる」という根拠の誤り（下の節）。
+
+### 出典の扱い
+
+突き合わせに使ったのは **IBM Enterprise PL/I for z/OS 6.2 Language Reference**
+（SC27-8940、First Edition 2025 年 6 月、© Copyright IBM Corp. 1999, 2025）。
+
+**このリポジトリに原本の文章は置いていない。** 残してあるのは
+規定のページ番号と、規定の内容を自分の言葉で書いた要約だけである。
+IBM の刊行物は「個人の非商業利用のための複製」までが許されていて、
+公開の配布・展示と二次的著作物には IBM の同意が要る
+（ibm.com の Terms of use と各刊行物の Product legal notices）。
+公開リポジトリは配布に当たるので、原文は引用せずに要約で書く方針にした。
+言語の**規則そのもの**（`MOD` が非負を返す、など）は著作物ではないので、
+実装と要約には差し支えない。
+
+IBM、PL/I、z/OS、IMS は IBM の商標。この処理系は IBM の製品ではなく、
+IBM とは無関係に書いた独立の実装である。
 
 **評価器と Linter が別の規則を持っていた**ことが 3 箇所あった
 （後置 `DECLARE`・ON 単位の名前解決・修飾を省略した構造体の項目）。
@@ -512,8 +526,7 @@ golden の `char-compare` / `pic-zero` / `bin-scale` / `trunc-precision` /
 
 **`MOD` の除数が負の件は取り消した。** 以前ここに「実機の `mod(7,-3)` が 1
 なのは誤り（-2 のはず）」と書いていたが、**解説書を読み違えていた**。
-規定は「MOD returns the smallest **nonnegative** value, R, such that
-(x - R)/y = n」（p.552）で、例も `mod(+10,-8)=2` / `mod(-10,-8)=6`（p.553）。
+規定はMOD は (x - R)/y が整数になる**非負の最小値** R を返す（p.552）で、例も `mod(+10,-8)=2` / `mod(-10,-8)=6`（p.553）。
 `(7-1)/(-3) = -2` は整数なので **1 が正しく、実機が合っていた**。
 「結果は第 2 引数と同じ符号」は他方言の定義である。2026-10-11 に直した。
 

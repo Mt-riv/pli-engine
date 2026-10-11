@@ -52,10 +52,8 @@ function refused(body: string): string {
 /**
  * 反復 DO の `BY` だけの指定（p.266）。
  *
- * 「If `TO exp2` is omitted from a specification, and if `BY exp3` is
- * specified, repetitive execution continues until it is terminated by
- * the WHILE or UNTIL option」。手順の記述（p.268）も
- * 「If the TO, BY, and REPEAT options are all absent, leave the do-group」。
+ * TO を省いて BY を書いた指定は、WHILE または UNTIL が止めるまで反復を続ける。手順の記述（p.268）も
+ * TO・BY・REPEAT のどれも無ければ do 群を抜ける。
  *
  * `REPEAT` を足したときに「TO も REPEAT も無ければ単一値」と書いたため、
  * `BY` だけの指定が単一値に落ちて**本体を 1 回実行して黙って終わっていた**。
@@ -95,9 +93,7 @@ describe("DO の BY だけの指定（p.266）", () => {
 /**
  * 引数の束縛（p.161-162）。
  *
- * 「A reference to a parameter in a procedure is a reference to the
- * corresponding argument. Any change to the value of a parameter is
- * actually a change to the value of the corresponding argument」（p.161）。
+ * 仮引数への参照は実引数への参照で、仮引数の値を変えることは実引数の値を変えること（p.161）。
  * ダミー引数（値渡し）になるのは**定数・演算子や括弧や関数参照を含む式・
  * 属性が違う場合**だけ（p.162）。添字付きの参照はどれにも当たらない。
  */
@@ -180,8 +176,7 @@ describe("引数は参照渡し（p.161）", () => {
 /**
  * 組込関数の配列引数（p.430）。
  *
- * 「Specifying an array argument is equivalent to placing the function
- * reference ... in a do-group」。`ADDR` と配列処理関数（`DIM` / `LBOUND` /
+ * 配列の引数を書くことは、関数参照を do 群に入れることと同じ。`ADDR` と配列処理関数（`DIM` / `LBOUND` /
  * `HBOUND`）だけはスカラを返す。
  */
 describe("組込関数の配列引数（p.430）", () => {
@@ -213,7 +208,7 @@ describe("組込関数の配列引数（p.430）", () => {
   });
 });
 
-/** ADDR（p.457）。「the returned value takes into account subscripting」。 */
+/** ADDR（p.457）。返る値は添字と修飾を反映する。 */
 describe("ADDR（p.457）", () => {
   it("添字を反映する", () => {
     expect(
@@ -276,7 +271,7 @@ describe("ビット列の比較は短い側を '0'B で埋める（p.119）", ()
 
 describe("非 BIT のオペランドは BIT 列へ変換する（p.121）", () => {
   /**
-   * 「All non-BIT data is converted to BIT」。算術からの中間ビット列は
+   * BIT でないデータは BIT へ変換される。算術からの中間ビット列は
    * FIXED DEC(1,0) なら CEIL(1*3.32)=4 桁なので、1 は `'0001'B`、
    * 2 は `'0010'B` になる。したがって `2 & 1` は `'0000'B`（偽）。
    */
@@ -309,7 +304,7 @@ describe("算術から BIT への代入は左詰め（p.137-139）", () => {
    * 規定の例（p.139）がそのまま載っている。
    *   A=1;   /* A has value '0'B     *\/   (A は BIT(1))
    *   D=1;   /* D has value '00010'B *\/   (D は BIT(5))
-   * 「The branch is to X」（p.140。`if A=1` は偽）。
+   * 分岐は偽の側へ行く（p.140。`if A=1` は偽）。
    * 中間ビット列を作って**文字列代入の規則**（右を切る・右を埋める、p.128）
    * で詰めるため。右詰めにすると PL/I で最も有名な落とし穴が逆になる。
    */
@@ -353,9 +348,7 @@ describe("ビット列を返すもの", () => {
 /**
  * `DEFINED`（p.317-321）。
  *
- * 「A change to the base variable's value is a corresponding change to the
- * value of the defined variable, and vice versa」「The defined variable does
- * not inherit any attributes from the base variable」（p.317）。
+ * 基底の値が変われば別名の値も変わり、逆も同じ別名は基底から属性を受け継がない（p.317）。
  *
  * 基底参照に添字を書かない形（規定の例そのもの）で、別名側の添字が
  * 捨てられて**基底の先頭要素**を指していた。読めば嘘を返し、
@@ -451,9 +444,7 @@ describe("DEFINED の単純定義（p.318）", () => {
  */
 describe("GET EDIT の F(w,d)（p.323）", () => {
   /**
-   * 「If no scaling-factor is specified and no decimal point appears in
-   * the field, the expression for fractional-digits specifies the number
-   * of digits in the data value to the right of the assumed decimal point」。
+   * 尺度も小数点も書かれていない欄では、小数桁の指定が小数点の右の桁数になる。
    * 小数点を書かない固定桁の入力（金額・率）を読む定石。
    * `d` を無視すると黙って 10^d 倍になる。
    */
@@ -482,8 +473,7 @@ describe("GET EDIT の F(w,d)（p.323）", () => {
 
 describe("GET EDIT は読んだ値をすぐ代入する（p.311）", () => {
   /**
-   * 「A value read into a variable can be used in a format item that is
-   * associated with another variable later in the data list」。
+   * 読み込んだ値を、データリストの後ろの項目の書式に使える。
    * 規定の例は `get edit (M,String_A,…)(F(2),A(M),…)`。
    * 代入をデータリストの読み終わりまで遅らせると、`A(M)` が 0 を見て
    * 「幅省略の A」＝行の残り全部になる（自己記述レコードが壊れる）。
@@ -500,10 +490,8 @@ describe("GET EDIT は読んだ値をすぐ代入する（p.311）", () => {
 
 describe("GET LIST の空フィールド（p.314）", () => {
   /**
-   * 「A null field in the stream is indicated either by the first nonblank
-   * character in the data stream being a comma, or by two commas separated
-   * by an arbitrary number of blanks. A null field specifies that the value
-   * of the associated data-list item remains unchanged」。
+   * 先頭の非空白がカンマ、または空白を挟んだ 2 つのカンマが空フィールドで、
+   * 対応するデータリスト項目の値は変わらない。
    * カンマを区切りとして食うと、値が 1 つずれて別の変数に入る。
    */
   it("先頭のカンマは空フィールド（値を変えない）", () => {
@@ -536,9 +524,7 @@ describe("GET LIST の空フィールド（p.314）", () => {
 
 describe("文字から算術への変換（p.132）", () => {
   /**
-   * 「If the source is a null string or a string of one or more blanks,
-   * the target will be assigned the value zero. The CONVERSION condition
-   * will not be raised」。固定長レコードの未入力の数値欄を読む定石。
+   * 空文字列、または空白だけの文字列は 0 を代入し、CONVERSION 条件は起こさない。固定長レコードの未入力の数値欄を読む定石。
    */
   it("空白だけの文字列は 0（条件は上げない）", () => {
     expect(out("dcl c char(4) init('    '); dcl n fixed bin(15); n = c; put list(n);")).toBe("0");
@@ -547,7 +533,7 @@ describe("文字から算術への変換（p.132）", () => {
     ).toBe("0");
   });
 
-  /** 「The source string must represent a valid arithmetic constant」。 */
+  /** 元の文字列は正しい算術定数を表していなければならない。 */
   it("指数付きの文字列も算術定数（GET と同じ扱い）", () => {
     expect(
       out("dcl c char(8) init('1.5E3'); dcl f float dec(6); f = c; put list(f);"),
@@ -564,8 +550,7 @@ describe("文字から算術への変換（p.132）", () => {
 /**
  * 宣言の有効範囲（p.201）。
  *
- * 「The scope of an explicit declaration of a name is the block containing
- * the declaration. This includes all contained blocks」。
+ * 明示的な宣言の有効範囲は、その宣言を含むブロック全体（内側のブロックも含む）。
  * `DECLARE` は実行文ではないので、**名前を使う文より後ろに書いても効く**。
  *
  * 文として実行していたため、後ろに置いた宣言が記憶域を 0 で作り直し、
@@ -684,7 +669,7 @@ describe("FLOAT の引数は素通し（p.456 など）", () => {
 
 describe("INDEX と VERIFY の開始位置（p.513/635）", () => {
   /**
-   * 「You can also specify the location within x where processing begins」。
+   * 探し始める位置も指定できる。
    * 無視すると、規定が例として載せている走査ループ
    * （`pos = index(t,'man',pos+1)`）が同じ位置を返し続ける。
    */
@@ -709,8 +694,7 @@ describe("INDEX と VERIFY の開始位置（p.513/635）", () => {
 
 describe("MOD は非負の最小値（p.552）", () => {
   /**
-   * 「MOD returns the **smallest nonnegative value**, R, such that
-   * (x - R)/y = n」。規定の例（p.553）は
+   * MOD は (x - R)/y が整数になる**非負の最小値** R を返す。規定の例（p.553）は
    * `mod(+10,+8)=2` / `mod(+10,-8)=2` / `mod(-10,+8)=6` / `mod(-10,-8)=6`。
    *
    * この処理系は「結果は第 2 引数と同じ符号」（他方言の定義）にしていた。
@@ -732,10 +716,8 @@ describe("MOD は非負の最小値（p.552）", () => {
 
 describe("CEIL / FLOOR / TRUNC の FIXED BIN の商（p.473/499/620）", () => {
   /**
-   * 「If the expression x has the form (y/z) where y is an unscaled
-   * FIXED BIN expression and z is an unscaled FIXED expression, then
-   * CEIL(x) will be evaluated by computing the integral quotient and then
-   * rounding it up by one if ... the remainder of (y/z) is not zero」。
+   * 引数が (y/z) の形で、y が尺度なしの FIXED BIN、z が尺度なしの FIXED なら、
+   * 整数の商を求めてから、商が非負で剰余が 0 でなければ 1 繰り上げる（FLOOR は繰り下げる）。
    *
    * FIXED BIN の除算は整数なので、`/` の時点で剰余の情報が消える。
    * 規定がこの特例を置いているのはそのためで、無いと
@@ -768,14 +750,14 @@ describe("CEIL / FLOOR / TRUNC の FIXED BIN の商（p.473/499/620）", () => {
 });
 
 describe("REPEAT / TRANSLATE の境界", () => {
-  /** 「If y is zero or negative, the string x is returned」（p.592）。 */
+  /** 第 2 引数が 0 以下なら元の文字列を返す（p.592）。 */
   it("REPEAT の回数が 0 以下なら元の文字列", () => {
     expect(out("put list('['||repeat('ab',0)||']', '['||repeat('ab',-1)||']');")).toBe(
       "[ab] [ab]",
     );
   });
 
-  /** 「If z is omitted, it defaults to collate()」（p.618）。 */
+  /** 第 3 引数を省略すると COLLATE() が既定になる（p.618）。 */
   it("TRANSLATE の第 3 引数の省略は名指しで断る", () => {
     expect(refused("put list(translate('abc','XYZ'));")).toMatch(/TRANSLATE/);
   });
@@ -791,7 +773,7 @@ describe("組込関数の呼び方の検査", () => {
     expect(refused("put list(length('ab','cd'));")).toMatch(/LENGTH/);
   });
 
-  /** 「y can be omitted only if the array is one-dimensional」（p.487）。 */
+  /** 次元を省略できるのは 1 次元の配列だけ（p.487）。 */
   it("多次元配列で次元を省略したら断る", () => {
     expect(refused("dcl b(3,4) fixed bin(15); put list(dim(b));")).toMatch(/次元/);
     expect(out("dcl a(3) fixed bin(15); put list(dim(a));")).toBe("3");
@@ -802,7 +784,7 @@ describe("組込関数の呼び方の検査", () => {
     expect(out("dcl a(5) fixed bin(15); put list(dimension(a,1), dimension(a));")).toBe("5 5");
   });
 
-  /** 「if not omitted, it must be nonnegative」（p.487）。 */
+  /** 省略しないなら 0 以上でなければならない（p.487）。 */
   it("DIVIDE の尺度が負なら断る", () => {
     expect(refused("put list(divide(10,4,5,-1));")).toMatch(/尺度/);
   });
@@ -837,7 +819,7 @@ describe("PICTURE の小数点は V と F で決まる（p.332）", () => {
 });
 
 describe("PICTURE の Y は無条件にゼロを空白化（p.340）", () => {
-  /** 「specifies that a zero in the specified digit position is replaced **unconditionally** by the blank character」。 */
+  /** その桁のゼロは**無条件に**空白へ置き換わる。 */
   it("規定の表の例と一致する", () => {
     expect(bracketed("dcl a pic'YYYYY'; a = 100; put list('['||a||']');")).toBe("[  1  ]");
     expect(bracketed("dcl b pic'9Y9Y9'; b = 10203; put list('['||b||']');")).toBe("[1 2 3]");
@@ -850,8 +832,7 @@ describe("PICTURE の Y は無条件にゼロを空白化（p.340）", () => {
 
 describe("PICTURE で値が 0 のときの抑制（p.335/338）", () => {
   /**
-   * 「The blank is an unconditional insertion character, and always
-   * specifies that a blank appears in the associated position」（p.334）。
+   * B は無条件の挿入文字で、その位置には必ず空白が出る（p.334）。
    * 固定の通貨記号は抑制の対象、`B` は詰め文字に化けない。
    */
   it("固定の通貨記号も欄全体の抑制に含める", () => {
@@ -870,8 +851,7 @@ describe("PICTURE で値が 0 のときの抑制（p.335/338）", () => {
 /**
  * 多段のロケータ修飾（p.302）。
  *
- * 「P -> Q -> X ... When more than one locator qualifier is used, they are
- * evaluated from left to right」。`q -> r -> w` は `((q->r)) -> w`。
+ * ロケータ修飾を 2 つ以上書いたときは左から右へ評価する。`q -> r -> w` は `((q->r)) -> w`。
  *
  * 右結合で読んだ結果に外側のポインタを**上書き**していたため、途中の
  * 段が落ちて `q -> w` と同じ意味になり、読みでは診断も出ずに
@@ -932,9 +912,7 @@ describe("小数の添字は切り捨てる（p.127）", () => {
 /**
  * `BASED` の `INITIAL`（p.300/321）。
  *
- * 「The INITIAL attribute can be specified for a based variable. The initial
- * values are assigned only upon explicit allocation of the based variable
- * with an ALLOCATE or LOCATE statement」。規定自身の例が
+ * BASED 変数にも INITIAL を書ける。初期値は ALLOCATE または LOCATE で明示的に確保したときにだけ入る。規定自身の例が
  * `dcl X fixed bin based(P) init(0); allocate X;`（p.302）。
  *
  * AUTOMATIC と STATIC の `INIT` は効くので、**同じ `init(...)` が
@@ -1006,9 +984,7 @@ describe("BIT VARYING（p.84）", () => {
 /**
  * `FLOAT BINARY(p)` の精度（p.80, p.136）。
  *
- * 「FLOAT BINARY (p1): The floating-point binary precision (p1) first
- * converts to the equivalent floating-point decimal precision (p), where
- * p=CEIL(p1/3.32)」。2 進桁を 10 進桁として扱っていたため、
+ * FLOAT BINARY(p1) は、まず 10 進の精度 CEIL(p1/3.32) へ換算してから FLOAT DECIMAL と同じ規則で扱う。2 進桁を 10 進桁として扱っていたため、
  * `FLOAT BIN(21)` が 10 進 21 桁を出し、型が持てない桁まで見せていた。
  * 既定も 21（p.220 の表）。
  */
@@ -1037,10 +1013,8 @@ describe("FLOAT BINARY の精度（p.136）", () => {
 /**
  * 配列の仮引数の `(*)`（p.149/226）。
  *
- * 「When the actual length, bounds, or size can be different for different
- * invocations, each can be specified in a DECLARE statement by an asterisk.
- * When an asterisk is used, the length, bounds, or size are taken from the
- * current generation of the associated argument」。
+ * 起動ごとに長さ・境界・大きさが変わりうるときは宣言に * と書ける。
+ * * を書くと、長さ・境界・大きさは対応する実引数から取る。
  * 大きさの違う配列を手続きへ渡す唯一の書き方で、`CHAR(*)` と対になる。
  */
 describe("配列の仮引数の (*)（p.149）", () => {
@@ -1144,9 +1118,7 @@ describe("演算子の別の綴り（p.116-117）", () => {
 /**
  * 条件式の短絡評価（p.278-279）。
  *
- * 「The test of the IF expression is short-circuited … If the IF expression
- * consists of a logical OR of 2 expressions and the first of these
- * expressions is true, the second expression will not be evaluated」。
+ * IF の条件は短絡評価される。2 つの式の論理和で左が真なら右は評価されない。
  * 規定の例そのものが `if P = sysnull() | P->BX = 0 then`。
  *
  * この処理系は「NULL をたどったら必ず止める」という設計なので、
@@ -1191,9 +1163,7 @@ describe("条件式の短絡評価（p.278）", () => {
 /**
  * 他の条件から ERROR への連鎖（p.395/418/421）。
  *
- * 「The implicit action for many conditions is to raise the ERROR condition.
- * This provides a common condition that can be used to check for a number
- * of different conditions」。`ON ERROR` を共通の後始末に使うのは規定が
+ * 多くの条件の暗黙動作は ERROR 条件を起こすことで、いろいろな条件をまとめて受けるのに使える。`ON ERROR` を共通の後始末に使うのは規定が
  * 明記した主要な使い方で、飛ばされると後始末が実行されない。
  */
 describe("条件は ERROR へ連鎖する（p.395）", () => {
@@ -1237,9 +1207,7 @@ describe("条件は ERROR へ連鎖する（p.395）", () => {
 /**
  * `SIGNAL` からの復帰（p.403）。
  *
- * 「If a condition (except the ERROR condition) has been raised by the
- * SIGNAL statement, the normal return is always to the statement
- * immediately following SIGNAL」。
+ * ERROR を除き、SIGNAL で起こした条件の正常復帰は必ず SIGNAL の次の文へ戻る。
  *
  * Linter が「この処理系は X を起こしませんが、SIGNAL X で明示的に
  * 起こせます」と案内している逃げ道が、実際には ON 単位を 1 回走らせて
@@ -1273,9 +1241,8 @@ describe("SIGNAL の次の文へ復帰する（p.403）", () => {
 /**
  * `END` の名前（p.275）。
  *
- * 「If a statement-label follows END, the END statement closes **the
- * unclosed group or block** headed by the nearest preceding DO, SELECT,
- * PACKAGE, BEGIN, or PROCEDURE statement having that statement-label」。
+ * END にラベルを書くと、そのラベルを持つ直近の DO / SELECT / PACKAGE / BEGIN / PROCEDURE から始まる、
+ * まだ閉じていない群またはブロックを閉じる。
  * 間のブロックもまとめて閉じる（多重閉じ）。
  *
  * 手続きの `END` の名前は検査していたのに、DO / SELECT の `END` の名前は
@@ -1322,7 +1289,7 @@ describe("END の名前（p.275）", () => {
 
 /** 手続きに複数のラベルを付けたときの主入口（p.147）。 */
 describe("PROCEDURE の複数ラベル（p.147）", () => {
-  /** 「If multiple entry labels are specified, the leftmost name is the primary entry point」。 */
+  /** 入口のラベルを複数書いたときは、一番左が主入口。 */
   it("一番左が主入口の名前", () => {
     expect(out("call a; a: b: proc; put list('hit'); end a;")).toBe("hit");
   });
@@ -1345,8 +1312,7 @@ describe("ラベル付き BEGIN への GOTO（p.164）", () => {
 
 /**
  * `LEAVE` はブロックの境界を越えない（p.280）。
- * 「The LEAVE statement and the referenced or implied DO statement must
- * not be in different blocks」。手続きの境界は断っていたのに、
+ * LEAVE と、対応する（または省略された）DO 文は、別のブロックにあってはならない。手続きの境界は断っていたのに、
  * BEGIN ブロックは素通りだった。
  */
 describe("LEAVE はブロックの境界を越えない（p.280）", () => {
@@ -1360,8 +1326,7 @@ describe("LEAVE はブロックの境界を越えない（p.280）", () => {
 
 /**
  * 単位に置けない文（p.278/287）。
- * 「All single statements are considered valid and executable **except
- * DECLARE**, DEFAULT, END, ENTRY FORMAT, PROCEDURE, or a %statement」。
+ * 単独の文として置けるのは実行文で、DECLARE・DEFAULT・END・ENTRY・FORMAT・PROCEDURE と % 文は除く。
  */
 describe("IF / WHEN の単位に宣言は置けない（p.278）", () => {
   it("THEN に DECLARE は断る", () => {
@@ -1376,8 +1341,7 @@ describe("IF / WHEN の単位に宣言は置けない（p.278）", () => {
 /** RETURNS の無い手続きの `RETURN(式)`（p.176）。 */
 describe("RETURN と RETURNS の対応（p.176）", () => {
   /**
-   * 「A RETURN statement with an expression is not valid in a procedure
-   * without the RETURNS option」。逆向き（RETURNS があるのに素の RETURN）は
+   * RETURNS を書いていない手続きでは RETURN に式を書けない。逆向き（RETURNS があるのに素の RETURN）は
    * 以前から断っていたが、こちらは黙って値を捨てていた。
    */
   it("RETURNS が無ければ値を返せない", () => {
@@ -1394,8 +1358,7 @@ describe("RETURN と RETURNS の対応（p.176）", () => {
  */
 describe("LINESIZE と COLUMN と ENDPAGE", () => {
   /**
-   * 「An attempt to write a line greater than 110 characters places the
-   * excess characters on the next line」（p.317）。
+   * 行幅を超えて書こうとした分は次の行へ送られる（p.317）。
    * 項目ごと次行へ送っていたので、桁位置が静かにずれ、しかも行幅を
    * 超えた行がそのまま出ていた。
    */
@@ -1407,9 +1370,7 @@ describe("LINESIZE と COLUMN と ENDPAGE", () => {
   });
 
   /**
-   * 「if the specified character position lies beyond the rightmost
-   * character position of the current line … the default character
-   * position is one」（p.321）。
+   * 指定の桁が現在行の右端を超えるか 1 未満なら、既定の桁 1 として扱う（p.321）。
    */
   it("COLUMN が行幅を超えたら桁 1 として扱う", () => {
     const text = raw("put edit('ab','cd')(a,column(500),a);");
@@ -1418,7 +1379,7 @@ describe("LINESIZE と COLUMN と ENDPAGE", () => {
   });
 
   /**
-   * ENDPAGE の暗黙動作は「A new page is started」（p.409-410）。
+   * ENDPAGE の暗黙動作は暗黙動作は改ページ（p.409-410）。
    * 条件を起こさないこととは別に、**改ページそのもの**が落ちていた。
    */
   it("PAGESIZE を超えたら改ページする", () => {
@@ -1439,8 +1400,7 @@ describe("LINESIZE と COLUMN と ENDPAGE", () => {
 /**
  * PRINT でないストリーム出力の LIST（p.315-316）。
  *
- * 「Arithmetic values are converted to character」「If the file does not
- * have the attribute PRINT, enclosing quotation marks are supplied」―
+ * 算術値は文字へ変換して出すPRINT 属性の無いファイルでは引用符で囲む―
  * 引用符が付くのは**文字列**だけで、算術値には付かない。
  */
 describe("PRINT でないファイルの PUT LIST（p.315）", () => {
@@ -1456,9 +1416,7 @@ describe("PRINT でないファイルの PUT LIST（p.315）", () => {
 /**
  * 書式リストの反復係数（p.310）。
  *
- * 「n Specifies an iteration factor, which is either an expression enclosed
- * in parentheses or an integer. If it is the latter, a blank must separate
- * the integer and the following format item」。
+ * 反復係数は、括弧で囲んだ式か整数。整数のときは次の書式項目との間に空白が要る。
  * 規定の例そのもの（p.304）が `edit (X,Y,Z)(X(1), 3 F(10,4))`。
  */
 describe("括弧なしの反復係数（p.310）", () => {
@@ -1518,7 +1476,7 @@ describe("データリストの反復指定（p.314）", () => {
 
 /** その他の入出力の規定。 */
 describe("OPEN / READ / REWRITE の規定", () => {
-  /** 「Opening a file that is already open does not affect the file」（p.338）。 */
+  /** すでに開いているファイルの OPEN はそのファイルに影響しない（p.338）。 */
   it("開いているファイルの OPEN は何もしない", () => {
     expect(
       out(`dcl s char(10) varying;
@@ -1528,7 +1486,7 @@ describe("OPEN / READ / REWRITE の規定", () => {
     ).toBe("ok");
   });
 
-  /** 「For PRINT files, if n is less than or equal to zero, the positioning is to the start of the current line」（p.303）。 */
+  /** PRINT ファイルでは n が 0 以下のとき現在行の先頭へ位置付ける（p.303）。 */
   it("PRINT ファイルの SKIP(0) は行頭へ戻る", () => {
     expect(raw("put edit('abcdef')(a); put skip(0) edit('XY')(a);")).toContain("XYcdef");
   });
@@ -1536,7 +1494,7 @@ describe("OPEN / READ / REWRITE の規定", () => {
 
 /** レコード入出力の規定（p.292-294）。 */
 describe("READ / REWRITE の形（p.292）", () => {
-  /** 「A READ statement without an INTO, SET, or IGNORE option is equivalent to a READ with an IGNORE(1)」。 */
+  /** INTO / SET / IGNORE のどれも書かない READ は IGNORE(1) と同じ。 */
   it("READ IGNORE(n) と指定なしの READ でレコードを飛ばせる", () => {
     const host = new MemoryHost({ IN: "aaaa\nbbbb\ncccc\ndddd\n" });
     const r = runProgram(
@@ -1554,7 +1512,7 @@ describe("READ / REWRITE の形（p.292）", () => {
     expect(r.stdout.trim()).toBe("cccc");
   });
 
-  /** 「REWRITE without FROM … has no effect on the record」（p.293）。 */
+  /** FROM の無い REWRITE はレコードに影響しない（p.293）。 */
   it("FROM の無い REWRITE は何もしない", () => {
     const host = new MemoryHost({ UP: "aaaa\nbbbb\n" });
     const r = runProgram(
@@ -1572,7 +1530,7 @@ describe("READ / REWRITE の形（p.292）", () => {
   });
 });
 
-/** `E` 書式の桁あふれ（p.323）。「If the field width is such that significant digits or the sign are lost, the SIZE condition is raised」。 */
+/** `E` 書式の桁あふれ（p.323）。幅のせいで有効桁や符号が失われるときは SIZE 条件。 */
 describe("E 書式の桁あふれは SIZE（p.323）", () => {
   it("幅が足りなければ条件を起こす", () => {
     const r = runProgram(MAIN("on size put list('sz'); put edit(12345.678)(e(6,2));"));
@@ -1584,7 +1542,7 @@ describe("E 書式の桁あふれは SIZE（p.323）", () => {
   });
 });
 
-/** 「the data type might also be POINTER」（p.302）。 */
+/** PUT ではポインタも書ける（p.302）。 */
 describe("PUT LIST にポインタを渡せる（p.302）", () => {
   it("黙って消えない", () => {
     expect(out("dcl p pointer; p = null(); put list(p);")).toBe("NULL");
@@ -1593,7 +1551,7 @@ describe("PUT LIST にポインタを渡せる（p.302）", () => {
 
 /** 反復 DO のその他の形（p.265/271）。 */
 describe("DO の LOOP と UPTHRU（p.265/271）", () => {
-  /** 「LOOP Specifies infinite iteration. FOREVER is a synonym of LOOP」。 */
+  /** LOOP は無限反復で、FOREVER は同義。 */
   it("DO LOOP は LEAVE まで回る", () => {
     expect(
       out(`dcl i fixed bin(15) init(0);
@@ -1610,7 +1568,7 @@ describe("DO の LOOP と UPTHRU（p.265/271）", () => {
     expect(out("dcl loop fixed bin(15); do loop = 1 to 2; put list(loop); end;")).toBe("1 2");
   });
 
-  /** 「UPTHRU exp2 … the reference is compared to exp2 after the statements in the loop are executed … The loop is executed at least once」（p.265）。 */
+  /** UPTHRU の上限は本体を実行した**後**に比べるので、本体は少なくとも 1 回実行される（p.265）。 */
   it("UPTHRU は本体の後に判定する", () => {
     expect(out("dcl i fixed bin(15); do i = 1 upthru 3; put list(i); end;")).toBe("1 2 3");
     // 端から外れていても 1 回は実行する

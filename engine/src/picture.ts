@@ -120,8 +120,7 @@ export function parsePicture(source: string): PictureSpec {
     }
 
     if (c === "Y") {
-      // 「a zero in the specified digit position is replaced
-      // **unconditionally** by the blank character」（規定 p.340）。
+      // その桁のゼロは**無条件に**空白へ置き換わる（規定 p.340）。
       // 先行ゼロの抑制（Z）と同じ扱いにすると、途中のゼロが消えず
       // `9Y9Y9` に 10203 を入れたとき `1 2 3` にならない
       positions.push({ kind: "digit", suppress: "always" });
@@ -200,9 +199,7 @@ export function parsePicture(source: string): PictureSpec {
     if (INSERTION.has(c)) {
       /*
        * `.` `,` `/` `B` は**挿入文字**で、小数点の位置は決めない
-       * （規定 p.334「They never cause decimal point or decimal comma
-       * alignment … Decimal alignment is controlled by the picture
-       * characters V and F」）。`V` が無ければ右端に `V` があるものとして
+       * （規定 p.334。挿入文字は小数点の位置を決めない。小数点の位置を決めるのは V と F）。`V` が無ければ右端に `V` があるものとして
        * 扱う（p.332）ので、`ZZ9.99` は**整数**の 5 桁を表し、12 を入れると
        * `  0.12` になる。小数の 12.34 を出したいなら `ZZ9V.99` と書く。
        *

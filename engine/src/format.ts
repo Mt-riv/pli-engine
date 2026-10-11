@@ -119,7 +119,7 @@ export class ListWriter {
    * SKIP: n 行進める。
    *
    * ページの行数を超えたら**改ページする**。ENDPAGE 条件の暗黙動作が
-   * 「A new page is started」（規定 p.409-410）なので、条件を起こさない
+   * 暗黙動作は改ページ（規定 p.409-410）なので、条件を起こさない
    * この処理系でも改ページそのものは行う必要がある
    * （`PAGESIZE` を書いた帳票が、見た目だけ静かに違う出力になる）。
    *
@@ -159,7 +159,7 @@ export class ListWriter {
    * PRINT でないストリーム出力では**引用符で囲む**
    * （規定 p.316。`GET LIST` で読み戻せる形にするため）。
    * 囲むのは**文字列だけ**で、算術値には付かない（p.315
-   * 「Arithmetic values are converted to character」）。
+   * 算術値は文字へ変換して出す）。
    */
   putChar(s: string): void {
     this.place(this.print ? s : quoted(s));
@@ -244,9 +244,7 @@ export class ListWriter {
    */
   column(at: number): void {
     // 行幅を超えた桁と 1 未満の桁は桁 1 として扱う（規定 p.321
-    // 「if the specified character position lies beyond the rightmost
-    // character position of the current line … the default character
-    // position is one」）。超えたまま埋めると行幅を超えた行ができる
+    // 指定の桁が現在行の右端を超えるか 1 未満なら、既定の桁 1 として扱う）。超えたまま埋めると行幅を超えた行ができる
     const target = at < 1 || at > this.lineSize ? 1 : at;
     if (this.col > target) this.skip();
     this.cur = this.cur.padEnd(target - 1);
@@ -255,9 +253,7 @@ export class ListWriter {
   /**
    * 行の折り返しを見て追記する。
    *
-   * 行幅を超えた分は**次の行へ送る**（規定 p.317「An attempt to write a
-   * line greater than 110 characters places the excess characters on the
-   * next line」）。項目ごと次行へ送ると桁位置が静かにずれ、しかも
+   * 行幅を超えた分は**次の行へ送る**（規定 p.317。行幅を超えて書こうとした分は次の行へ送られる）。項目ごと次行へ送ると桁位置が静かにずれ、しかも
    * 行幅を超えた行がそのまま出る。
    */
   private raw(s: string): void {

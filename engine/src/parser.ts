@@ -295,8 +295,7 @@ class Parser {
    * 次が手続きか（ラベルが**名前**として使われる形）。
    *
    * `BEGIN` は含めない。ラベル付きの BEGIN へは `GOTO` できる
-   * （規定 p.164「You can transfer control to a labeled BEGIN statement
-   * by using the GO TO statement」）ので、飛び先の `label` 文も要る。
+   * （規定 p.164。ラベル付きの BEGIN 文へは GO TO で制御を移せる）ので、飛び先の `label` 文も要る。
    */
   private atBlockHead(): boolean {
     return this.at("word") && ["PROCEDURE", "PROC"].includes(this.peek().upper);
@@ -340,9 +339,7 @@ class Parser {
    * ラベルを読み飛ばして文を解析する。
    * 単独の文を取る文脈（IF の THEN など）から呼ぶ。
    *
-   * 宣言はそこに置けない（規定 p.278「All single statements are
-   * considered valid and executable **except DECLARE**, DEFAULT, END,
-   * ENTRY FORMAT, PROCEDURE, or a %statement」）。受けてしまうと、
+   * 宣言はそこに置けない（規定 p.278。単独の文として置けるのは実行文で、DECLARE・DEFAULT・END・ENTRY・FORMAT・PROCEDURE と % 文は除く）。受けてしまうと、
    * 条件付きで宣言したつもりの書き手の勘違いを拾えない。
    */
   private parseStatement(): Stmt {
@@ -580,8 +577,7 @@ class Parser {
   }
 
   private parseProcedure(labelNames: string[], line: number): Stmt {
-    // 一番左が主入口の名前（規定 p.147「the leftmost name is the primary
-    // entry point」）。一番右を採ると、二次入口のために付けたラベルが
+    // 一番左が主入口の名前（規定 p.147。一番左が主入口）。一番右を採ると、二次入口のために付けたラベルが
     // 主入口の名前を上書きしてしまう
     const label = labelNames[0];
     if (label === undefined) {
@@ -655,9 +651,8 @@ class Parser {
    * END までの文列を読む。
    *
    * `END` に名前が付いていれば、**その名前の開始までまとめて閉じる**
-   * （多重閉じ。規定 p.275「the END statement closes the unclosed group or
-   * block headed by the nearest preceding DO, SELECT, PACKAGE, BEGIN, or
-   * PROCEDURE statement having that statement-label」）。
+   * （多重閉じ。規定 p.275。END はそのラベルを持つ直近の DO / SELECT / PACKAGE / BEGIN / PROCEDURE から始まる、
+   * まだ閉じていない群またはブロックを閉じる）。
    * 自分の名前でなければ `pendingEnd` に載せて外側へ渡す。
    *
    * どの開始にも対応しない名前は `parseProgram` が断る。読み捨てると、
@@ -772,7 +767,7 @@ class Parser {
       do {
         names.push(this.expect("word", m`変数名`).text);
         // 入れ子の括り出し（`dcl (e dec(6,5), f char(10)) static;`。
-        // 規定 p.203「Factoring can be nested」）
+        // 規定 p.203。括り出しは入れ子にできる）
         if (!this.at("comma") && !this.at("rparen")) {
           const t = this.peek();
           throw new ParseError(
@@ -1038,8 +1033,7 @@ class Parser {
                 );
               }
               if (this.atOp("*")) {
-                // 「`*` Specifies that the element is to be left
-                // uninitialized」（規定 p.323）
+                // * はその要素を初期化しないことを表す（規定 p.323）
                 const t = this.peek();
                 throw new ParseError(
                   m`INITIAL の * 項目（初期化しない要素）は未実装です`,
@@ -1080,8 +1074,7 @@ class Parser {
           // レコード定義（ほぼ必ず付く）が通らなくなる
           case "ALIGNED":
           case "UNALIGNED":
-          // 算術の既定（規定 p.77「The default for arithmetic variables
-          // is REAL」）。複素数は別に名指しで断っている
+          // 算術の既定（規定 p.77。算術変数の既定は REAL）。複素数は別に名指しで断っている
           case "REAL":
           // すでに持っている情報の別の綴り
           case "NONVARYING":
@@ -1402,9 +1395,7 @@ class Parser {
    */
   private parseFormatItem(): FormatItem {
     // 括弧を付けない反復係数（`3 F(8,4)`）。規定 p.310
-    // 「n Specifies an iteration factor, which is either an expression
-    // enclosed in parentheses or an integer. If it is the latter, a blank
-    // must separate the integer and the following format item」。
+    // 反復係数は、括弧で囲んだ式か整数。整数のときは次の書式項目との間に空白が要る。
     // 解説書の例（p.304 の `X(1), 3 F(10,4)`）がそのまま書ける必要がある
     if (this.at("number") && this.peek(1).kind === "word") {
       const n = this.next();
@@ -1584,8 +1575,7 @@ class Parser {
       throw new ParseError(m`EDIT または LIST が必要です`, t.line, t.col, t.file);
     }
     if (this.atWord("COPY")) {
-      // 「The COPY option specifies that the source data stream is written
-      // on the specified STREAM OUTPUT file without alteration」（規定 p.301）
+      // COPY 指定は、読んだ入力をそのまま指定の出力ファイルへ書く（規定 p.301）
       const t = this.next();
       throw new ParseError(
         m`GET の COPY 指定（読んだ内容をそのまま出す）は未実装です`,
@@ -1659,8 +1649,7 @@ class Parser {
       return { kind: "doGroup", body: this.parseBlockUntilEnd(labelNames), ...labels, line };
     }
 
-    // DO LOOP; / DO FOREVER;（規定 p.271「LOOP Specifies infinite
-    // iteration. FOREVER is a synonym of LOOP」）。
+    // DO LOOP; / DO FOREVER;（規定 p.271。LOOP は無限反復で、FOREVER は同義）。
     // 次が `;` のときだけ。`do loop = 1 to 2;` は制御変数 LOOP の反復
     if (this.atWord("LOOP", "FOREVER") && this.peek(1).kind === "semi") {
       this.next();
@@ -1981,7 +1970,7 @@ class Parser {
       }
       this.expect("lparen", m`開き括弧`);
       if (this.atOp("*")) {
-        // 「CLOSE FILE(*) closes all open files」（規定 p.288）
+        // CLOSE FILE(*) は開いている全ファイルを閉じる（規定 p.288）
         const t = this.peek();
         throw new ParseError(
           m`FILE(*)（開いている全ファイル）は未実装です。ファイル名を書いてください`,
@@ -2189,8 +2178,7 @@ class Parser {
 
     // ポインタ修飾 p -> x。左が位置指定、右が BASED 変数。
     //
-    // `q -> r -> w` は `((q -> r)) -> w`（規定 p.302「they are evaluated
-    // from left to right」）。右結合で読んだ結果の**一番内側の locator**
+    // `q -> r -> w` は `((q -> r)) -> w`（規定 p.302。左から右へ評価する）。右結合で読んだ結果の**一番内側の locator**
     // に自分を付ける。上書きすると途中の段が落ちて `q -> w` と同じ意味に
     // なり、読みでは診断も出ないまま空の値が出力に混ざる
     if (this.atOp("->")) {
@@ -2229,7 +2217,7 @@ class Parser {
           set = this.parseRef();
           break;
         case "IGNORE":
-          // 「If n is greater than zero, n records are ignored」（規定 p.294）
+          // n が 0 より大きければ n レコード読み飛ばす（規定 p.294）
           ignore = this.parseExpr();
           break;
         case "KEY":

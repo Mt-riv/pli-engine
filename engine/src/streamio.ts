@@ -74,10 +74,8 @@ export class InputCursor {
    * 読むものが無ければ undefined（呼び出し側が ENDFILE を起こす）。
    *
    * 戻り値が `null` なら**空フィールド**（規定 p.314）。
-   * 「A null field in the stream is indicated either by the first nonblank
-   * character in the data stream being a comma, or by two commas separated
-   * by an arbitrary number of blanks. A null field specifies that the value
-   * of the associated data-list item remains unchanged」。
+   * 先頭の非空白がカンマ、または空白を挟んだ 2 つのカンマが空フィールドで、
+   * 対応するデータリスト項目の値は変わらない。
    *
    * そのためカンマは**項目の後ろで**消費する。先に消費すると、
    * `,5` を `get list(a,b)` に与えたとき 5 が a へ入り、値が 1 つずれる。
