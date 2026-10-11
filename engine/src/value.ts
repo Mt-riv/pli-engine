@@ -99,6 +99,19 @@ export interface Storage {
   /** どの宣言から確保したか（診断用）。 */
   group: string;
   /**
+   * 記憶域の中の開始位置（省略時 0）。
+   * `ADDR(a(2))` のように**要素を指すポインタ**で使う。
+   */
+  offset?: number;
+  /**
+   * `ADDR` で取った記憶域か。
+   *
+   * `ALLOCATE` していない記憶域を `FREE` するのは規定の誤り（p.305）。
+   * 印が無いと黙って通り、そのあと「NULL のポインタをたどりました」という
+   * 的外れな診断になる。
+   */
+  fromAddr?: boolean;
+  /**
    * DL/I の PCB として処理系が用意した記憶域なら、その PCB の番号。
    *
    * PCB マスクの葉の名前はプログラムが自由に付けるので（`STAT_CODE` でも
@@ -519,6 +532,18 @@ function toDecimal(x: FixedVal): FixedVal {
 }
 
 /** 値を10進の文字列にする（符号と小数点付き、余分な空白なし）。 */
+/**
+ * FLOAT の 10 進の有効桁数。
+ *
+ * 「FLOAT BINARY (p1): The floating-point binary precision (p1) first
+ * converts to the equivalent floating-point decimal precision (p), where
+ * p=CEIL(p1/3.32)」（規定 p.136）。換算しないと `FLOAT BIN(21)` が
+ * 10 進 21 桁を出し、型が持てない桁まで見せることになる。
+ */
+export function floatDecDigits(x: FloatVal): number {
+  return x.base === "bin" ? Math.ceil(x.p / 3.32) : x.p;
+}
+
 export function render(x: Value): string {
   switch (x.t) {
     case "pointer":
@@ -530,9 +555,10 @@ export function render(x: Value): string {
       return x.v;
     case "float": {
       // FLOAT DEC(p) は仮数 p 桁 + 4桁指数（' 3.50000E+0000' の形）。
+      // FLOAT BIN(p) は 10 進へ換算してから（`floatDecDigits`）。
       // `toExponential` は 0..100 しか受けないので、ここで収める
       // （超えると生の RangeError が診断になる）
-      const digits = Math.min(100, Math.max(1, x.p - 1));
+      const digits = Math.min(100, Math.max(1, floatDecDigits(x) - 1));
       const s = x.v.toExponential(digits);
       const m = /^(-?[\d.]+)e([+-])(\d+)$/.exec(s);
       if (!m) return s;

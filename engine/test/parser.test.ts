@@ -31,7 +31,7 @@ describe("予約語が無いことへの対応（構文解析の核）", () => {
     // THEN 節は THEN = ELSE という代入
     expect(s.then.kind).toBe("assign");
     if (s.then.kind !== "assign") return;
-    expect(s.then.target.name).toBe("THEN");
+    expect(s.then.targets[0]?.name).toBe("THEN");
     expect(s.then.value).toEqual<Expr>({ kind: "ref", name: "ELSE", subscripts: [] });
   });
 
@@ -39,7 +39,7 @@ describe("予約語が無いことへの対応（構文解析の核）", () => {
     for (const name of ["if", "do", "put", "end", "declare", "call", "return", "then", "else"]) {
       const [s] = procBody(`p: proc; ${name} = 1; end p;`);
       expect(s?.kind, `${name} = 1 は代入文`).toBe("assign");
-      if (s?.kind === "assign") expect(s.target.name).toBe(name);
+      if (s?.kind === "assign") expect(s.targets[0]?.name).toBe(name);
     }
   });
 
@@ -54,8 +54,8 @@ describe("予約語が無いことへの対応（構文解析の核）", () => {
     const [s] = procBody("p: proc; a(2,3) = 7; end p;");
     expect(s?.kind).toBe("assign");
     if (s?.kind !== "assign") return;
-    expect(s.target.name).toBe("a");
-    expect(s.target.subscripts).toHaveLength(2);
+    expect(s.targets[0]?.name).toBe("a");
+    expect(s.targets[0]?.subscripts).toHaveLength(2);
   });
 
   it("括弧で始まっても '=' が無ければ代入にしない", () => {
@@ -781,7 +781,7 @@ describe("構造体", () => {
   it("修飾名で参照できる", () => {
     const s = procBody("p: proc; rec.addr.city = 'x'; end p;")[0];
     if (s?.kind !== "assign") throw new Error("代入ではない");
-    expect(s.target.name).toBe("rec.addr.city");
+    expect(s.targets[0]?.name).toBe("rec.addr.city");
   });
 });
 

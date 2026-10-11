@@ -53,6 +53,9 @@ export class ParseError extends Error {
  */
 const BINARY_PRECEDENCE: Readonly<Record<string, number>> = {
   "|": 1,
+  // 中置の `¬` は排他的論理和（規定 p.116-117 Table 29/30/31）。
+  // `&` と同じ段に置く
+  "¬": 2,
   "&": 2,
   "=": 3,
   "¬=": 3,
@@ -68,6 +71,21 @@ const BINARY_PRECEDENCE: Readonly<Record<string, number>> = {
   "*": 6,
   "/": 6,
   "**": 7,
+};
+
+/**
+ * 複合代入演算子（規定 p.254-255）と、対応する二項演算子。
+ * `x += e;` は `x = x + (e);` と同じ意味にする。
+ */
+const COMPOUND_ASSIGN: Readonly<Record<string, string>> = {
+  "+=": "+",
+  "-=": "-",
+  "*=": "*",
+  "/=": "/",
+  "**=": "**",
+  "||=": "||",
+  "&=": "&",
+  "|=": "|",
 };
 
 /** ** は右結合。それ以外の二項演算子は左結合。 */
@@ -91,6 +109,18 @@ const UNARY_OPS = new Set(["+", "-", "¬"]);
  */
 const UNIMPLEMENTED_ATTRS: Readonly<Record<string, string>> = {
   KEYED: msg("索引ファイル"),
+  VARYINGZ: msg("終端子付きの可変長文字列"),
+  VARZ: msg("終端子付きの可変長文字列"),
+  SIGNED: msg("符号の明示（この処理系は常に符号付き）"),
+  UNSIGNED: msg("符号なし整数"),
+  VALUE: msg("名前付き定数"),
+  GENERIC: msg("総称入口"),
+  POSITION: msg("文字列重ね合わせ定義の開始位置"),
+  POS: msg("文字列重ね合わせ定義の開始位置"),
+  TYPE: msg("型定義"),
+  HANDLE: msg("型定義への参照"),
+  ORDINAL: msg("列挙型"),
+  VARIABLE: msg("ファイル変数"),
   REGIONAL: msg("直接編成ファイル"),
   AREA: msg("AREA 記憶域"),
   OFFSET: msg("AREA 記憶域"),
@@ -103,8 +133,6 @@ const UNIMPLEMENTED_ATTRS: Readonly<Record<string, string>> = {
   TASK: msg("多重処理"),
   COMPLEX: msg("複素数"),
   CPLX: msg("複素数"),
-  ALIGNED: msg("記憶域の境界合わせ。この処理系では意味を持たない"),
-  UNALIGNED: msg("記憶域の境界合わせ。この処理系では意味を持たない"),
   CONTROLLED: msg("CONTROLLED 記憶域"),
   CTL: msg("CONTROLLED 記憶域"),
 };
@@ -117,6 +145,15 @@ const UNIMPLEMENTED_ATTRS: Readonly<Record<string, string>> = {
  */
 const UNIMPLEMENTED_STATEMENTS: Readonly<Record<string, string>> = {
   WAIT: msg("多重処理"),
+  ENTRY: msg("二次入口。手続きを分けてください"),
+  PACKAGE: msg("複数の手続きをまとめる単位"),
+  ASSERT: msg("表明。テストフレームワークの ASSERT_EQUALS を使ってください"),
+  REINIT: msg("INITIAL の入れ直し"),
+  RESIGNAL: msg("ON 単位から同じ条件を投げ直す"),
+  FLUSH: msg("書き出しの強制。この処理系は終了時に書き戻します"),
+  DEFINE: msg("型定義"),
+  XDECLARE: msg("型定義の宣言"),
+  QUALIFY: msg("名前空間"),
   DISPLAY: msg("PUT を使ってください"),
   DELAY: msg("時間待ち"),
   REVERT: msg("ON 単位の解除は ON ... SYSTEM; を使ってください"),
@@ -128,8 +165,24 @@ const UNIMPLEMENTED_STATEMENTS: Readonly<Record<string, string>> = {
   DFT: msg("DEFAULT 文"),
 };
 
+/**
+ * ロケータの鎖の一番内側に `loc` を付ける。
+ * `q -> r -> w` を `w`（locator: `r`（locator: `q`））の形にするために使う。
+ */
+function attachLocator(target: Ref, loc: Ref): Ref {
+  if (target.locator === undefined) return { ...target, locator: loc };
+  return { ...target, locator: attachLocator(target.locator, loc) };
+}
+
 class Parser {
   private pos = 0;
+  /**
+   * `END ラベル;` が自分の名前でなかったときの持ち越し（多重閉じ）。
+   * 外側の同名の開始が受け取る。誰も受け取らなければ `parseProgram` が断る。
+   */
+  private pendingEnd:
+    | { name: string; text: string; line: number; col: number; file?: string }
+    | undefined;
 
   constructor(private readonly toks: Token[]) {}
 
@@ -212,6 +265,15 @@ class Parser {
     const body: Stmt[] = [];
     while (!this.at("eof")) {
       this.parseInto(body);
+      if (this.pendingEnd !== undefined) {
+        const e = this.pendingEnd;
+        throw new ParseError(
+          m`END の名前 ${JSON.stringify(e.text)} に対応する開始がありません`,
+          e.line,
+          e.col,
+          e.file,
+        );
+      }
     }
     return { kind: "program", body };
   }
@@ -229,11 +291,15 @@ class Parser {
     return labels;
   }
 
-  /** 次が手続き・BEGIN か（ラベルが名前として使われる形）。 */
+  /**
+   * 次が手続きか（ラベルが**名前**として使われる形）。
+   *
+   * `BEGIN` は含めない。ラベル付きの BEGIN へは `GOTO` できる
+   * （規定 p.164「You can transfer control to a labeled BEGIN statement
+   * by using the GO TO statement」）ので、飛び先の `label` 文も要る。
+   */
   private atBlockHead(): boolean {
-    return (
-      this.at("word") && ["PROCEDURE", "PROC", "BEGIN"].includes(this.peek().upper)
-    );
+    return this.at("word") && ["PROCEDURE", "PROC"].includes(this.peek().upper);
   }
 
   /**
@@ -249,6 +315,18 @@ class Parser {
    * 発行されるので、単一ラベルのテストでは気づけなかった）。
    */
   private parseInto(out: Stmt[]): void {
+    // 条件接頭辞（`(subscriptrange): …`。規定 p.395-396）。
+    // この処理系は SIZE / SUBSCRIPTRANGE を常に有効にしているので
+    // 有効・無効の切り替えを持てない。名指しで断る
+    if (this.at("lparen")) {
+      const t = this.peek();
+      throw new ParseError(
+        m`条件接頭辞（(subscriptrange): の形）は未実装です（この処理系は常に検査します）`,
+        t.line,
+        t.col,
+        t.file,
+      );
+    }
     const labels = this.takeLabels();
     if (labels.length > 0 && !this.atBlockHead()) {
       for (const l of labels) {
@@ -261,8 +339,26 @@ class Parser {
   /**
    * ラベルを読み飛ばして文を解析する。
    * 単独の文を取る文脈（IF の THEN など）から呼ぶ。
+   *
+   * 宣言はそこに置けない（規定 p.278「All single statements are
+   * considered valid and executable **except DECLARE**, DEFAULT, END,
+   * ENTRY FORMAT, PROCEDURE, or a %statement」）。受けてしまうと、
+   * 条件付きで宣言したつもりの書き手の勘違いを拾えない。
    */
   private parseStatement(): Stmt {
+    const t = this.peek();
+    if (
+      t.kind === "word" &&
+      ["DECLARE", "DCL", "PROCEDURE", "PROC", "DEFAULT", "DFT"].includes(t.upper) &&
+      !this.looksLikeAssignment()
+    ) {
+      throw new ParseError(
+        m`${t.text.toUpperCase()} は IF / WHEN などの単位に置けません（規定で実行文でないもの）`,
+        t.line,
+        t.col,
+        t.file,
+      );
+    }
     return this.parseLabeled(this.takeLabels());
   }
 
@@ -287,7 +383,10 @@ class Parser {
       switch (t.upper) {
         case "PROCEDURE":
         case "PROC":
-          return this.parseProcedure(label, t.line);
+          return this.parseProcedure(
+            labels.map((l) => l.name),
+            t.line,
+          );
         case "DECLARE":
         case "DCL":
           return this.parseDeclare();
@@ -317,7 +416,7 @@ class Parser {
         case "SELECT":
           return this.parseSelect();
         case "BEGIN":
-          return this.parseBegin();
+          return this.parseBegin(labels.map((l) => l.name));
         case "LEAVE":
         case "ITERATE": {
           const kw = this.next();
@@ -346,6 +445,11 @@ class Parser {
           return condFile === undefined
             ? { kind: "signal", condition: cond.upper, line: kw.line }
             : { kind: "signal", condition: cond.upper, conditionFile: condFile, line: kw.line };
+        }
+        case "STOP": {
+          const kw = this.next();
+          this.expect("semi", m`セミコロン`);
+          return { kind: "stop", line: kw.line };
         }
         case "CALL":
           return this.parseCall();
@@ -381,9 +485,12 @@ class Parser {
   }
 
   /**
-   * 先頭が「語 + 省略可能な括弧（添字）」に続いて '=' か。
+   * 先頭が「参照（, 参照...）」に続いて '=' か。
    * 括弧は入れ子を数えて飛ばす。'=' は比較にも使われるが、
    * 文の先頭位置に現れた場合は代入とみなす（PL/I の規則）。
+   *
+   * 左辺はカンマで複数書ける（`a, b = 0;`）。カンマを見ないと
+   * これが「解釈できない文です」になり、しかも診断が 2 つ目の名前を指す。
    */
   private looksLikeAssignment(): boolean {
     if (!this.at("word")) return false;
@@ -413,32 +520,70 @@ class Parser {
       return true;
     };
 
-    if (!skipRef()) return false;
-    // ポインタ修飾 p -> x = ... も代入文
-    while (this.toks[i]?.kind === "op" && (this.toks[i]!.value ?? "") === "->") {
+    /** 参照 1 つ（ポインタ修飾を含む）を飛ばす。 */
+    const skipTarget = (): boolean => {
+      if (!skipRef()) return false;
+      // ポインタ修飾 p -> x = ... も代入文
+      while (this.toks[i]?.kind === "op" && (this.toks[i]!.value ?? "") === "->") {
+        i++;
+        if (this.toks[i]?.kind !== "word") return false;
+        i++;
+        if (!skipRef()) return false;
+      }
+      return true;
+    };
+
+    if (!skipTarget()) return false;
+    // 2 つ目以降の左辺（`a, b = 0;`）
+    while (this.toks[i]?.kind === "comma") {
       i++;
       if (this.toks[i]?.kind !== "word") return false;
       i++;
-      if (!skipRef()) return false;
+      if (!skipTarget()) return false;
     }
 
     const t = this.toks[i];
-    return t?.kind === "op" && (t.value ?? t.text) === "=";
+    if (t?.kind !== "op") return false;
+    const op = t.value ?? t.text;
+    return op === "=" || COMPOUND_ASSIGN[op] !== undefined;
   }
 
   private parseAssignment(): Stmt {
     const line = this.peek().line;
-    const target = this.parseRef();
+    // 左辺はカンマで複数。右辺は 1 度だけ評価して全部へ代入する
+    const targets: Ref[] = [this.parseRef()];
+    while (this.eat("comma")) targets.push(this.parseRef());
     const op = this.expect("op", "=");
-    if ((op.value ?? op.text) !== "=") {
+    const opText = op.value ?? op.text;
+    const compound = COMPOUND_ASSIGN[opText];
+    if (opText !== "=" && compound === undefined) {
       throw new ParseError(m`= が必要です`, op.line, op.col, op.file);
     }
-    const value = this.parseExpr();
+    let value = this.parseExpr();
+    // 複合代入は `x = x op (式)` と同じ意味にする（規定 p.255）。
+    // 左辺が複数のときは PL/I でも書けないので、1 つに限る
+    if (compound !== undefined) {
+      const first = targets[0];
+      if (first === undefined || targets.length > 1) {
+        throw new ParseError(m`複合代入の左辺は 1 つだけです`, op.line, op.col, op.file);
+      }
+      value = { kind: "binary", op: compound, left: first, right: value };
+    }
+    // 構造体の BY NAME 代入。名指しで断らないと「セミコロン が必要です」に
+    // なり、綴り間違いと未実装の区別が付かない
+    if (this.at("comma") && this.peek(1).kind === "word" && this.peek(1).upper === "BY") {
+      const t = this.peek();
+      throw new ParseError(m`BY NAME は未実装です（項目ごとに代入してください）`, t.line, t.col, t.file);
+    }
     this.expect("semi", m`セミコロン`);
-    return { kind: "assign", target, value, line };
+    return { kind: "assign", targets, value, line };
   }
 
-  private parseProcedure(label: string | undefined, line: number): Stmt {
+  private parseProcedure(labelNames: string[], line: number): Stmt {
+    // 一番左が主入口の名前（規定 p.147「the leftmost name is the primary
+    // entry point」）。一番右を採ると、二次入口のために付けたラベルが
+    // 主入口の名前を上書きしてしまう
+    const label = labelNames[0];
     if (label === undefined) {
       const t = this.peek();
       throw new ParseError(m`手続きには名前（ラベル）が必要です`, t.line, t.col, t.file);
@@ -484,11 +629,13 @@ class Parser {
         recursive = true;
         continue;
       }
+      // 最適化の指定（規定 p.147）。意味を持たせずに受ける
+      if (this.eatWord("ORDER", "REORDER")) continue;
       break;
     }
     this.expect("semi", m`セミコロン`);
 
-    const body = this.parseBlockUntilEnd(label);
+    const body = this.parseBlockUntilEnd(labelNames);
     const stmt: Stmt = {
       kind: "procedure",
       name: label,
@@ -506,29 +653,56 @@ class Parser {
 
   /**
    * END までの文列を読む。
-   * END に名前が付いている場合は開始ラベルと一致することを確認する。
+   *
+   * `END` に名前が付いていれば、**その名前の開始までまとめて閉じる**
+   * （多重閉じ。規定 p.275「the END statement closes the unclosed group or
+   * block headed by the nearest preceding DO, SELECT, PACKAGE, BEGIN, or
+   * PROCEDURE statement having that statement-label」）。
+   * 自分の名前でなければ `pendingEnd` に載せて外側へ渡す。
+   *
+   * どの開始にも対応しない名前は `parseProgram` が断る。読み捨てると、
+   * `END` に名前を書く目的（入れ子の崩れを機械に拾わせる）が果たせない。
    */
-  private parseBlockUntilEnd(name?: string): Stmt[] {
+  private parseBlockUntilEnd(names: string[] = []): Stmt[] {
+    const mine = names.map((n) => n.toUpperCase());
     const body: Stmt[] = [];
     for (;;) {
+      // 内側が「自分のものでない END」で抜けてきた（多重閉じ）
+      if (this.pendingEnd !== undefined) {
+        if (mine.includes(this.pendingEnd.name)) this.pendingEnd = undefined;
+        return body;
+      }
       if (this.at("eof")) {
         const t = this.peek();
         throw new ParseError(m`END が必要です`, t.line, t.col, t.file);
+      }
+      // END にラベル接頭を付けられる（`fin: end;`）。規定 p.271 の例が
+      // `End_ReadFile: end;` で、`iterate` の飛び先に使っている
+      const save = this.pos;
+      const labels = this.takeLabels();
+      if (labels.length > 0) {
+        if (this.atWord("END") && !this.looksLikeAssignment()) {
+          for (const l of labels) {
+            body.push({ kind: "label", name: l.name, line: l.line });
+          }
+        } else {
+          this.pos = save;
+        }
       }
       // END は文キーワードだが、'END = 1' のような代入でないことを確認する
       if (this.atWord("END") && !this.looksLikeAssignment()) {
         this.next();
         if (this.at("word")) {
           const endName = this.next();
-          if (name !== undefined && endName.upper !== name.toUpperCase()) {
-            throw new ParseError(
-              m`END の名前 ${JSON.stringify(endName.text)} が開始の ${JSON.stringify(name)} と一致しません`,
-              endName.line,
-
-              endName.col,
-
-              endName.file,
-            );
+          if (!mine.includes(endName.upper)) {
+            // 自分の名前ではない。外側の同名の開始まで閉じる
+            this.pendingEnd = {
+              name: endName.upper,
+              text: endName.text,
+              line: endName.line,
+              col: endName.col,
+              ...(endName.file === undefined ? {} : { file: endName.file }),
+            };
           }
         }
         this.expect("semi", m`セミコロン`);
@@ -597,6 +771,17 @@ class Parser {
     if (this.eat("lparen")) {
       do {
         names.push(this.expect("word", m`変数名`).text);
+        // 入れ子の括り出し（`dcl (e dec(6,5), f char(10)) static;`。
+        // 規定 p.203「Factoring can be nested」）
+        if (!this.at("comma") && !this.at("rparen")) {
+          const t = this.peek();
+          throw new ParseError(
+            m`入れ子の括り出し（名前ごとに属性を書く形）は未実装です`,
+            t.line,
+            t.col,
+            t.file,
+          );
+        }
       } while (this.eat("comma"));
       this.expect("rparen", m`閉じ括弧`);
     } else {
@@ -607,12 +792,22 @@ class Parser {
     //   dcl b(3,3) bin fixed;   -> 次元 (3,3)
     //   dcl a fixed bin(31);    -> 精度 (31)
     let dims: Bound[] | undefined;
+    /** `(*)` と書かれた次元の数。境界は呼ぶ側から受け取る（規定 p.149）。 */
+    let starDims: number | undefined;
     if (this.at("lparen")) {
       this.next();
-      dims = [];
-      do {
-        dims.push(this.parseBound());
-      } while (this.eat("comma"));
+      if (this.atOp("*")) {
+        starDims = 0;
+        do {
+          this.expect("op", "*");
+          starDims++;
+        } while (this.eat("comma"));
+      } else {
+        dims = [];
+        do {
+          dims.push(this.parseBound());
+        } while (this.eat("comma"));
+      }
       this.expect("rparen", m`閉じ括弧`);
     }
 
@@ -634,11 +829,15 @@ class Parser {
       (sc) => {
         storage = sc;
       },
+      (bounds) => {
+        dims = bounds;
+      },
     );
     const item: DeclItem = { names, attr };
     if (based !== undefined) item.based = based;
     if (level !== undefined) item.level = level;
     if (dims !== undefined) item.dims = dims;
+    if (starDims !== undefined) item.starDims = starDims;
     if (init !== undefined) item.init = init;
     if (defined !== undefined) item.defined = defined;
     if (storage !== undefined) item.storage = storage;
@@ -702,6 +901,7 @@ class Parser {
     onDefined?: (base: Ref) => void,
     onBased?: (based: { pointer?: Ref }) => void,
     onStorage?: (storage: "static" | "automatic") => void,
+    onDims?: (dims: Bound[]) => void,
   ): DataAttr {
     let kind:
       | "fixed" | "float" | "char" | "bit" | "file" | "entry" | "picture" | "pointer"
@@ -716,6 +916,8 @@ class Parser {
     let base: "bin" | "dec" | undefined;
     let varying = false;
     let nums: number[] | undefined;
+    /** `(*)` と書かれた位置。CHAR / BIT 以外で断るために持つ。 */
+    let star: Token | undefined;
 
     while (!stop() && !this.at("eof")) {
       if (this.at("word")) {
@@ -835,6 +1037,17 @@ class Parser {
                   lp.file,
                 );
               }
+              if (this.atOp("*")) {
+                // 「`*` Specifies that the element is to be left
+                // uninitialized」（規定 p.323）
+                const t = this.peek();
+                throw new ParseError(
+                  m`INITIAL の * 項目（初期化しない要素）は未実装です`,
+                  t.line,
+                  t.col,
+                  t.file,
+                );
+              }
               values.push(this.parseExpr());
             } while (this.eat("comma"));
             this.expect("rparen", m`閉じ括弧`);
@@ -862,6 +1075,35 @@ class Parser {
           case "INTERNAL":
             // 結合の範囲。1 ファイル完結なので意味を持たせない
             break;
+          // 記憶域の配置。この処理系は配置を持たないので**定義上なにも
+          // 変えられない**。変えられないものを理由に断ると、構造体や
+          // レコード定義（ほぼ必ず付く）が通らなくなる
+          case "ALIGNED":
+          case "UNALIGNED":
+          // 算術の既定（規定 p.77「The default for arithmetic variables
+          // is REAL」）。複素数は別に名指しで断っている
+          case "REAL":
+          // すでに持っている情報の別の綴り
+          case "NONVARYING":
+          case "NONVAR":
+            break;
+          case "PRECISION":
+          case "PREC":
+            // `PREC(5,2)` の括弧は精度。次の括弧を読ませればよい
+            break;
+          case "DIMENSION":
+          case "DIM": {
+            // `dcl a dimension(2,3) fixed bin(15);`（規定 p.225）。
+            // 名前の直後に書く形と同じ意味なので、次元として受け取る
+            this.expect("lparen", m`開き括弧`);
+            const bounds: Bound[] = [];
+            do {
+              bounds.push(this.parseBound());
+            } while (this.eat("comma"));
+            this.expect("rparen", m`閉じ括弧`);
+            onDims?.(bounds);
+            break;
+          }
           default: {
             // PL/I の属性だが実装していないもの。
             // 「知らない語」と区別して、何が未実装か分かるようにする。
@@ -889,7 +1131,17 @@ class Parser {
         continue;
       }
       // 精度・長さの括弧
-      if (this.eat("lparen")) {
+      if (this.at("lparen")) {
+        const lp = this.next();
+        // CHAR(*) — 長さを渡された引数から受け取る。
+        // 文字列を扱う手続きの定型（`p: proc(s); dcl s char(*);`）で、
+        // 呼ぶ側の長さに合わせるために要る
+        if (this.atOp("*")) {
+          this.next();
+          this.expect("rparen", m`閉じ括弧`);
+          star = lp;
+          continue;
+        }
         nums = [];
         do {
           const n = this.expect("number", m`数値`);
@@ -914,8 +1166,16 @@ class Parser {
     // （I〜N は FIXED BIN(15,0)、それ以外は FLOAT DEC(6)）。
     // FIXED DEC(5,0) を既定にすると `dcl x; x = 1/3;` が 0 になる。
     // `FIXED` や基数・精度を書いていれば下の switch で FIXED になる
-    if (kind === undefined && base === undefined && nums === undefined) {
+    if (kind === undefined && base === undefined && nums === undefined && star === undefined) {
       return { type: "implicit" };
+    }
+    if (star !== undefined && kind !== "char" && kind !== "bit") {
+      throw new ParseError(
+        m`(*) は CHAR と BIT の宣言にだけ書けます`,
+        star.line,
+        star.col,
+        star.file,
+      );
     }
 
     switch (kind) {
@@ -935,11 +1195,26 @@ class Parser {
       case "entry":
         return returns === undefined ? { type: "entry" } : { type: "entry", returns };
       case "char":
-        return { type: "char", length: nums?.[0] ?? 1, varying };
+        return {
+          type: "char",
+          length: nums?.[0] ?? 1,
+          varying,
+          ...(star === undefined ? {} : { starLength: true }),
+        };
       case "bit":
-        return { type: "bit", length: nums?.[0] ?? 1 };
-      case "float":
-        return { type: "float", base: base ?? "dec", p: nums?.[0] ?? 6 };
+        // BIT も VARYING を書ける（規定 p.83-84。禁じられているのは
+        // VARYINGZ だけ）。落とすと宣言した属性が NONVARYING に化ける
+        return {
+          type: "bit",
+          length: nums?.[0] ?? 1,
+          ...(varying ? { varying } : {}),
+          ...(star === undefined ? {} : { starLength: true }),
+        };
+      case "float": {
+        // 既定精度は FLOAT DECIMAL(6) / FLOAT BINARY(21)（規定 p.220 の表）
+        const b = base ?? "dec";
+        return { type: "float", base: b, p: nums?.[0] ?? (b === "bin" ? 21 : 6) };
+      }
       case "fixed":
       case undefined: {
         const b = base ?? "dec";
@@ -958,6 +1233,7 @@ class Parser {
     const line = this.next().line; // PUT
     const options: PutOption[] = [];
     let file: string | undefined;
+    let into: Ref | undefined;
     while (!this.at("semi")) {
       if (this.at("eof")) {
         const t = this.peek();
@@ -991,6 +1267,14 @@ class Parser {
           this.expect("rparen", m`閉じ括弧`);
           break;
         }
+        case "STRING": {
+          // PUT STRING(s) — 書式の結果を文字変数へ受ける。
+          // GET STRING と対になる形
+          this.expect("lparen", m`開き括弧`);
+          into = this.parseRef();
+          this.expect("rparen", m`閉じ括弧`);
+          break;
+        }
         case "LIST": {
           options.push({ kind: "list", items: this.parseDataList() });
           break;
@@ -1003,6 +1287,16 @@ class Parser {
           options.push({ kind: "edit", items, format });
           break;
         }
+        case "DATA":
+          // データ指示入出力。名前と値を `A= 1` の形で出す。
+          // 名指しで断らないと「未対応の PUT オプションです」になり、
+          // 綴り間違いと未実装の区別が付かない
+          throw new ParseError(
+            m`PUT DATA は未実装です（PUT LIST / PUT EDIT を使ってください）`,
+            w.line,
+            w.col,
+            w.file,
+          );
         default:
           throw new ParseError(
             m`未対応の PUT オプションです: ${JSON.stringify(w.text)}`,
@@ -1015,6 +1309,23 @@ class Parser {
       }
     }
     this.expect("semi", m`セミコロン`);
+    if (into !== undefined) {
+      if (file !== undefined) {
+        throw new ParseError(m`PUT に STRING と FILE の両方は書けません`, line, 1);
+      }
+      // 文字変数には行の概念が無いので、制御項目は置けない
+      const control = options.find(
+        (o) => o.kind === "skip" || o.kind === "page" || o.kind === "line",
+      );
+      if (control !== undefined) {
+        throw new ParseError(
+          m`PUT STRING に ${control.kind.toUpperCase()} は書けません（文字変数に行の概念がありません）`,
+          line,
+          1,
+        );
+      }
+      return { kind: "put", options, into, line };
+    }
     return file === undefined
       ? { kind: "put", options, line }
       : { kind: "put", options, file, line };
@@ -1026,11 +1337,50 @@ class Parser {
     const items: Expr[] = [];
     if (!this.at("rparen")) {
       do {
-        items.push(this.parseExpr());
+        items.push(this.parseDataItem());
       } while (this.eat("comma"));
     }
     this.expect("rparen", m`閉じ括弧`);
     return items;
+  }
+
+  /**
+   * データリストの 1 項目。
+   *
+   * `(式 do 変数 = 指定)` の形（type-3 DO。規定 p.302/314）も取る。
+   * 規定の例は `list ((Thickness(Distance) do Distance = 1 to 1000))`。
+   * 配列の一部だけを出す・件数を読んでからその数だけ読む、という
+   * PL/I で最も普通の入出力の書き方。
+   */
+  private parseDataItem(): Expr {
+    if (!this.at("lparen")) return this.parseExpr();
+    const save = this.pos;
+    this.next(); // '('
+    const inner: Expr[] = [];
+    try {
+      do {
+        inner.push(this.parseExpr());
+      } while (this.eat("comma"));
+    } catch {
+      this.pos = save;
+      return this.parseExpr();
+    }
+    if (!this.atWord("DO")) {
+      this.pos = save;
+      return this.parseExpr();
+    }
+    this.next(); // DO
+    const varName = this.expect("word", m`制御変数`).text;
+    const eq = this.expect("op", "=");
+    if ((eq.value ?? eq.text) !== "=") {
+      throw new ParseError(m`= が必要です`, eq.line, eq.col, eq.file);
+    }
+    const specs: DoSpec[] = [];
+    do {
+      specs.push(this.parseDoSpec());
+    } while (this.eat("comma"));
+    this.expect("rparen", m`閉じ括弧`);
+    return { kind: "iterList", items: inner, varName, specs };
   }
 
   /** 書式リスト（括弧の中身）。 */
@@ -1051,6 +1401,19 @@ class Parser {
    *   (f(4), x(1))   -> 入れ子のリスト
    */
   private parseFormatItem(): FormatItem {
+    // 括弧を付けない反復係数（`3 F(8,4)`）。規定 p.310
+    // 「n Specifies an iteration factor, which is either an expression
+    // enclosed in parentheses or an integer. If it is the latter, a blank
+    // must separate the integer and the following format item」。
+    // 解説書の例（p.304 の `X(1), 3 F(10,4)`）がそのまま書ける必要がある
+    if (this.at("number") && this.peek(1).kind === "word") {
+      const n = this.next();
+      return {
+        kind: "repeat",
+        count: { kind: "num", text: n.text },
+        items: [this.parseFormatItem()],
+      };
+    }
     if (this.at("lparen")) {
       const save = this.pos;
       this.next();
@@ -1110,6 +1473,18 @@ class Parser {
         const n = nums();
         if (n[0] === undefined) {
           throw new ParseError(m`${w.upper} には幅が必要です`, w.line, w.col, w.file);
+        }
+        // 第 3 引数（F は尺度、E は仮数の有効桁。規定 p.321/323）。
+        // 読み捨てていたので、書いても書かなくても同じ結果になっていた
+        if (n[2] !== undefined) {
+          throw new ParseError(
+            w.upper === "F"
+              ? m`F 書式の尺度（第 3 引数）は未実装です`
+              : m`E 書式の有効桁（第 3 引数）は未実装です`,
+            w.line,
+            w.col,
+            w.file,
+          );
         }
         const kind = w.upper === "F" ? ("f" as const) : ("e" as const);
         return n[1] === undefined
@@ -1181,6 +1556,7 @@ class Parser {
     if (this.eatWord("EDIT")) {
       this.expect("lparen", m`開き括弧`);
       do {
+        this.refuseIterList();
         targets.push(this.parseRef());
       } while (this.eat("comma"));
       this.expect("rparen", m`閉じ括弧`);
@@ -1190,12 +1566,33 @@ class Parser {
     } else if (this.eatWord("LIST")) {
       this.expect("lparen", m`開き括弧`);
       do {
+        this.refuseIterList();
         targets.push(this.parseRef());
       } while (this.eat("comma"));
       this.expect("rparen", m`閉じ括弧`);
+    } else if (this.atWord("DATA")) {
+      // データ指示入出力。PUT DATA と対で名指しで断る
+      const t = this.next();
+      throw new ParseError(
+        m`GET DATA は未実装です（GET LIST / GET EDIT を使ってください）`,
+        t.line,
+        t.col,
+        t.file,
+      );
     } else if (skip === undefined) {
       const t = this.peek();
       throw new ParseError(m`EDIT または LIST が必要です`, t.line, t.col, t.file);
+    }
+    if (this.atWord("COPY")) {
+      // 「The COPY option specifies that the source data stream is written
+      // on the specified STREAM OUTPUT file without alteration」（規定 p.301）
+      const t = this.next();
+      throw new ParseError(
+        m`GET の COPY 指定（読んだ内容をそのまま出す）は未実装です`,
+        t.line,
+        t.col,
+        t.file,
+      );
     }
     this.expect("semi", m`セミコロン`);
     const stmt = { kind: "get" as const, source, targets, line };
@@ -1204,6 +1601,34 @@ class Parser {
       ...(format === undefined ? {} : { format }),
       ...(skip === undefined ? {} : { skip }),
     };
+  }
+
+  /**
+   * `GET` のデータリストに反復指定（type-3 DO）が来たら名指しで断る。
+   *
+   * 出力側は実装してあるが、入力側は代入先の並びを `Ref[]` で持つ
+   * （反復を表せない）。素の「閉じ括弧が必要です」だと未実装と分からない。
+   */
+  private refuseIterList(): void {
+    if (!this.at("lparen")) return;
+    const save = this.pos;
+    let depth = 0;
+    for (let i = this.pos; i < this.toks.length; i++) {
+      const t = this.toks[i]!;
+      if (t.kind === "lparen") depth++;
+      else if (t.kind === "rparen") {
+        depth--;
+        if (depth === 0) break;
+      } else if (depth === 1 && t.kind === "word" && t.upper === "DO") {
+        throw new ParseError(
+          m`GET のデータリストの反復指定（(x(i) do i = 1 to n) の形）は未実装です`,
+          t.line,
+          t.col,
+          t.file,
+        );
+      } else if (t.kind === "eof") break;
+    }
+    this.pos = save;
   }
 
   private parseIf(): Stmt {
@@ -1231,24 +1656,54 @@ class Parser {
 
     // DO;
     if (this.eat("semi")) {
-      return { kind: "doGroup", body: this.parseBlockUntilEnd(), ...labels, line };
+      return { kind: "doGroup", body: this.parseBlockUntilEnd(labelNames), ...labels, line };
     }
 
-    // DO WHILE(...) / DO UNTIL(...)
-    if (this.atWord("WHILE", "UNTIL")) {
-      const which = this.next().upper;
-      this.expect("lparen", m`開き括弧`);
-      const cond = this.parseExpr();
-      this.expect("rparen", m`閉じ括弧`);
+    // DO LOOP; / DO FOREVER;（規定 p.271「LOOP Specifies infinite
+    // iteration. FOREVER is a synonym of LOOP」）。
+    // 次が `;` のときだけ。`do loop = 1 to 2;` は制御変数 LOOP の反復
+    if (this.atWord("LOOP", "FOREVER") && this.peek(1).kind === "semi") {
+      this.next();
       this.expect("semi", m`セミコロン`);
-      const body = this.parseBlockUntilEnd();
-      return which === "WHILE"
-        ? { kind: "doWhile", cond, body, ...labels, line }
-        : { kind: "doUntil", cond, body, ...labels, line };
+      return {
+        kind: "doWhile",
+        cond: { kind: "bit", value: "1" },
+        body: this.parseBlockUntilEnd(labelNames),
+        ...labels,
+        line,
+      };
+    }
+
+    // DO WHILE(...) / DO UNTIL(...)（両方を併記できる）
+    if (this.atWord("WHILE", "UNTIL")) {
+      let whileCond: Expr | undefined;
+      let untilCond: Expr | undefined;
+      while (this.atWord("WHILE", "UNTIL")) {
+        const which = this.next().upper;
+        const cond = this.parenExpr();
+        if (which === "WHILE") whileCond = cond;
+        else untilCond = cond;
+      }
+      this.expect("semi", m`セミコロン`);
+      const body = this.parseBlockUntilEnd(labelNames);
+      // WHILE が書かれていれば doWhile（本体の前に見る条件）。
+      // UNTIL だけなら doUntil（本体の後に見る条件）
+      if (whileCond !== undefined) {
+        return {
+          kind: "doWhile",
+          cond: whileCond,
+          ...(untilCond !== undefined ? { until: untilCond } : {}),
+          body,
+          ...labels,
+          line,
+        };
+      }
+      return { kind: "doUntil", cond: untilCond!, body, ...labels, line };
     }
 
     // DO var = <指定>[, <指定>...];
-    // 指定は `from TO to [BY by]` または単一値。
+    // 指定は `from TO to [BY by]` / `from REPEAT next` / 単一値 に
+    // それぞれ WHILE(...) / UNTIL(...) を付けられる。
     const varName = this.expect("word", m`制御変数`).text;
     const eq = this.expect("op", "=");
     if ((eq.value ?? eq.text) !== "=") {
@@ -1256,29 +1711,88 @@ class Parser {
     }
     const specs: DoSpec[] = [];
     do {
-      const from = this.parseExpr();
-      let to: Expr | undefined;
-      let by: Expr | undefined;
-      for (;;) {
-        if (this.eatWord("TO")) {
-          to = this.parseExpr();
-          continue;
-        }
-        if (this.eatWord("BY")) {
-          by = this.parseExpr();
-          continue;
-        }
-        break;
-      }
-      specs.push({
-        from,
-        ...(to !== undefined ? { to } : {}),
-        ...(by !== undefined ? { by } : {}),
-      });
+      specs.push(this.parseDoSpec());
     } while (this.eat("comma"));
     this.expect("semi", m`セミコロン`);
-    const body = this.parseBlockUntilEnd();
+    const body = this.parseBlockUntilEnd(labelNames);
     return { kind: "doIter", varName, specs, body, ...labels, line };
+  }
+
+  /** 括弧で囲まれた式。条件の指定（WHILE / UNTIL）で使う。 */
+  private parenExpr(): Expr {
+    this.expect("lparen", m`開き括弧`);
+    const e = this.parseExpr();
+    this.expect("rparen", m`閉じ括弧`);
+    return e;
+  }
+
+  /**
+   * DO 反復の 1 指定。
+   *
+   * `TO` / `BY` / `REPEAT` / `WHILE` / `UNTIL` は順不同で、
+   * 同じ語を 2 度書けば後のものが勝つ（PL/I の処理系と同じ）。
+   * `TO`・`BY` と `REPEAT` はどちらも「次の値」を決めるので併記できない。
+   */
+  private parseDoSpec(): DoSpec {
+    const from = this.parseExpr();
+    let to: Expr | undefined;
+    let by: Expr | undefined;
+    let repeat: Expr | undefined;
+    let whileCond: Expr | undefined;
+    let untilCond: Expr | undefined;
+    let thru = false;
+    for (;;) {
+      const t = this.peek();
+      if (this.eatWord("TO")) {
+        to = this.parseExpr();
+        continue;
+      }
+      // UPTHRU / DOWNTHRU は TO と同じ上限だが**本体の後**に判定する
+      // （規定 p.265。端から外れていても 1 回は実行する）
+      if (this.atWord("UPTHRU", "DOWNTHRU")) {
+        const dir = this.next().upper;
+        to = this.parseExpr();
+        thru = true;
+        if (dir === "DOWNTHRU" && by === undefined) {
+          by = { kind: "unary", op: "-", operand: { kind: "num", text: "1" } };
+        }
+        continue;
+      }
+      if (this.eatWord("BY")) {
+        by = this.parseExpr();
+        continue;
+      }
+      if (this.eatWord("REPEAT")) {
+        repeat = this.parseExpr();
+        continue;
+      }
+      if (this.eatWord("WHILE")) {
+        whileCond = this.parenExpr();
+        continue;
+      }
+      if (this.eatWord("UNTIL")) {
+        untilCond = this.parenExpr();
+        continue;
+      }
+      if (repeat !== undefined && (to !== undefined || by !== undefined)) {
+        throw new ParseError(
+          m`REPEAT と TO / BY は同じ指定に書けません`,
+          t.line,
+          t.col,
+          t.file,
+        );
+      }
+      break;
+    }
+    return {
+      from,
+      ...(to !== undefined ? { to } : {}),
+      ...(by !== undefined ? { by } : {}),
+      ...(repeat !== undefined ? { repeat } : {}),
+      ...(whileCond !== undefined ? { while: whileCond } : {}),
+      ...(untilCond !== undefined ? { until: untilCond } : {}),
+      ...(thru ? { thru } : {}),
+    };
   }
 
   /** SELECT(expr) ... WHEN(...) ... OTHERWISE ... END */
@@ -1338,10 +1852,21 @@ class Parser {
     } as Stmt;
   }
 
-  private parseBegin(): Stmt {
+  private parseBegin(blockLabels: string[] = []): Stmt {
     const line = this.next().line; // BEGIN
+    // `BEGIN OPTIONS(...) RECURSIVE ORDER|REORDER;`（規定 p.164）。
+    // どれも最適化と多重処理の指定なので、読み飛ばして受ける
+    for (;;) {
+      if (this.atWord("OPTIONS")) {
+        this.next();
+        this.skipBalancedParens();
+        continue;
+      }
+      if (this.eatWord("RECURSIVE", "ORDER", "REORDER")) continue;
+      break;
+    }
     this.expect("semi", m`セミコロン`);
-    return { kind: "beginBlock", body: this.parseBlockUntilEnd(), line };
+    return { kind: "beginBlock", body: this.parseBlockUntilEnd(blockLabels), line };
   }
 
   private parseGoto(): Stmt {
@@ -1455,6 +1980,16 @@ class Parser {
         throw new ParseError(m`CLOSE には FILE(名前) が必要です`, t.line, t.col, t.file);
       }
       this.expect("lparen", m`開き括弧`);
+      if (this.atOp("*")) {
+        // 「CLOSE FILE(*) closes all open files」（規定 p.288）
+        const t = this.peek();
+        throw new ParseError(
+          m`FILE(*)（開いている全ファイル）は未実装です。ファイル名を書いてください`,
+          t.line,
+          t.col,
+          t.file,
+        );
+      }
       files.push(this.expect("word", m`ファイル名`).text);
       this.expect("rparen", m`閉じ括弧`);
     } while (this.eat("comma"));
@@ -1567,7 +2102,10 @@ class Parser {
         this.next();
         const e = this.parseExpr();
         this.expect("rparen", m`閉じ括弧`);
-        return e;
+        // 括弧で包んだ参照には印を付ける。PL/I は括弧を書いた引数に
+        // **ダミー引数を作る**（規定 p.162）ので、剥がしてしまうと
+        // `call p((x));` の「書き換えさせない」が黙って無効になる
+        return e.kind === "ref" ? { ...e, parens: true } : e;
       }
       case "word":
         return this.parseRef();
@@ -1630,6 +2168,18 @@ class Parser {
       called = true;
       if (!this.at("rparen")) {
         do {
+          // `*` 添字（断面。規定 p.104 の `subscript-list` は `*` を取る）。
+          // 配列の 1 行・1 列をまとめて扱う形で、素の「式が必要です」だと
+          // 書き方を間違えたように見える
+          if (this.atOp("*")) {
+            const t = this.peek();
+            throw new ParseError(
+              m`* 添字（配列の断面）は未実装です`,
+              t.line,
+              t.col,
+              t.file,
+            );
+          }
           subscripts.push(this.parseExpr());
         } while (this.eat("comma"));
       }
@@ -1637,11 +2187,15 @@ class Parser {
     }
     const ref: Ref = { kind: "ref", name, subscripts, ...(called ? { called } : {}) };
 
-    // ポインタ修飾 p -> x。左が位置指定、右が BASED 変数
+    // ポインタ修飾 p -> x。左が位置指定、右が BASED 変数。
+    //
+    // `q -> r -> w` は `((q -> r)) -> w`（規定 p.302「they are evaluated
+    // from left to right」）。右結合で読んだ結果の**一番内側の locator**
+    // に自分を付ける。上書きすると途中の段が落ちて `q -> w` と同じ意味に
+    // なり、読みでは診断も出ないまま空の値が出力に混ざる
     if (this.atOp("->")) {
       this.next();
-      const target = this.parseRef();
-      return { ...target, locator: ref };
+      return attachLocator(this.parseRef(), ref);
     }
     return ref;
   }
@@ -1656,6 +2210,7 @@ class Parser {
     let into: Ref | undefined;
     let from: Ref | undefined;
     let set: Ref | undefined;
+    let ignore: Expr | undefined;
 
     while (!this.at("semi") && !this.at("eof")) {
       const w = this.expect("word", m`${op.toUpperCase()} の指定`);
@@ -1672,6 +2227,10 @@ class Parser {
           break;
         case "SET":
           set = this.parseRef();
+          break;
+        case "IGNORE":
+          // 「If n is greater than zero, n records are ignored」（規定 p.294）
+          ignore = this.parseExpr();
           break;
         case "KEY":
         case "KEYFROM":
@@ -1711,6 +2270,7 @@ class Parser {
       ...(into === undefined ? {} : { into }),
       ...(from === undefined ? {} : { from }),
       ...(set === undefined ? {} : { set }),
+      ...(ignore === undefined ? {} : { ignore }),
     };
   }
 

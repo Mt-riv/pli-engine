@@ -10,8 +10,13 @@ export interface Bound {
 export type DataAttr =
   | { type: "fixed"; base: "bin" | "dec"; p: number; q: number }
   | { type: "float"; base: "bin" | "dec"; p: number }
-  | { type: "char"; length: number; varying: boolean }
-  | { type: "bit"; length: number }
+  /**
+   * 文字列。`starLength` は `CHAR(*)`（長さを引数から受け取る）。
+   * 引数の宣言でしか書けないので、`length` は仮の値（0）になる。
+   */
+  | { type: "char"; length: number; varying: boolean; starLength?: boolean }
+  /** ビット列。`varying` は現在長を保つ（規定 p.84）。 */
+  | { type: "bit"; length: number; varying?: boolean; starLength?: boolean }
   /**
    * ポインタ。確保した記憶域への参照を持つ。
    * **アドレス値ではない**ので、ポインタ算術はできない（設計上の判断）。
@@ -72,6 +77,14 @@ export interface Ref {
    * BASED 変数をどの記憶域で見るかを指定する。
    */
   locator?: Ref;
+  /**
+   * 括弧で包まれていたか（`call p((x))` の `(x)`）。
+   *
+   * PL/I は**括弧を書いた引数にダミー引数を作る**（規定 p.162）。
+   * 「この引数は書き換えさせない」と明示する唯一の記法なので、
+   * 括弧を剥がして素の参照にすると、書いた側の意図が黙って無効になる。
+   */
+  parens?: boolean;
 }
 
 export type Expr =
@@ -86,7 +99,14 @@ export type Expr =
   | { kind: "bit"; value: string }
   | Ref
   | { kind: "unary"; op: string; operand: Expr }
-  | { kind: "binary"; op: string; left: Expr; right: Expr };
+  | { kind: "binary"; op: string; left: Expr; right: Expr }
+  /**
+   * データリストの反復指定（type-3 DO。規定 p.302/314）。
+   *   `put list((x(i) do i = 1 to 3));`
+   * データリストの中だけに現れる。式として評価はできない
+   * （`eval` が名指しで断る）。
+   */
+  | { kind: "iterList"; items: Expr[]; varName: string; specs: DoSpec[] };
 
 export interface DeclItem {
   /**
@@ -106,6 +126,13 @@ export interface DeclItem {
    * PL/I は下限を明示できる: (10) は 1..10、(0:9) は 0..9。
    */
   dims?: Bound[];
+  /**
+   * 次元を `(*)` と書いたか（`dcl x(*) fixed bin(15);`）。
+   *
+   * 引数の宣言で、境界を**呼ぶ側から受け取る**（規定 p.149/226）。
+   * 大きさの違う配列を手続きへ渡す唯一の書き方。値は星の数（次元の数）。
+   */
+  starDims?: number;
   attr: DataAttr;
   /** INITIAL の値。PL/I では配列初期化のためリストを取る。 */
   init?: Expr[];
@@ -161,7 +188,22 @@ export interface DoSpec {
   from: Expr;
   to?: Expr;
   by?: Expr;
-  /** 単一値の指定（`do i = 1, 5, 10;`）では to/by を持たない。 */
+  /**
+   * REPEAT の次の値を作る式。`do p = head repeat p->next while(p¬=null());`
+   * のように連鎖をたどる形で使う。TO / BY とは併記できない
+   * （どちらも「次の値」を決めるため）。
+   */
+  repeat?: Expr;
+  /** WHILE の条件。本体の**前**に見る。偽になったら指定を終える。 */
+  while?: Expr;
+  /**
+   * `UPTHRU` / `DOWNTHRU` で書いた上限か（規定 p.265）。
+   * `TO` と違い**本体の後**に判定するので、端から外れていても 1 回は実行する。
+   */
+  thru?: boolean;
+  /** UNTIL の条件。本体の**後**に見る。真になったら指定を終える。 */
+  until?: Expr;
+  /** 単一値の指定（`do i = 1, 5, 10;`）では to/by/repeat を持たない。 */
 }
 
 /** SELECT の WHEN 節。 */
@@ -183,11 +225,31 @@ export type Stmt =
       line: number;
     }
   | { kind: "declare"; items: DeclItem[]; line: number }
-  | { kind: "assign"; target: Ref; value: Expr; line: number }
-  | { kind: "put"; options: PutOption[]; file?: string; line: number }
+  /**
+   * 代入文。PL/I の左辺は**複数書ける**（`a, b = 0;`）。
+   * 右辺は 1 度だけ評価して、左から順に代入する。
+   */
+  | { kind: "assign"; targets: Ref[]; value: Expr; line: number }
+  /**
+   * PUT。`into` は `PUT STRING(s)` の宛先で、`file` とは併記できない。
+   * 書式の結果を文字変数へ受けるので、制御項目（SKIP / PAGE / LINE）は
+   * 置けない（行の概念が無い）。
+   */
+  | { kind: "put"; options: PutOption[]; file?: string; into?: Ref; line: number }
   | { kind: "if"; cond: Expr; then: Stmt; else?: Stmt; line: number }
   | { kind: "doGroup"; body: Stmt[]; labels?: string[]; line: number }
-  | { kind: "doWhile"; cond: Expr; body: Stmt[]; labels?: string[]; line: number }
+  /**
+   * `DO WHILE(c);`。`until` は `DO WHILE(a) UNTIL(b);` の併記で、
+   * WHILE は本体の前、UNTIL は本体の後に見る。
+   */
+  | {
+      kind: "doWhile";
+      cond: Expr;
+      until?: Expr;
+      body: Stmt[];
+      labels?: string[];
+      line: number;
+    }
   | { kind: "doUntil"; cond: Expr; body: Stmt[]; labels?: string[]; line: number }
   | {
       kind: "doIter";
@@ -247,6 +309,11 @@ export type Stmt =
       into?: Ref;
       from?: Ref;
       set?: Ref;
+      /**
+       * `READ FILE(f) IGNORE(n);` の n。
+       * 指定の無い `READ FILE(f);` は `IGNORE(1)` と同じ（規定 p.292）。
+       */
+      ignore?: Expr;
       line: number;
     }
   /** ALLOCATE x SET(p); — BASED 変数の記憶域を確保する。 */
@@ -270,6 +337,8 @@ export type Stmt =
     }
   | { kind: "call"; name: string; args: Expr[]; line: number }
   | { kind: "return"; value?: Expr; line: number }
+  /** STOP — プログラム全体を直ちに終える（開いたファイルは閉じる）。 */
+  | { kind: "stop"; line: number }
   | { kind: "null"; line: number };
 
 /** OPEN で指定できる属性。宣言より優先される。 */

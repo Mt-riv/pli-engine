@@ -321,16 +321,27 @@ end p;
     expect(r.stdout).toContain("終わり");
   });
 
-  it("二重 OPEN は誤りにする", () => {
+  /**
+   * 「Opening a file that is already open does not affect the file」
+   * （IBM 解説書 p.338）。
+   *
+   * 以前はここを誤りにしていた。使う前に開く補助手続きを置く書き方
+   * （`if ^opened then open …` を書かずに済ませる形）が通らないので、
+   * 規定どおり何もしないことにした。
+   */
+  it("二重 OPEN は何もしない（規定 p.338）", () => {
     const host = new MemoryHost();
     const src = `p: proc options(main);
   dcl f file stream output;
   open file(f) output;
   open file(f) output;
+  put file(f) list('ok');
+  close file(f);
 end p;
 `;
     const r = runProgram(src, { host });
-    expect(r.diagnostics[0]?.message).toContain("既に開かれています");
+    expect(r.diagnostics).toEqual([]);
+    expect(host.get("F")).toContain("ok");
   });
 
   /**

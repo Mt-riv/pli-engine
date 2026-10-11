@@ -823,10 +823,13 @@ class Linter {
         return;
       case "assign":
         this.expr(s.value, scope, s.line);
-        this.write(s.target, scope, s.line);
+        for (const t of s.targets) this.write(t, scope, s.line);
         return;
       case "put":
         if (s.file !== undefined) this.useFile(s.file, s.line, "output");
+        // PUT STRING(s) の宛先は書き込み。見落とすと
+        // 「代入していない変数を読んでいる」になる
+        if (s.into !== undefined) this.write(s.into, scope, s.line);
         for (const o of s.options) {
           if (o.kind === "line") this.expr(o.at, scope, s.line);
           if (o.kind === "skip" && o.count) this.expr(o.count, scope, s.line);
@@ -897,6 +900,12 @@ class Linter {
         this.walkBody(s.body, scope, ctx);
         return;
       case "doWhile":
+        this.expr(s.cond, scope, s.line);
+        // `DO WHILE(a) UNTIL(b);` の併記。見落とすと、UNTIL でしか
+        // 読んでいない変数が「代入したのに読んでいない」になる
+        if (s.until) this.expr(s.until, scope, s.line);
+        this.walkBody(s.body, scope, ctx);
+        return;
       case "doUntil":
         this.expr(s.cond, scope, s.line);
         this.walkBody(s.body, scope, ctx);
@@ -910,6 +919,9 @@ class Linter {
           this.expr(spec.from, scope, s.line);
           if (spec.to) this.expr(spec.to, scope, s.line);
           if (spec.by) this.expr(spec.by, scope, s.line);
+          if (spec.repeat) this.expr(spec.repeat, scope, s.line);
+          if (spec.while) this.expr(spec.while, scope, s.line);
+          if (spec.until) this.expr(spec.until, scope, s.line);
         }
         this.walkBody(s.body, scope, ctx);
         return;
