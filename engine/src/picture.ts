@@ -42,14 +42,18 @@ export class PictureSizeError extends Error {
 
 /** 出力の 1 文字分。 */
 type PicPos =
-  /** 数字を置く位置。suppress は先行ゼロの扱い。 */
-  | { kind: "digit"; suppress: "none" | "blank" | "star" | "drift" }
+  /**
+   * 数字を置く位置。`suppress` は先行ゼロの扱い。
+   * `"always"` は `Y`（位置を問わずゼロを空白にする。規定 p.340）。
+   */
+  | { kind: "digit"; suppress: "none" | "blank" | "star" | "drift" | "always" }
   /** 浮動記号の先頭（記号だけを置く位置）。 */
   | { kind: "driftHead"; symbol: string }
   /** 固定の符号・通貨記号。 */
   | { kind: "static"; symbol: string; signed: boolean }
   /** 挿入文字。抑制された範囲では詰め文字になる。 */
-  | { kind: "insert"; ch: string }
+  /** 挿入文字。`unconditional` は `B`（抑制されても詰め文字にしない）。 */
+  | { kind: "insert"; ch: string; unconditional?: boolean }
   /** CR / DB。負のときだけ出る。 */
   | { kind: "suffix"; text: string };
 
@@ -116,8 +120,11 @@ export function parsePicture(source: string): PictureSpec {
     }
 
     if (c === "Y") {
-      // ゼロなら空白にする桁。抑制と同じ扱いで足りる
-      positions.push({ kind: "digit", suppress: "blank" });
+      // 「a zero in the specified digit position is replaced
+      // **unconditionally** by the blank character」（規定 p.340）。
+      // 先行ゼロの抑制（Z）と同じ扱いにすると、途中のゼロが消えず
+      // `9Y9Y9` に 10203 を入れたとき `1 2 3` にならない
+      positions.push({ kind: "digit", suppress: "always" });
       countDigit();
       i++;
       continue;
@@ -179,7 +186,11 @@ export function parsePicture(source: string): PictureSpec {
             countDigit();
           }
         } else {
-          positions.push({ kind: "insert", ch: item === "B" ? " " : item });
+          positions.push({
+            kind: "insert",
+            ch: item === "B" ? " " : item,
+            ...(item === "B" ? { unconditional: true } : {}),
+          });
         }
       }
       i = j;
@@ -187,17 +198,26 @@ export function parsePicture(source: string): PictureSpec {
     }
 
     if (INSERTION.has(c)) {
-      // `.` は小数点としても働く（`PIC'ZZ9.99'`）。
-      // 文字として出しつつ、以降の数字は小数部として数える。
-      //
-      // 以前は挿入文字としてしか扱っていなかったため、
-      // `ZZ9.99` が p=5 / q=0 と解釈され、12.34 が 12 に切られて
-      // 桁がずれていた（`ZZ9V.99` と書いたときだけ正しく動いていた）。
-      // `V` が無いピクチャでは、最初の `.` が小数点の位置も表す。
-      // `ZZ9V.99` のように `V` を併記した形では、尺度は `V` が決めるので
-      // `.` は文字を出すだけ（これが実機の標準の書き方）。
-      if (c === "." && !hasV && !seenV) seenV = true;
-      positions.push({ kind: "insert", ch: c === "B" ? " " : c });
+      /*
+       * `.` `,` `/` `B` は**挿入文字**で、小数点の位置は決めない
+       * （規定 p.334「They never cause decimal point or decimal comma
+       * alignment … Decimal alignment is controlled by the picture
+       * characters V and F」）。`V` が無ければ右端に `V` があるものとして
+       * 扱う（p.332）ので、`ZZ9.99` は**整数**の 5 桁を表し、12 を入れると
+       * `  0.12` になる。小数の 12.34 を出したいなら `ZZ9V.99` と書く。
+       *
+       * 以前はここで「`V` の無いピクチャの最初の `.` を小数点とみなす」
+       * 扱いにしていたため、日付の `99.9/99.9` のように小数と無関係な
+       * `.` を使う形が SIZE で落ちていた。
+       *
+       * `B` は**無条件**の挿入文字（p.334）。欄全体が抑制されるときも
+       * 詰め文字にならない（`**B**B**` に 0 は `** ** **`）。
+       */
+      positions.push({
+        kind: "insert",
+        ch: c === "B" ? " " : c,
+        ...(c === "B" ? { unconditional: true } : {}),
+      });
       i++;
       continue;
     }
@@ -304,6 +324,11 @@ export function editPicture(spec: PictureSpec, value: FixedVal): string {
 
   const text: string[] = [];
   let driftPlaced = false;
+  /**
+   * 欄の全部が抑制されたか（値が 0 で、抑制できない桁が無い）。
+   * このとき固定の通貨記号や符号も詰め文字になる（規定 p.338）。
+   */
+  const wholeField = effectiveUntil >= spec.positions.length;
   // 浮動記号を置く位置: 抑制された範囲の最後
   const driftAt = effectiveUntil - 1;
 
@@ -311,6 +336,11 @@ export function editPicture(spec: PictureSpec, value: FixedVal): string {
     const suppressed = idx < effectiveUntil;
     switch (pos.kind) {
       case "digit": {
+        // Y は位置を問わずゼロを空白にする（規定 p.340）
+        if (pos.suppress === "always" && (out[idx] ?? "0") === "0") {
+          text.push(" ");
+          return;
+        }
         if (suppressed && pos.suppress !== "none") {
           text.push(idx === driftAt && spec.driftSymbol ? driftChar(spec, negative) : spec.fill);
           if (idx === driftAt && spec.driftSymbol) driftPlaced = true;
@@ -330,9 +360,14 @@ export function editPicture(spec: PictureSpec, value: FixedVal): string {
         return;
       }
       case "static":
-        text.push(staticChar(pos.symbol, pos.signed, negative));
+        text.push(wholeField ? spec.fill : staticChar(pos.symbol, pos.signed, negative));
         return;
       case "insert":
+        // B は無条件の挿入文字（規定 p.334）
+        if (pos.unconditional === true) {
+          text.push(pos.ch);
+          return;
+        }
         if (idx === driftAt && spec.driftSymbol !== undefined) {
           // 抑制された範囲の最後が挿入文字（`$$$,$$9` のカンマなど）なら
           // そこが記号の位置になる

@@ -891,7 +891,19 @@ describe("ビット列の演算", () => {
       .toBe("'0'B");
   });
 
-  it("数値から BIT への代入は 2 進表現になる", () => {
+  /**
+   * 中間ビット列を作って**左詰め**で詰める（IBM 解説書 p.137-139）。
+   *
+   * 1 は FIXED DEC(1,0) なので中間は `CEIL(1*3.32)` = 4 桁の `'0001'B`。
+   * BIT(1) へは左の 1 桁を取るので `'0'B`、BIT(4) へは `'0101'B`。
+   * 解説書は `A=1; /* A has value '0'B *\/` と例示し、`if A=1` の
+   * 分岐が偽になることまで書いている（p.139-140）。
+   *
+   * 以前はここを `'1'B` で固定していた。代入先の長さに**右詰め**して
+   * いたためで、PL/I で最も有名な落とし穴がちょうど逆になっていた。
+   * 詳しい形は `ibm-lrm.test.ts` の「算術から BIT への代入は左詰め」。
+   */
+  it("数値から BIT への代入は中間ビット列を左詰めで詰める", () => {
     const src = `m: proc options(main);
   dcl b bit(1);
   dcl s bit(4);
@@ -899,7 +911,7 @@ describe("ビット列の演算", () => {
   s = 5;
   put list(b, s);
 end m;`;
-    expect(out(src).replace(/\s+/g, " ").trim()).toBe("'1'B '0101'B");
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("'0'B '0101'B");
   });
 });
 
@@ -916,13 +928,25 @@ describe("16 進定数", () => {
 });
 
 describe("PICTURE の小数点", () => {
-  it("V が無ければ . が小数点の位置になる", () => {
+  /**
+   * 尺度を決めるのは `V` と `F` だけ（IBM 解説書 p.332/334）。
+   * 「They [insertion characters] never cause decimal point or decimal
+   * comma alignment … Decimal alignment is controlled by the picture
+   * characters V and F」。`V` が無ければ**右端に V があるものとして**
+   * 扱うので、`ZZ9.99` は整数 5 桁を表し、12.34 は 12 に丸められて
+   * `  0.12` と出る。小数を出したいなら `ZZ9V.99` と書く。
+   *
+   * 以前はここを `[ 12.34]` で固定していた（`V` の無いピクチャの最初の
+   * `.` を小数点とみなす扱い）。そのため `99.9/99.9` のように小数と
+   * 無関係な `.` を使う日付のピクチャが SIZE で落ちていた。
+   */
+  it("V が無ければ尺度 0（. は挿入文字）", () => {
     const src = `m: proc options(main);
   dcl a pic'ZZ9.99';
   a = 12.34;
   put list('[' || a || ']');
 end m;`;
-    expect(out(src).trim()).toBe("[ 12.34]");
+    expect(out(src).trim()).toBe("[  0.12]");
   });
 
   it("V を併記した形も同じ結果になる", () => {
@@ -1279,10 +1303,33 @@ end m;`;
     expect(r.error).toContain("ENDFILE");
   });
 
-  it("計算条件は復帰しない（ERROR へ進めて終える）", () => {
+  /**
+   * `SIGNAL` で起こした条件は、ON 単位のあと**次の文へ復帰する**
+   * （IBM 解説書 p.403「If a condition (except the ERROR condition) has
+   * been raised by the SIGNAL statement, the normal return is always to
+   * the statement immediately following SIGNAL」）。
+   *
+   * 以前は計算条件だけ復帰しない形に固定していた。README の意図的な
+   * 非互換は「**演算で**起きた計算条件の ON 単位から復帰しても演算を
+   * 再試行しない」という話で、`SIGNAL` には再試行する演算が無いので
+   * 当てはまらない。復帰しないと、ON 単位の動作確認（規定が `SIGNAL` の
+   * 用途として挙げているもの）ができない。
+   */
+  it("SIGNAL した計算条件も次の文へ復帰する", () => {
     const r = runRaw(`m: proc options(main);
   on zerodivide put skip list('RAN');
   signal zerodivide;
+  put skip list('RESUMED');
+end m;`);
+    expect(r.stdout).toContain("RAN");
+    expect(r.stdout).toContain("RESUMED");
+  });
+
+  it("演算で起きた計算条件は従来どおり ERROR へ進めて終える", () => {
+    const r = runRaw(`m: proc options(main);
+  dcl (a,b) fixed bin(15);
+  on zerodivide put skip list('RAN');
+  a = 1; b = 0; a = a / b;
   put skip list('NEVER');
 end m;`);
     expect(r.stdout).toContain("RAN");

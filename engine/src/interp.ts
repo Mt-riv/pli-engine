@@ -18,7 +18,7 @@ import type {
 } from "./ast.js";
 import { groupNames, qualifyDeclareItems } from "./declare.js";
 import type { PliHost } from "./host.js";
-import { makePointer, type PointerVal, type Storage } from "./value.js";
+import { floatDecDigits, makePointer, type PointerVal, type Storage } from "./value.js";
 import {
   editPicture,
   parsePicture,
@@ -143,6 +143,31 @@ function forThisLoop(e: LeaveSignal | IterateSignal, labels?: string[]): boolean
   return labels?.includes(e.label.toUpperCase()) ?? false;
 }
 
+/**
+ * STOP を実装するための内部例外。
+ *
+ * プログラム全体を終える。`RETURN` と違い手続きの境界で止まらないので、
+ * `run()` が受け止めるまで積みを巻き戻す（開いたファイルは `done()` が閉じる）。
+ */
+class StopSignal {}
+
+/**
+ * ループに受け止められなかった `LEAVE` / `ITERATE` の説明。
+ *
+ * 最上位（`run`）と**手続きの境界**（`callProcedure`）の両方で使う。
+ * どちらも「書いた場所にループが無い」ことの報告なので同じ文にする。
+ */
+function noLoopMessage(e: LeaveSignal | IterateSignal): string {
+  if (e instanceof LeaveSignal) {
+    return e.label === undefined
+      ? m`LEAVE はループの中でしか使えません`
+      : m`LEAVE ${e.label} に対応するループがありません`;
+  }
+  return e.label === undefined
+    ? m`ITERATE はループの中でしか使えません`
+    : m`ITERATE ${e.label} に対応するループがありません`;
+}
+
 /** GOTO を実装するための内部例外。飛び先のラベルを運ぶ。 */
 class GotoSignal {
   constructor(readonly label: string) {}
@@ -154,6 +179,25 @@ class GotoSignal {
  * （バナーを stderr に出して終了する処理系もある）。
  */
 const RESUMABLE = new Set(["ZERODIVIDE", "FIXEDOVERFLOW", "OVERFLOW", "UNDERFLOW", "CONVERSION"]);
+
+/**
+ * `SIGNAL` で起こしたとき、ON 単位が無くても続行する条件。
+ *
+ * 規定の各条件の「Implicit action」が「Execution continues」や
+ * 「A new page is started」のように**終わらせない**ものを挙げる
+ * （p.403-420）。ここに無い条件は暗黙動作で ERROR へ連鎖する。
+ */
+const RESUME_WITHOUT_UNIT: ReadonlySet<string> = new Set([
+  "FINISH",
+  "STRINGSIZE",
+  "STRINGRANGE",
+  "UNDERFLOW",
+  "ENDPAGE",
+  "NAME",
+  "CONDITION",
+  "ATTENTION",
+  "ATTN",
+]);
 
 /**
  * 条件により実行を終える内部例外。
@@ -214,6 +258,26 @@ interface Variable {
    * `group` は確保の単位（構造体なら親の名前）。
    */
   based?: { pointer?: Ref; group: string };
+  /**
+   * 呼び元の記憶域の **1 枡への窓**。
+   *
+   * 参照渡しで配列の要素（`call p(a(2))`）・ポインタ先（`p -> cell`）・
+   * `DEFINED` の別名を受け取ったときに付く。読み書きはここへ転送するので、
+   * 呼び先の代入が呼び元のその枡に届く（規定 p.161）。
+   * 窓を持つ引数は必ずスカラなので、添字は 0 しか来ない。
+   */
+  window?: { cells: Value[]; index: number };
+}
+
+/** 窓を考えて 1 枡を読む。窓が無ければ自分の記憶域をそのまま見る。 */
+function cellOf(v: Variable, idx: number): Value | undefined {
+  return v.window === undefined ? v.cells[idx] : v.window.cells[v.window.index];
+}
+
+/** 窓を考えて 1 枡へ書く。 */
+function putCell(v: Variable, idx: number, value: Value): void {
+  if (v.window === undefined) v.cells[idx] = value;
+  else v.window.cells[v.window.index] = value;
 }
 
 /**
@@ -227,6 +291,8 @@ interface ArgBinding {
   cells: Value[];
   dims?: Bound[];
   shared: boolean;
+  /** 1 枡だけを共有する場合の窓（配列の要素・ポインタ先・別名）。 */
+  window?: { cells: Value[]; index: number };
 }
 
 function isArgBinding(x: Value | ArgBinding): x is ArgBinding {
@@ -248,6 +314,16 @@ interface ProcDef {
 
 class Scope {
   readonly vars = new Map<string, Variable>();
+  /**
+   * このブロックに入るときに済ませた `DECLARE` の節点。
+   *
+   * PL/I の `DECLARE` は実行文ではなく、有効範囲はブロック全体（規定 p.201）。
+   * ブロックに入る時点でまとめて実行し、文の位置に来たら飛ばす。
+   * 文として実行すると、名前を使う文より後ろの宣言が記憶域を作り直して
+   * **先の代入が黙って消える**（しかも Linter はブロック単位で見ているので
+   * 指摘が出ず、両方を走らせても気づけない）。
+   */
+  readonly hoisted = new Set<Stmt>();
   readonly procs = new Map<string, ProcDef>();
   /** ON 単位。条件名から実行する文への対応。 */
   readonly onUnits = new Map<string, Stmt>();
@@ -314,10 +390,58 @@ function toBits(n: number, length?: number): string {
     : bits.padStart(length, "0");
 }
 
-/** FIXED を BIT の 2 進列にする。小数部は捨てる（BIT は整数のビット列）。 */
-function fixedToBits(x: FixedVal, length?: number): string {
-  const intVal = assignTo(x, x.base, Math.max(1, x.p - x.q), 0);
-  return toBits(Number(render(intVal).trim()), length);
+/**
+ * `F(w,d)` で小数点が書かれていない欄に、小数点を入れた形にする（規定 p.323）。
+ * `"12345"` を `f(5,2)` で読めば `"123.45"`、`"5"` を `f(1,3)` なら `"0.005"`。
+ */
+function assumedPoint(text: string, decimals?: number): string {
+  if (decimals === undefined || decimals <= 0) return text;
+  if (text === "" || text.includes(".") || /[eE]/.test(text)) return text;
+  const neg = text.startsWith("-");
+  const digits = text.replace(/^[+-]/, "");
+  if (!/^\d+$/.test(digits)) return text;
+  const padded = digits.padStart(decimals + 1, "0");
+  const cut = padded.length - decimals;
+  return `${neg ? "-" : ""}${padded.slice(0, cut)}.${padded.slice(cut)}`;
+}
+
+/**
+ * 算術値から BIT への**中間ビット列**（規定 p.138）。
+ *
+ * 長さは値の精度で決まる。FIXED BIN(p,q) なら p-q 桁、
+ * FIXED DEC(p,q) なら `CEIL((p-q)*3.32)` 桁。
+ * そのあと**文字列代入の規則**（右を切る・右を `'0'B` で埋める、p.128）で
+ * 宣言した長さへ詰める。代入先の長さに右詰めすると、規定の例
+ * （`dcl a bit(1); a = 1;` が `'0'B`。p.139）が逆になる。
+ */
+function fixedToBits(x: FixedVal): string {
+  const digits = Math.max(1, x.p - x.q);
+  const width = x.base === "bin" ? digits : Math.ceil(digits * 3.32);
+  const intVal = assignTo(x, x.base, digits, 0);
+  return toBits(Number(render(intVal).trim()), width);
+}
+
+/**
+ * `CHAR(*)` / `BIT(*)` の長さを、渡された引数から決める。
+ *
+ * 引数の宣言でしか書けない（それ以外は構文解析の段で断る）。
+ * 長さの既定（1）に落とすと、呼ぶ側が `CHAR(5)` を渡しても
+ * `LENGTH(t)` が 1 を返し、`SUBSTR` も右端を失う。
+ */
+function starToPassed(attr: DataAttr, passed: Variable, line: number): DataAttr {
+  if (attr.type !== "char" && attr.type !== "bit") return attr;
+  if (attr.starLength !== true) return attr;
+  const got = passed.cells[0];
+  if (attr.type === "char") {
+    if (got?.t !== "char") {
+      throw new RuntimeError(m`CHAR(*) の引数に文字列以外が渡されました`, line);
+    }
+    return { type: "char", length: got.length, varying: attr.varying };
+  }
+  if (got?.t !== "bit") {
+    throw new RuntimeError(m`BIT(*) の引数にビット列以外が渡されました`, line);
+  }
+  return { type: "bit", length: got.length };
 }
 
 /**
@@ -354,7 +478,8 @@ function zeroOf(attr: DataAttr): Value {
     case "char":
       return makeChar("", attr.length, attr.varying);
     case "bit":
-      return makeBit("", attr.length);
+      // VARYING は長さ 0 から始まる（CHAR VARYING と同じ）
+      return attr.varying === true ? makeBit("") : makeBit("", attr.length);
   }
 }
 
@@ -488,6 +613,13 @@ export class Interpreter {
    */
   private callerLines: number[] = [];
   /**
+   * `ADDR` が返した記憶域の表（枡 → 記憶域）。同じ枡に同じ実体を返すため。
+   * 鍵は記憶域の並びそのものなので WeakMap で持つ。
+   */
+  private addrCache = new WeakMap<Value[], Map<number, Storage>>();
+  /** データリストの反復指定の本体（`expandIterList` が差し替える）。 */
+  private onNullStatement: (() => void) | undefined;
+  /**
    * 誤りで終わったときの `callerLines` の写し。
    *
    * 積みは例外が抜けるときに巻き戻るので、投げる時点で控えておく。
@@ -515,7 +647,7 @@ export class Interpreter {
    */
   private readonly basedTemplates = new Map<
     string,
-    { name: string; attr: DataAttr; dims?: Bound[] }[]
+    { name: string; attr: DataAttr; dims?: Bound[]; init?: Expr[] }[]
   >();
   /**
    * いま実行中のスコープ。
@@ -605,6 +737,8 @@ export class Interpreter {
     try {
       this.runUnguarded(program);
     } catch (e) {
+      // STOP は正常な終わり方。ここで止めて診断を出さない
+      if (e instanceof StopSignal) return;
       // 内部で使っている制御用の例外が外へ漏れたら、意味の分かる誤りに直す。
       // Error ではないので、そのまま漏らすと診断が `[object Object]` になり、
       // 行番号も 1 固定になる
@@ -614,21 +748,8 @@ export class Interpreter {
           this.currentLine,
         );
       }
-      if (e instanceof LeaveSignal) {
-        throw new RuntimeError(
-          e.label === undefined
-            ? m`LEAVE はループの中でしか使えません`
-            : m`LEAVE ${e.label} に対応するループがありません`,
-          this.currentLine,
-        );
-      }
-      if (e instanceof IterateSignal) {
-        throw new RuntimeError(
-          e.label === undefined
-            ? m`ITERATE はループの中でしか使えません`
-            : m`ITERATE ${e.label} に対応するループがありません`,
-          this.currentLine,
-        );
+      if (e instanceof LeaveSignal || e instanceof IterateSignal) {
+        throw new RuntimeError(noLoopMessage(e), this.currentLine);
       }
       if (e instanceof RangeError && /call stack/i.test(e.message)) {
         // 再帰が深すぎて JS のスタックを使い切った。
@@ -731,17 +852,49 @@ export class Interpreter {
    * 一時値（ダミー引数）として渡す。`DEFINED` と `BASED` は
    * 別の記憶域への窓なので、共有せず値で渡す。
    */
+  /**
+   * 実引数を束縛する。
+   *
+   * PL/I は**参照渡し**で、ダミー引数（値渡し）になるのは
+   * 定数・演算子や括弧や関数参照を含む式・属性が違う場合だけ（規定 p.162）。
+   * つまり `a(2)` や `p -> cell` や `DEFINED` の別名も参照渡しである。
+   * 記憶域ごと共有できないもの（1 枡だけ）は**窓**として渡す。
+   */
   private bindArgs(args: Expr[], scope: Scope, line: number): ArgBinding[] {
     return args.map((a) => {
-      if (a.kind === "ref" && a.subscripts.length === 0 && a.locator === undefined) {
+      // 括弧で包んだ引数はダミーにする（規定 p.162）。
+      // `called`（括弧が書かれていたか）では弾かない。添字付きの参照は
+      // 必ず括弧を伴うので、弾くと `a(2)` が値渡しに落ちる
+      if (a.kind === "ref" && a.parens !== true) {
         const v = scope.lookupVar(a.name.toUpperCase());
-        if (v !== undefined && v.defined === undefined && v.based === undefined) {
-          return {
-            attr: v.attr,
-            cells: v.cells,
-            ...(v.dims === undefined ? {} : { dims: v.dims }),
-            shared: true,
-          };
+        if (v !== undefined) {
+          const plain =
+            a.subscripts.length === 0 &&
+            a.locator === undefined &&
+            v.defined === undefined &&
+            v.based === undefined &&
+            v.window === undefined;
+          // 名前だけの参照は記憶域ごと共有する（配列まるごとも渡せる）
+          if (plain) {
+            return {
+              attr: v.attr,
+              cells: v.cells,
+              ...(v.dims === undefined ? {} : { dims: v.dims }),
+              shared: true,
+            };
+          }
+          // 添字付き・ポインタ修飾・別名・窓は 1 枡の窓として共有する。
+          // 値渡しにすると `call swap(a(1),a(2));` が黙って何もしない
+          const slot = this.slotOf(a, scope, line);
+          const cur = slot === undefined ? undefined : slot.cells[slot.index];
+          if (slot !== undefined && cur !== undefined) {
+            return {
+              attr: slot.attr,
+              cells: [cur],
+              window: { cells: slot.cells, index: slot.index },
+              shared: true,
+            };
+          }
         }
       }
       const value = this.eval(a, scope, line);
@@ -772,6 +925,14 @@ export class Interpreter {
         scope.procs.set(s.name.toUpperCase(), { stmt: s, defScope: scope });
       }
     }
+    // 引数の数が合わなければ断る。多い分を黙って捨てると、
+    // 引数の並びを 1 つずらした呼び出しが誤りも出さずに通る
+    if (args.length > def.stmt.params.length) {
+      throw new RuntimeError(
+        m`手続き ${def.stmt.name} は引数を ${def.stmt.params.length} 個取りますが ${args.length} 個渡されました`,
+        this.currentLine,
+      );
+    }
     // 引数を束縛する。変数は参照、式は一時値（ダミー引数）
     def.stmt.params.forEach((p, i) => {
       const a = args[i];
@@ -785,17 +946,28 @@ export class Interpreter {
         // 共有する場合は配列そのものを渡す（書き戻しが呼び元へ届く）
         cells: b.shared ? b.cells : [...b.cells],
         ...(b.dims === undefined ? {} : { dims: b.dims }),
+        ...(b.window === undefined ? {} : { window: b.window }),
         isParam: true,
         ...(b.shared ? { sharedParam: true } : {}),
       });
     });
 
-    // 呼び出した位置を控える。誤りの報告で「どこから呼んだか」を出すため
+    // 呼び出した位置を控える。誤りの報告で「どこから呼んだか」を出すため。
+    // 宣言の実行より先に積む（宣言の中で起きた誤りも呼び出し元を指せる）
     this.callerLines.push(this.currentLine);
     try {
+      // 宣言はブロックに入る時点でまとめて実行する（規定 p.201）。
+      // 引数の属性宣言も含むので、引数を束縛したあとに行う
+      this.hoistDeclares(def.stmt.body, scope);
       this.execBlock(def.stmt.body, scope);
     } catch (e) {
       if (e instanceof ReturnSignal) return e.value;
+      // LEAVE / ITERATE は**手続きの境界を越えない**（PL/I の規定）。
+      // 越えさせると、呼ばれた側の `leave;` が呼び元のループを
+      // 誤りも出さずに抜ける（呼び元を読んでも理由が分からない）
+      if (e instanceof LeaveSignal || e instanceof IterateSignal) {
+        throw new RuntimeError(noLoopMessage(e), this.currentLine);
+      }
       // 積みが巻き戻る前に控える。
       // 最初に抜けた時点（一番深いところ）のものを残す。
       // GOTO / LEAVE / ITERATE は誤りではないので控えない
@@ -852,7 +1024,9 @@ export class Interpreter {
           s.line,
         );
       default:
-        return false;
+        // 処理系が用意するサブルーチン（規定 p.454）。実装しないが、
+        // 「手続きが見つかりません」では綴り間違いと区別が付かない
+        throw new Unsupported(m`組込サブルーチン ${s.name}`, s.line);
     }
   }
 
@@ -1212,7 +1386,12 @@ export class Interpreter {
         ...(group.locator === undefined ? {} : { locator: group.locator }),
       };
       const based = this.basedCells(v, ref, scope, line);
-      return { key, attr: v.attr, cells: based ?? v.cells, index: 0 };
+      return {
+        key,
+        attr: v.attr,
+        cells: based?.cells ?? v.cells,
+        index: based?.base ?? 0,
+      };
     });
   }
 
@@ -1310,7 +1489,44 @@ export class Interpreter {
         scope.procs.set(s.name.toUpperCase(), { stmt: s, defScope: scope });
       }
     }
+    this.hoistDeclares(stmts, scope);
     this.execBlock(stmts, scope);
+  }
+
+  /**
+   * ブロックの `DECLARE` を、入った時点でまとめて実行する（規定 p.201）。
+   *
+   * 入れ子の**ブロック**（手続き・BEGIN）の中の宣言はそのブロックのものなので
+   * 降りない。DO 群・IF・SELECT の中の宣言は同じブロックのものなので降りる。
+   * 宣言どうしの順序は原文のままにする（`init` が前の宣言を参照できる）。
+   */
+  private hoistDeclares(stmts: Stmt[], scope: Scope): void {
+    for (const s of stmts) {
+      switch (s.kind) {
+        case "declare":
+          scope.hoisted.add(s);
+          this.declareAll(s.items, scope, s.line);
+          break;
+        case "doGroup":
+        case "doWhile":
+        case "doUntil":
+        case "doIter":
+          this.hoistDeclares(s.body, scope);
+          break;
+        case "if":
+          this.hoistDeclares(s.else === undefined ? [s.then] : [s.then, s.else], scope);
+          break;
+        case "select":
+          for (const w of s.whens) this.hoistDeclares([w.body], scope);
+          if (s.otherwise !== undefined) this.hoistDeclares([s.otherwise], scope);
+          break;
+        case "on":
+          if (s.body !== undefined) this.hoistDeclares([s.body], scope);
+          break;
+        default:
+          break;
+      }
+    }
   }
 
   /** SELECT の実行。 */
@@ -1329,7 +1545,7 @@ export class Interpreter {
       // SELECT; 形式は WHEN の式を条件として評価する
       for (const w of s.whens) {
         for (const v of w.values) {
-          if (this.truth(this.eval(v, scope, s.line), s.line)) {
+          if (this.evalCondition(v, scope, s.line)) {
             this.exec(w.body, scope);
             return;
           }
@@ -1409,7 +1625,10 @@ export class Interpreter {
           if (e instanceof FinishSignal) break;
           throw e;
         }
-        break;
+        // **ここで止めない。** その条件の ON 単位から正常復帰したら
+        // ERROR 条件が起きる（規定 p.418/421 の「Normal return: The ERROR
+        // condition is raised」）。止めると、共通の後始末を `ON ERROR` に
+        // 置く定石が、条件ごとの ON 単位を書いた途端に飛ばされる
       }
     } finally {
       this.inCondition = false;
@@ -1423,10 +1642,58 @@ export class Interpreter {
    * `ON` 単位が置かれていればそこへ回し、無ければふつうの実行時誤りにする。
    * 置かれていないときに条件の名前だけを出すと、何が起きたのか分からない。
    */
+  /**
+   * 文字列をビット列にする。
+   *
+   * PL/I は `'0'` と `'1'` 以外の文字を **CONVERSION 条件**にする。
+   * 検査せずに通すと、`dcl b bit(8); b = 'abc';` が `'abc00000'B` という
+   * ビットでない「ビット列」になり、`&` や `|` が黙って誤った答えを返す
+   * （`'abc00000'B & '11111111'B` が `'00000000'B`）。
+   * 字句解析は `'abc'b` を定数の段で断っているので、変換の側も断る。
+   */
+  /**
+   * 値を BIT 列にする（規定 p.121 の「All non-BIT data is converted to BIT」）。
+   * 文字は 0/1 だけ、算術は精度から決まる中間ビット列。
+   */
+  private toBitString(v: Value, line: number): string {
+    switch (v.t) {
+      case "bit": return v.v;
+      case "char": return this.charToBits(v.v, line);
+      case "fixed": return fixedToBits(v);
+      case "float": return fixedToBits(this.toFixed(v, line));
+      case "pointer":
+        throw new RuntimeError(m`ポインタは BIT に変換できません`, line);
+    }
+  }
+
+  private charToBits(text: string, line: number): string {
+    if (!/^[01]*$/.test(text)) {
+      this.raiseChecked(
+        "CONVERSION",
+        m`ビット列にできません（0 と 1 以外の文字があります）: ${clip(text)}`,
+        line,
+      );
+    }
+    return text;
+  }
+
+  /**
+   * 条件を起こす。ただし ON 単位がどこにも無ければ、
+   * 条件名だけでは何が起きたか分からないので**意味の分かる誤り**にする。
+   *
+   * `ON ERROR` だけが置かれている場合も通す（規定 p.395「The implicit
+   * action for many conditions is to raise the ERROR condition. This
+   * provides a common condition that can be used to check for a number of
+   * different conditions」）。通さないと、共通の後始末を `ON ERROR` に
+   * 置く定石が黙って飛ばされる。
+   */
   private raiseChecked(condition: string, message: string, line: number): never {
     const scope = this.currentScope;
-    if (scope.lookupOn(condition) !== undefined) {
-      this.raise(condition, scope, line);
+    if (
+      scope.lookupOn(condition) !== undefined ||
+      scope.lookupOn("ERROR") !== undefined
+    ) {
+      this.raise(condition, scope, line, undefined, message);
     }
     throw new RuntimeError(message, line);
   }
@@ -1444,39 +1711,55 @@ export class Interpreter {
         // 定義のみ。呼ばれたときに実行する
         return;
       case "null":
+        // データリストの反復指定を展開するときだけ使うフック。
+        // 反復の仕掛けを `doIter` に任せるために、本体の空文へ差し込む
+        this.onNullStatement?.();
         return;
       case "declare":
+        // ブロックに入るときに済ませてある（`hoistDeclares`）。
+        // ここで作り直すと、初期値が入り直して値が消える
+        if (scope.hoisted.has(s)) return;
         this.declareAll(s.items, scope, s.line);
         return;
       case "assign": {
-        // 構造体全体の代入（b = a）は葉を宣言順に突き合わせる
-        if (this.assignGroup(s.target, s.value, scope, s.line)) return;
-        // 配列全体への代入（c = a + b など）は要素ごとに行う
-        const lhs = scope.lookupVar(s.target.name.toUpperCase());
-        if (lhs?.dims && s.target.subscripts.length === 0) {
-          // 右辺が配列になるなら要素ごとに代入する。
-          // `binary` だけを見ると `c = -a` が先頭要素の配り直しになる
-          const values = this.evalArray(s.value, scope, s.line);
-          if (values) {
-            // 要素数が合わなければ断る。黙って切ると
-            // 「後ろの要素が更新されていない」ことに気づけない
-            if (values.length !== lhs.cells.length) {
-              throw new RuntimeError(
-                m`配列式の要素数が合いません（${s.target.name} は ${lhs.cells.length} 要素、右辺は ${values.length} 要素）`,
-                s.line,
-              );
+        // 左辺は複数書ける（`a, b = 0;`）。**右辺は 1 度だけ評価する**のが
+        // PL/I の規定なので、左辺ごとに評価し直さず控えて配る
+        // （`a, b = f();` が f を 2 度呼ぶと副作用が倍になる）
+        let scalar: Value | undefined;
+        let elements: Value[] | null | undefined;
+        for (const target of s.targets) {
+          // 構造体全体の代入（b = a）は葉を宣言順に突き合わせる
+          if (this.assignGroup(target, s.value, scope, s.line)) continue;
+          // 配列全体への代入（c = a + b など）は要素ごとに行う
+          const lhs = scope.lookupVar(target.name.toUpperCase());
+          if (lhs?.dims && target.subscripts.length === 0) {
+            // 右辺が配列になるなら要素ごとに代入する。
+            // `binary` だけを見ると `c = -a` が先頭要素の配り直しになる
+            if (elements === undefined) elements = this.evalArray(s.value, scope, s.line);
+            const values = elements;
+            if (values) {
+              // 要素数が合わなければ断る。黙って切ると
+              // 「後ろの要素が更新されていない」ことに気づけない
+              if (values.length !== lhs.cells.length) {
+                throw new RuntimeError(
+                  m`配列式の要素数が合いません（${target.name} は ${lhs.cells.length} 要素、右辺は ${values.length} 要素）`,
+                  s.line,
+                );
+              }
+              values.forEach((v, i) => {
+                lhs.cells[i] = this.coerce(v, lhs.attr, s.line);
+              });
+              continue;
             }
-            values.forEach((v, i) => {
-              lhs.cells[i] = this.coerce(v, lhs.attr, s.line);
-            });
-            return;
+            // スカラを配列全体へ配る
+            scalar ??= this.eval(s.value, scope, s.line);
+            const one = scalar;
+            lhs.cells = lhs.cells.map(() => this.coerce(one, lhs.attr, s.line));
+            continue;
           }
-          // スカラを配列全体へ配る
-          const scalar = this.eval(s.value, scope, s.line);
-          lhs.cells = lhs.cells.map(() => this.coerce(scalar, lhs.attr, s.line));
-          return;
+          scalar ??= this.eval(s.value, scope, s.line);
+          this.assign(target, scalar, scope, s.line);
         }
-        this.assign(s.target, this.eval(s.value, scope, s.line), scope, s.line);
         return;
       }
       case "put":
@@ -1484,7 +1767,7 @@ export class Interpreter {
         this.checkOutput();
         return;
       case "if": {
-        if (this.truth(this.eval(s.cond, scope, s.line), s.line)) this.exec(s.then, scope);
+        if (this.evalCondition(s.cond, scope, s.line)) this.exec(s.then, scope);
         else if (s.else) this.exec(s.else, scope);
         return;
       }
@@ -1502,13 +1785,18 @@ export class Interpreter {
         }
         return;
       case "doWhile":
-        while (this.truth(this.eval(s.cond, scope, s.line), s.line)) {
+        while (this.evalCondition(s.cond, scope, s.line)) {
           this.step();
           try {
             this.execBlock(s.body, scope);
           } catch (e) {
             if (e instanceof LeaveSignal && forThisLoop(e, s.labels)) break;
             if (!(e instanceof IterateSignal) || !forThisLoop(e, s.labels)) throw e;
+          }
+          // `DO WHILE(a) UNTIL(b);` の併記。UNTIL は本体の**後**に見る。
+          // ITERATE で本体を飛ばしたときも見る（PL/I の規定）
+          if (s.until !== undefined && this.evalCondition(s.until, scope, s.line)) {
+            break;
           }
         }
         return;
@@ -1521,7 +1809,7 @@ export class Interpreter {
             if (e instanceof LeaveSignal && forThisLoop(e, s.labels)) break;
             if (!(e instanceof IterateSignal) || !forThisLoop(e, s.labels)) throw e;
           }
-        } while (!this.truth(this.eval(s.cond, scope, s.line), s.line));
+        } while (!this.evalCondition(s.cond, scope, s.line));
         return;
       case "doIter":
         this.doIter(s, scope);
@@ -1543,12 +1831,26 @@ export class Interpreter {
       }
       case "beginBlock": {
         // BEGIN ブロックは独自の名前の有効範囲を持つ
-        this.execBlockScoped(s.body, new Scope(scope));
+        try {
+          this.execBlockScoped(s.body, new Scope(scope));
+        } catch (e) {
+          // `LEAVE` / `ITERATE` はブロックの境界を越えない
+          // （規定 p.280「The LEAVE statement and the referenced or implied
+          // DO statement must not be in different blocks」）。
+          // 越えさせると、ブロックの中の `leave;` が外のループを
+          // 誤りも出さずに抜ける
+          if (e instanceof LeaveSignal || e instanceof IterateSignal) {
+            throw new RuntimeError(noLoopMessage(e), this.currentLine);
+          }
+          throw e;
+        }
         return;
       }
       case "select":
         this.select(s, scope);
         return;
+      case "stop":
+        throw new StopSignal();
       case "leave":
         throw new LeaveSignal(s.label);
       case "iterate":
@@ -1586,9 +1888,10 @@ export class Interpreter {
           if (f.attrs.title !== undefined) {
             attrs.title = this.asText(this.eval(f.attrs.title, scope, s.line)).trim();
           }
-          if (this.files.isOpen(f.name)) {
-            throw new RuntimeError(m`${f.name} は既に開かれています`, s.line);
-          }
+          // 「Opening a file that is already open does not affect the
+          // file」（規定 p.338）。誤りにすると、使う前に開く補助手続きを
+          // 置く書き方が通らない
+          if (this.files.isOpen(f.name)) continue;
           this.openForUse(f.name, attrs, s.line);
         }
         return;
@@ -1615,6 +1918,12 @@ export class Interpreter {
           this.checkCells(n, m`${leaf.name} の ALLOCATE`, s.line);
           const cells: Value[] = [];
           for (let k = 0; k < n; k++) cells.push(zeroOf(leaf.attr));
+          // 宣言の INITIAL を入れる（規定 p.300。確保のたびに入る）
+          leaf.init?.forEach((e, i) => {
+            if (i < cells.length) {
+              cells[i] = this.coerce(this.eval(e, scope, s.line), leaf.attr, s.line);
+            }
+          });
           storage.cells.set(leaf.name, cells);
         }
         // SET(p) が無ければ宣言の based(p) に入れる
@@ -1671,14 +1980,37 @@ export class Interpreter {
         }
         return;
       case "signal": {
-        // 入出力の条件は ON 単位から**復帰して続行する**のが PL/I の規定。
-        // 計算条件用の `raise` を使うと、`GET` で起きた ENDFILE は復帰するのに
-        // `SIGNAL ENDFILE(f)` だけが終了するという食い違いになり、しかも
-        // 診断が「ON ENDFILE(f) を置くか」と嘘をつく（置いてある）
-        const io = ["ENDFILE", "UNDEFINEDFILE", "ENDPAGE"].includes(s.condition);
-        if (io && s.conditionFile !== undefined) {
-          this.raiseIo(s.condition, scope, s.line, s.conditionFile);
-          return;
+        /*
+         * `SIGNAL` で起こした条件は、ON 単位を実行したあと
+         * **次の文へ復帰する**（規定 p.403「If a condition (except the
+         * ERROR condition) has been raised by the SIGNAL statement, the
+         * normal return is always to the statement immediately following
+         * SIGNAL」）。
+         *
+         * 以前は ERROR 以外も `raise` を通していたので、ON 単位を 1 回
+         * 走らせてプログラムが終わっていた。Linter が「この処理系は
+         * この条件を起こしませんが、SIGNAL で明示的に起こせます」と
+         * 案内している逃げ道が、実際には使えなかった。
+         */
+        if (s.condition !== "ERROR") {
+          const key =
+            s.conditionFile === undefined
+              ? s.condition
+              : `${s.condition}(${s.conditionFile.toUpperCase()})`;
+          const unit = scope.lookupOn(key) ?? scope.lookupOn(s.condition);
+          if (unit !== undefined) {
+            const prev = this.inCondition;
+            this.inCondition = true;
+            try {
+              this.exec(unit, scope);
+            } finally {
+              this.inCondition = prev;
+            }
+            return;
+          }
+          // ON 単位が無い場合は暗黙動作。続行する条件（規定 p.403-420 で
+          // 「Execution continues」と書かれているもの）はそのまま進む
+          if (RESUME_WITHOUT_UNIT.has(s.condition)) return;
         }
         this.raise(
           s.condition,
@@ -1689,6 +2021,15 @@ export class Interpreter {
       }
       case "return": {
         if (s.value === undefined) throw new ReturnSignal();
+        // 「A RETURN statement with an expression is not valid in a
+        // procedure without the RETURNS option」（規定 p.176）。
+        // 黙って値を捨てると、返すつもりで書いた `return(x);` が消える
+        if (scope.returns === undefined) {
+          throw new RuntimeError(
+            m`RETURNS を宣言していない手続きでは RETURN に値を書けません`,
+            s.line,
+          );
+        }
         // 宣言した RETURNS の型へ合わせる。合わせないと
         // `returns(fixed dec(7,2))` と書いても式の精度のまま返り、
         // 表示幅も宣言とずれる
@@ -1729,7 +2070,8 @@ export class Interpreter {
     }
   }
 
-  private declare(item: DeclItem, scope: Scope, line: number): void {
+  private declare(itemIn: DeclItem, scope: Scope, line: number): void {
+    let item = itemIn;
     // ファイル宣言。OPEN の既定になるので表に覚えさせる
     if (item.attr.type === "file") {
       const a = item.attr;
@@ -1779,7 +2121,39 @@ export class Interpreter {
       // 引数名の DECLARE は属性の宣言であって新変数ではない。
       // 渡された値を宣言された型へ変換して保持する。
       const existing = scope.vars.get(key);
+      // CHAR(*) は引数の宣言でしか使えない。ふつうの変数に許すと
+      // 長さの既定（1）に落ちて、1 文字しか入らない箱が黙って出来る
+      if (
+        (item.attr.type === "char" || item.attr.type === "bit") &&
+        item.attr.starLength === true &&
+        existing?.isParam !== true
+      ) {
+        throw new RuntimeError(
+          m`${name} は引数ではないので (*) の長さを決められません`,
+          line,
+        );
+      }
+      // 次元を `(*)` と書いた引数は、境界を呼ぶ側から受け取る（規定 p.149）
+      if (item.starDims !== undefined) {
+        if (existing?.isParam !== true || existing.dims === undefined) {
+          throw new RuntimeError(
+            m`${name} は配列の引数ではないので (*) の境界を決められません`,
+            line,
+          );
+        }
+        if (existing.dims.length !== item.starDims) {
+          throw new RuntimeError(
+            m`(*) の数が渡された配列の次元と合いません（${item.starDims} と ${existing.dims.length}）`,
+            line,
+          );
+        }
+        item = { ...item, dims: existing.dims };
+      }
       if (existing?.isParam) {
+        // CHAR(*) / BIT(*) は長さを渡された引数から受け取る。
+        // 長さの既定（1）に落とすと、呼ぶ側が CHAR(5) を渡しても
+        // `length(t)` が 1 を返す
+        item = { ...item, attr: starToPassed(item.attr, existing, line) };
         // 宣言した属性が渡された値と同じなら、記憶域の共有を保つ
         // （参照渡し。呼び先の書き換えが呼び元へ戻る）。
         // 違うなら実機と同じく一時変数（ダミー引数）にして、
@@ -1790,6 +2164,8 @@ export class Interpreter {
         if (existing.sharedParam === true && needsConversion) {
           existing.cells = existing.cells.map((c) => this.coerce(c, item.attr, line));
           existing.sharedParam = false;
+          // 変換が入った引数はダミー引数なので、呼び元の枡との縁を切る
+          delete existing.window;
         } else {
           // 配列そのものを差し替えないこと。差し替えると共有が切れる
           for (let i = 0; i < existing.cells.length; i++) {
@@ -1814,7 +2190,15 @@ export class Interpreter {
         if (item.dims) v.dims = item.dims;
         scope.vars.set(key, v);
         const tmpl = this.basedTemplates.get(group) ?? [];
-        tmpl.push({ name: key, attr: item.attr, ...(item.dims ? { dims: item.dims } : {}) });
+        // INITIAL は ALLOCATE の時点で入れる（規定 p.300）。
+        // ここで捨てると、連鎖の節を `init(null())` で初期化する定型が
+        // 黙って 0 になる（AUTOMATIC と STATIC では効くので食い違う）
+        tmpl.push({
+          name: key,
+          attr: item.attr,
+          ...(item.dims ? { dims: item.dims } : {}),
+          ...(item.init ? { init: item.init } : {}),
+        });
         this.basedTemplates.set(group, tmpl);
         continue;
       }
@@ -1855,15 +2239,26 @@ export class Interpreter {
   /**
    * DO 反復。複数指定（`do i = 1 to 3, 7 to 9;`）に対応する。
    * LEAVE / ITERATE は内部例外で制御する。
+   *
+   * 1 指定の形は `from [TO to [BY by] | REPEAT next] [WHILE(w)] [UNTIL(u)]`。
+   * 見る順は PL/I の規定どおり **TO の判定 → WHILE → 本体 → UNTIL → 次の値**。
+   * UNTIL を本体の前に見ると `do i=1 to 10 until(i>=3);` が 2 回で終わる。
    */
   private doIter(s: Extract<Stmt, { kind: "doIter" }>, scope: Scope): void {
     const target: Ref = { kind: "ref", name: s.varName, subscripts: [] };
+    /** 条件を見る。書かれていなければ既定の答えを返す。 */
+    const test = (cond: Expr | undefined, dflt: boolean): boolean =>
+      cond === undefined ? dflt : this.evalCondition(cond, scope, s.line);
 
     outer: for (const spec of s.specs) {
       let cur = this.eval(spec.from, scope, s.line);
-      // TO が無い指定は単一値（`do i = 1, 5, 10;`）なので1回だけ実行する
-      if (spec.to === undefined) {
+      // TO も BY も REPEAT も無い指定は単一値（`do i = 1, 5, 10;`）なので
+      // 1 回だけ実行する。次の値を作る式が無いので UNTIL は効かない。
+      // **BY だけの指定は反復する**（`do i = 1 by 1 while(…);`）。
+      // ここで `by` を見ないと、上限の無い走査が黙って 1 回で終わる
+      if (spec.to === undefined && spec.by === undefined && spec.repeat === undefined) {
         this.assign(target, cur, scope, s.line);
+        if (!test(spec.while, true)) continue;
         try {
           this.execBlock(s.body, scope);
         } catch (e) {
@@ -1874,36 +2269,54 @@ export class Interpreter {
         continue;
       }
 
-      const limit = this.eval(spec.to, scope, s.line);
+      // REPEAT は TO の代わりに次の値を式で作るので、上限を持たない
+      const limit = spec.to === undefined ? undefined : this.eval(spec.to, scope, s.line);
       const step =
         spec.by === undefined
           ? fixedFromLiteral("1")
           : asFixed(this.eval(spec.by, scope, s.line), s.line);
       const down = step.v < 0n;
 
+      let first = true;
       for (;;) {
         this.step();
         this.assign(target, cur, scope, s.line);
-        // 読み戻しは `evalRef`。`readVar` は DEFINED / BASED の別名を
-        // 解決しないので、`assign` で書いた先と読む先が食い違い、
-        // `do i = 1 to 3;` の i が DEFINED だと終了判定が永久に成立しない
-        const c = compare(
-          asFixed(this.evalRef(target, scope, s.line), s.line),
-          asFixed(limit, s.line),
-        );
-        if (down ? c < 0 : c > 0) break;
+        // UPTHRU / DOWNTHRU は本体の後に判定するので、最初の 1 回は
+        // 上限を見ない（規定 p.265「The loop is executed at least once」）
+        if (limit !== undefined && !(spec.thru === true && first)) {
+          // 読み戻しは `evalRef`。`readVar` は DEFINED / BASED の別名を
+          // 解決しないので、`assign` で書いた先と読む先が食い違い、
+          // `do i = 1 to 3;` の i が DEFINED だと終了判定が永久に成立しない
+          const c = compare(
+            asFixed(this.evalRef(target, scope, s.line), s.line),
+            asFixed(limit, s.line),
+          );
+          if (down ? c < 0 : c > 0) break;
+        }
+        if (!test(spec.while, true)) break;
         try {
           this.execBlock(s.body, scope);
         } catch (e) {
           if (e instanceof LeaveSignal && forThisLoop(e, s.labels)) break outer;
           if (!(e instanceof IterateSignal) || !forThisLoop(e, s.labels)) throw e;
         }
-        cur = add(asFixed(this.evalRef(target, scope, s.line), s.line), step);
+        if (test(spec.until, false)) break;
+        first = false;
+        cur =
+          spec.repeat === undefined
+            ? add(asFixed(this.evalRef(target, scope, s.line), s.line), step)
+            : this.eval(spec.repeat, scope, s.line);
       }
     }
   }
 
   private put(s: Extract<Stmt, { kind: "put" }>, scope: Scope): void {
+    // PUT STRING(s) は行の無い書き出し口へ出して、結果を変数へ代入する。
+    // 本物の出力へは 1 文字も出さない
+    if (s.into !== undefined) {
+      this.putIntoString(s, s.into, scope);
+      return;
+    }
     const w = this.writerFor(s.file, s.line);
     for (const opt of s.options) {
       switch (opt.kind) {
@@ -1940,6 +2353,49 @@ export class Interpreter {
           break;
       }
     }
+  }
+
+  /**
+   * `PUT STRING(s)` の本体。
+   *
+   * 文字変数には行の概念が無いので、折り返さない書き出し口へ出して
+   * そのまま代入する（制御項目は構文解析の段で断ってある）。
+   * **桁揃えはしない**（`print: false`）。PRINT ファイルの 24 桁タブは
+   * 行の性質なので、文字列に持ち込むと項目の間が空白 24 個になる。
+   */
+  private putIntoString(
+    s: Extract<Stmt, { kind: "put" }>,
+    into: Ref,
+    scope: Scope,
+  ): void {
+    const limit = this.opts.maxStringLength ?? DEFAULT_MAX_STRING_LENGTH;
+    const w = new ListWriter({ print: false, lineSize: limit });
+    for (const opt of s.options) {
+      switch (opt.kind) {
+        case "list":
+          for (const v of this.dataList(opt.items, scope, s.line)) this.emit(v, w);
+          break;
+        case "edit":
+          this.putEdit(this.dataList(opt.items, scope, s.line), opt.format, scope, s.line, w);
+          break;
+        // SKIP / PAGE / LINE は parsePut が断るのでここへは来ない
+        default:
+          break;
+      }
+    }
+    const text = w.text();
+    // 宣言した長さに収まらなければ断る。黙って切ると
+    // 「書式は合っているのに右端が消える」ことに気づけない
+    const target = scope.lookupVar(into.name.toUpperCase());
+    const attr = target?.attr;
+    const room = attr?.type === "char" ? attr.length : undefined;
+    if (room !== undefined && text.length > room) {
+      throw new RuntimeError(
+        m`PUT STRING の結果（${text.length} 文字）が ${into.name}（${room} 文字）に収まりません`,
+        s.line,
+      );
+    }
+    this.assign(into, makeChar(text, text.length, false), scope, s.line);
   }
 
   /**
@@ -1984,7 +2440,58 @@ export class Interpreter {
           continue;
         }
       }
+      // 反復指定（type-3 DO。規定 p.302/314）を展開する
+      if (e.kind === "iterList") {
+        out.push(...this.expandIterList(e, scope, line));
+        continue;
+      }
+      // 配列になる式（`a+b` / `abs(a)`）も展開する。
+      // 展開しないと先頭要素だけが出て、残りが診断なしに消える（規定 p.123）
+      const arr = this.evalArray(e, scope, line);
+      if (arr !== undefined) {
+        out.push(...arr);
+        continue;
+      }
       out.push(this.eval(e, scope, line));
+    }
+    return out;
+  }
+
+  /**
+   * データリストの反復指定（type-3 DO）を値の並びに展開する。
+   *
+   * 反復 DO と同じ `DoSpec` を使うので、`TO` / `BY` / `REPEAT` /
+   * `WHILE` / `UNTIL` がそのまま効く。制御変数は実在の変数なので、
+   * 反復のあとも PL/I どおり最後の値が残る。
+   */
+  private expandIterList(
+    e: Extract<Expr, { kind: "iterList" }>,
+    scope: Scope,
+    line: number,
+  ): Value[] {
+    const out: Value[] = [];
+    const body: Stmt[] = [];
+    const iter: Stmt = {
+      kind: "doIter",
+      varName: e.varName,
+      specs: e.specs,
+      body,
+      line,
+    };
+    // 本体の代わりに「そのときの値を集める」処理を回すため、
+    // 反復だけ `doIter` に任せて本体は空にし、評価はここで行う。
+    // `doIter` は本体を `execBlock` で回すので、集める処理を
+    // 1 文として差し込む
+    body.push({ kind: "null", line });
+    const collect = (): void => {
+      for (const item of e.items) out.push(...this.dataList([item], scope, line));
+    };
+    const saved = this.onNullStatement;
+    this.onNullStatement = collect;
+    try {
+      this.doIter(iter, scope);
+    } finally {
+      this.onNullStatement = saved;
     }
     return out;
   }
@@ -2141,7 +2648,19 @@ export class Interpreter {
           );
         }
         const n = Number(render(asFixed(v, line)));
-        w.editNumber(render({ t: "float", base: "dec", p, v: n }), width);
+        const text = render({ t: "float", base: "dec", p, v: n });
+        // 「If the field width is such that significant digits or the sign
+        // are lost, the SIZE condition is raised」（規定 p.323）。
+        // 右から切ると仮数が丸ごと消えて `E+0004` という数値として
+        // 読めない文字列が残る（F 書式の桁あふれとは規定が違う）
+        if (text.length > width) {
+          this.raiseChecked(
+            "SIZE",
+            m`E 書式の幅 ${width} に ${text.trim()} が収まりません`,
+            line,
+          );
+        }
+        w.editNumber(text, width);
         return;
       }
     }
@@ -2233,7 +2752,26 @@ export class Interpreter {
     }
     if (slots.length === 0) return;
 
-    const texts: string[] = [];
+    /**
+     * 読めた値をその場で代入する。
+     *
+     * **データリストの読み終わりまで遅らせない**（規定 p.311）。
+     * 「A value read into a variable can be used in a format item that is
+     * associated with another variable later in the data list」。
+     * 遅らせると `get edit(m,s)(f(2),a(m))` の `a(m)` が 0 を見て、
+     * 「幅省略の A」＝行の残り全部になる。
+     */
+    let filled = 0;
+    const place = (text: string, decimals?: number): void => {
+      const slot = slots[filled];
+      filled++;
+      if (slot === undefined) return;
+      const v = scope.lookupVar(slot.ref.name.toUpperCase());
+      if (!v) throw new RuntimeError(m`変数 ${slot.ref.name} が見つかりません`, s.line);
+      const parsed = this.parseInput(text, v.attr, s.line, decimals);
+      if (slot.index >= 0) v.cells[slot.index] = parsed;
+      else this.assign(slot.ref, parsed, scope, s.line);
+    };
     /**
      * 代入を済ませたあとに ENDFILE を上げる回数。
      *
@@ -2252,7 +2790,7 @@ export class Interpreter {
       const num = (e: Expr) =>
         Number(render(asFixed(this.eval(e, scope, s.line), s.line)));
       let fi = 0;
-      while (texts.length < slots.length && fi < fmt.length * (slots.length + 1)) {
+      while (filled < slots.length && fi < fmt.length * (slots.length + 1)) {
         const f = fmt[fi % fmt.length]!;
         fi++;
         if (!Interpreter.consumesData(f)) {
@@ -2273,23 +2811,31 @@ export class Interpreter {
           // 幅を省略した A はこの処理系では 1 行ぶんとして扱う
           width = f.width === undefined ? 0 : num(f.width);
           if (width === 0) {
-            texts.push(cursor.restOfLine());
+            place(cursor.restOfLine());
             continue;
           }
         } else {
           width = num(f.width);
         }
-        texts.push(cursor.take(width));
+        // F(w,d) の d は「小数点が書かれていない欄の小数桁」（規定 p.323）
+        const decimals =
+          f.kind === "f" && f.decimals !== undefined ? num(f.decimals) : undefined;
+        place(cursor.take(width), decimals);
       }
     } else {
       for (let i = 0; i < slots.length; i++) {
         const item = cursor.nextItem();
         if (item === undefined) {
-          // データが尽きた。**読めた分は捨てない**（代入してから上げる）
+          // データが尽きた。**読めた分は捨てない**（その場で代入済み）
           if (fileName !== undefined) endfileAfter++;
           break;
         }
-        texts.push(item);
+        // 空フィールドは値を変えずに次の項目へ進む（規定 p.314）
+        if (item === null) {
+          filled++;
+          continue;
+        }
+        place(item);
         // 末尾に届いた読み取りでも上げる。
         // 代入は済ませてから上げるので、ここでは数えるだけ
         if (fileName !== undefined && cursor.atLastItem()) {
@@ -2298,23 +2844,23 @@ export class Interpreter {
       }
     }
 
-    slots.forEach((slot, i) => {
-      const text = texts[i];
-      if (text === undefined) return;
-      const v = scope.lookupVar(slot.ref.name.toUpperCase());
-      if (!v) throw new RuntimeError(m`変数 ${slot.ref.name} が見つかりません`, s.line);
-      const parsed = this.parseInput(text, v.attr, s.line);
-      if (slot.index >= 0) v.cells[slot.index] = parsed;
-      else this.assign(slot.ref, parsed, scope, s.line);
-    });
-
     for (let i = 0; i < endfileAfter && fileName !== undefined; i++) {
       this.raiseIo("ENDFILE", scope, s.line, fileName);
     }
   }
 
-  /** 入力テキストを宣言された型の値にする。 */
-  private parseInput(text: string, attr: DataAttr, line: number): Value {
+  /**
+   * 入力テキストを宣言された型の値にする。
+   *
+   * `decimals` は `F(w,d)` の d。小数点が書かれていない欄では
+   * **右から d 桁が小数**になる（規定 p.323）。無視すると 10^d 倍になる。
+   */
+  private parseInput(
+    text: string,
+    attr: DataAttr,
+    line: number,
+    decimals?: number,
+  ): Value {
     if (attr.type === "picture") {
       const spec = parsePicture(attr.picture);
       return this.coerce(fixedFromLiteral(uneditPicture(text, spec)), attr, line);
@@ -2322,7 +2868,7 @@ export class Interpreter {
     if (attr.type === "char" || attr.type === "bit") {
       return this.coerce(makeChar(text, undefined, true), attr, line);
     }
-    const t = text.trim();
+    const t = assumedPoint(text.trim(), decimals);
     if (t === "") return zeroOf(attr);
     // 指数表記（`1.5E3`）と末尾の小数点（`5.`）も受ける。
     // FLOAT 変数へ読むのは PL/I でふつうの書き方なので、
@@ -2347,6 +2893,11 @@ export class Interpreter {
 
   private emit(v: Value, w: ListWriter): void {
     switch (v.t) {
+      case "pointer":
+        // 「the data type might also be POINTER」（規定 p.302）。
+        // 枝が無いと項目が黙って消え、書いた行が出ない理由が分からない
+        w.putChar(render(v));
+        return;
       case "char":
         w.putChar(v.v);
         return;
@@ -2356,7 +2907,8 @@ export class Interpreter {
       case "float":
         // FLOAT DEC(6) は ' 3.50000E+0000' でフィールド幅14。
         // 仮数(1 + 1 + (p-1)) + 指数(E±dddd = 6) + 符号1 = p + 8。
-        w.putNumber(render(v), floatWidth(v.p));
+        // FLOAT BIN は 10 進へ換算した桁数で数える（規定 p.136）
+        w.putNumber(render(v), floatWidth(floatDecDigits(v)));
         return;
       case "fixed":
         if (v.pic) {
@@ -2393,6 +2945,21 @@ export class Interpreter {
     }
 
     if (s.op === "read") {
+      // `READ FILE(f) IGNORE(n);` と、指定の無い `READ FILE(f);`
+      // （= `IGNORE(1)`。規定 p.292）。見出しレコードを読み飛ばす定型
+      if (s.into === undefined && s.set === undefined) {
+        const n =
+          s.ignore === undefined
+            ? 1
+            : Number(render(asFixed(this.eval(s.ignore, scope, s.line), s.line)));
+        for (let k = 0; k < n; k++) {
+          if (file.readRecord() === undefined) {
+            this.raiseIo("ENDFILE", scope, s.line, s.file);
+            return;
+          }
+        }
+        return;
+      }
       const rec = file.readRecord();
       if (rec === undefined) {
         this.raiseIo("ENDFILE", scope, s.line, s.file);
@@ -2417,6 +2984,10 @@ export class Interpreter {
     }
 
     if (!s.from) {
+      // 「REWRITE without FROM … has no effect on the record in the data
+      // set」（規定 p.293。`READ INTO` で読んだ場合）。誤りにすると
+      // `READ SET` + 更新 + `REWRITE` の形が書けない
+      if (s.op === "rewrite") return;
       throw new RuntimeError(m`${s.op.toUpperCase()} には FROM が必要です`, s.line);
     }
     const text = this.gatherLeaves(s.from, scope, s.line, m`RECORD 入出力`);
@@ -2450,6 +3021,12 @@ export class Interpreter {
       throw new Unsupported(m`構造体配列の要素への代入`, line);
     }
     if (value.kind !== "ref" || value.subscripts.length > 0) {
+      // 構造体式（`rate = rate * 2`。規定 p.105/124）は未実装。
+      // 「同じ形の構造体だけ」という文面は、構造体式を書いた人には
+      // 誤誘導になる（`rate*2` も同じ形の構造体式なので）
+      if (value.kind === "binary" || value.kind === "unary") {
+        throw new Unsupported(m`構造体式（構造体を演算子で使う形）`, line);
+      }
       throw new RuntimeError(
         m`${target.name} は構造体です。構造体に代入できるのは同じ形の構造体だけです`,
         line,
@@ -2534,12 +3111,19 @@ export class Interpreter {
    * PL/I の規定では未定義動作（落ちるとも限らない）だが、
    * 黙って嘘の値を返すより誤りとして知らせる方がよい。
    */
+  /**
+   * BASED 変数の見ている記憶域と、その中の開始位置。
+   *
+   * `base` は `ADDR(a(2))` のように**要素を指すポインタ**で使う。
+   * 記憶域ごと共有したうえで開始位置をずらすので、ポインタ越しの
+   * 書き込みがその要素に届く。
+   */
   private basedCells(
     v: Variable,
     ref: Ref,
     scope: Scope,
     line: number,
-  ): Value[] | undefined {
+  ): { cells: Value[]; base: number } | undefined {
     if (!v.based) return undefined;
     const locator = ref.locator ?? v.based.pointer;
     if (locator === undefined) {
@@ -2559,19 +3143,20 @@ export class Interpreter {
     if (storage.freed) {
       throw new RuntimeError(m`解放済みの記憶域をたどりました（${ref.name}）`, line);
     }
+    const base = storage.offset ?? 0;
     const key = ref.name.toUpperCase();
     const cells = storage.cells.get(key);
-    if (cells) return cells;
+    if (cells) return { cells, base };
     // ADDR で取ったポインタを別の BASED 宣言で見る場合。
     // 記憶域が 1 つしか持っていなければ、それを指しているとみなす
-    if (storage.cells.size === 1) return [...storage.cells.values()][0]!;
+    if (storage.cells.size === 1) return { cells: [...storage.cells.values()][0]!, base };
     // DL/I の PCB は、葉の名前ではなく宣言順で結び付ける。
     // 名前はプログラムが自由に付けるので、名前では引けない
     if (storage.pcbIndex !== undefined) {
       const slots = [...storage.cells.values()];
       const at = this.leavesOf(v.based.group, scope).findIndex((l) => l.key === key);
       const slot = at < 0 ? undefined : slots[at];
-      if (slot !== undefined) return slot;
+      if (slot !== undefined) return { cells: slot, base };
       throw new RuntimeError(
         m`${ref.name} は PCB マスクの ${slots.length} 項目に収まりません`,
         line,
@@ -2581,6 +3166,64 @@ export class Interpreter {
       m`${ref.name} はこの記憶域にありません（確保したのは ${storage.group}）`,
       line,
     );
+  }
+
+  /**
+   * 参照が指す「枡」（記憶域の並びとその中の位置）。
+   *
+   * `assign` と同じ解決を、書き込みをせずに取り出すためのもの。
+   * 参照渡しの引数（`bindArgs`）と `ADDR` が、**同じ枡**を共有するために使う。
+   * `SUBSTR` 疑似変数は枡 1 つに収まらないのでここでは扱わない。
+   */
+  private slotOf(
+    ref: Ref,
+    scope: Scope,
+    line: number,
+  ): { cells: Value[]; index: number; attr: DataAttr } | undefined {
+    const v = scope.lookupVar(ref.name.toUpperCase());
+    if (v === undefined) return undefined;
+    if (v.window !== undefined) {
+      return { cells: v.window.cells, index: v.window.index, attr: v.attr };
+    }
+    const alias = this.resolveDefined(v, ref, scope, line);
+    if (alias) {
+      return { cells: alias.target.cells, index: alias.index, attr: alias.target.attr };
+    }
+    const based = this.basedCells(v, ref, scope, line);
+    if (based) {
+      return {
+        cells: based.cells,
+        index: based.base + this.indexOf(v, ref, scope, line),
+        attr: v.attr,
+      };
+    }
+    return { cells: v.cells, index: this.indexOf(v, ref, scope, line), attr: v.attr };
+  }
+
+  /**
+   * `ADDR` が返す記憶域。**同じ枡なら同じ記憶域の実体を返す**。
+   *
+   * 毎回新しく作ると、ポインタの比較が記憶域の同一性で行われるため
+   * `ADDR(x) = ADDR(x)` が永久に偽になり、`if p = addr(tbl(i))` の
+   * 探索が黙って全部外れる。
+   */
+  private addrStorage(group: string, cells: Value[], offset: number): Storage {
+    let byOffset = this.addrCache.get(cells);
+    if (byOffset === undefined) {
+      byOffset = new Map();
+      this.addrCache.set(cells, byOffset);
+    }
+    const hit = byOffset.get(offset);
+    if (hit !== undefined) return hit;
+    const made: Storage = {
+      cells: new Map([[group, cells]]),
+      freed: false,
+      group,
+      fromAddr: true,
+      ...(offset === 0 ? {} : { offset }),
+    };
+    byOffset.set(offset, made);
+    return made;
   }
 
   private assign(target: Ref, value: Value, scope: Scope, line: number): void {
@@ -2597,6 +3240,11 @@ export class Interpreter {
       v = { attr, cells: [zeroOf(attr)] };
       scope.vars.set(key, v);
     }
+    // 窓を持つ引数は呼び元の枡へ書く
+    if (v.window !== undefined) {
+      putCell(v, 0, this.coerce(value, v.attr, line));
+      return;
+    }
     const alias = this.resolveDefined(v, target, scope, line);
     if (alias) {
       alias.target.cells[alias.index] = this.coerce(value, alias.target.attr, line);
@@ -2604,7 +3252,11 @@ export class Interpreter {
     }
     const based = this.basedCells(v, target, scope, line);
     if (based) {
-      based[this.indexOf(v, target, scope, line)] = this.coerce(value, v.attr, line);
+      based.cells[based.base + this.indexOf(v, target, scope, line)] = this.coerce(
+        value,
+        v.attr,
+        line,
+      );
       return;
     }
     const idx = this.indexOf(v, target, scope, line);
@@ -2638,6 +3290,39 @@ export class Interpreter {
       );
     }
 
+    // 基底参照に添字を書かない形（`dcl b(5) … def(a);`。規定の例そのもの）。
+    //
+    // **単純定義**なので、別名側の位置がそのまま基底の位置になる
+    // （規定 p.318「X1(2,2,2) DEF A は A の各面・行・列の先頭 2 要素」）。
+    // ここで別名側の添字を捨てると `b(5)` が `a(1)` を指し、
+    // 読めば嘘を返し、書けば基底の別の要素を壊す。
+    if (v.defined.subscripts.length === 0) {
+      if (!sameAttr(v.attr, base.attr)) {
+        // 属性が違う形は文字列重ね合わせ定義（p.320）。枡の一部への
+        // 別名なので、枡の単位で持つこの記憶域では表せない。
+        // 黙って基底まるごとの別名にすると、書き込みが基底の他の桁を
+        // 巻き込んで壊すので、名指しで断る
+        const strings =
+          (v.attr.type === "char" || v.attr.type === "bit") &&
+          (base.attr.type === "char" || base.attr.type === "bit");
+        throw new RuntimeError(
+          strings
+            ? m`文字列重ね合わせ定義（${v.defined.name} と長さの違う ${ref.name}）は未実装です`
+            : m`DEFINED の属性が基底 ${v.defined.name} と違います（単純定義では同じ属性が必要です）`,
+          line,
+        );
+      }
+      const index = this.flatIndex(v, aliasSubs, line);
+      const room = base.dims ? base.cells.length : 1;
+      if (index >= room) {
+        throw new RuntimeError(
+          m`DEFINED の範囲が基底 ${v.defined.name}（${room} 要素）を超えています`,
+          line,
+        );
+      }
+      return { target: base, index };
+    }
+
     // 基底参照の添字を評価する。iSUB は別名側の添字に置き換える。
     const baseSubs = v.defined.subscripts.map((e) => {
       if (e.kind === "isub") {
@@ -2659,8 +3344,16 @@ export class Interpreter {
     };
   }
 
-  /** 添字の並びを記憶域の位置に変換する。 */
-  private flatIndex(v: Variable, subs: number[], line: number): number {
+  /**
+   * 添字の並びを記憶域の位置に変換する。
+   *
+   * 添字は FIXED BINARY へ変換される（規定 p.127）ので、整数でない値は
+   * 右側を切り捨てる。切り捨てないと `a(2.5)` が記憶域の 1.5 番目を指し、
+   * **代入が黙って消える**（10 進の除算は尺度を持つので、二分探索の
+   * 中点のような普通の書き方がそのまま踏む）。
+   */
+  private flatIndex(v: Variable, subs0: number[], line: number): number {
+    const subs = subs0.map((n) => Math.trunc(n));
     if (!v.dims || subs.length === 0) return 0;
     let idx = 0;
     v.dims.forEach((d, i) => {
@@ -2767,13 +3460,19 @@ export class Interpreter {
           if (value.t === "pointer") {
             throw new RuntimeError(m`ポインタは BIT に変換できません`, line);
           }
+          // VARYING は現在長を保つ（規定 p.84）。宣言長まで 0 で埋めると
+          // `LENGTH` が宣言長を返し、連結に余分な 0 が混ざる
+          if (attr.varying === true) {
+            const got = this.toBitString(value, line);
+            return makeBit(got.slice(0, attr.length));
+          }
           // 数値から BIT への変換は 2 進表現にする。
           // 以前は空文字に落としていたので `b = 1;` が '0'B になっていた
           const s =
             value.t === "bit" ? value.v
-            : value.t === "char" ? value.v
-            : value.t === "fixed" ? fixedToBits(value, attr.length)
-            : toBits(Math.trunc(value.v), attr.length);
+            : value.t === "char" ? this.charToBits(value.v, line)
+            : value.t === "fixed" ? fixedToBits(value)
+            : fixedToBits(this.toFixed(value, line));
           return makeBit(s, attr.length);
         }
         case "file":
@@ -2802,8 +3501,19 @@ export class Interpreter {
     }
     if (v.t === "bit") return makeFixed("bin", Math.max(1, v.v.length), 0, BigInt(parseInt(v.v || "0", 2)));
     const s = v.v.trim();
-    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(s)) {
+    // 空文字と空白だけは 0。**CONVERSION は上げない**（規定 p.132 が明記）。
+    // 固定長レコードの未入力の数値欄を読む定石がこれに依る
+    if (s === "") return makeFixed("dec", 1, 0, 0n);
+    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(s)) {
       this.raiseChecked("CONVERSION", m`数値に変換できません: ${clip(v.v)}`, line);
+    }
+    // 指数付きは浮動小数点定数（`GET` の経路と同じ扱い）
+    if (/[eE]/.test(s)) {
+      const n = Number(s);
+      if (!Number.isFinite(n)) {
+        this.raiseChecked("CONVERSION", m`数値に変換できません: ${clip(v.v)}`, line);
+      }
+      return fixedFromFloat(n);
     }
     return fixedFromLiteral(s);
   }
@@ -2848,6 +3558,12 @@ export class Interpreter {
       }
       case "binary":
         return this.evalBinary(e, scope, line);
+      case "iterList":
+        // データリストの中だけで使える形（`dataList` が展開する）
+        throw new RuntimeError(
+          m`反復指定（(x(i) do i = 1 to n) の形）はデータリストの中だけで使えます`,
+          line,
+        );
     }
   }
 
@@ -2857,10 +3573,20 @@ export class Interpreter {
    */
   /** 単項演算。配列式からも使うので 1 箇所にまとめる。 */
   private applyUnary(op: string, v: Value, line: number): Value {
-    if (op === "-") return neg(asFixed(v, line));
-    if (op === "+") return v;
-    // NOT: ビット反転
-    const b = v.t === "bit" ? v.v : this.truth(v, line) ? "1" : "0";
+    // 前置の +/- は算術演算（規定 p.121 Table 32）。
+    // FLOAT は FLOAT のまま（FIXED へ落とすと `-1e-30` が 0 になる）、
+    // 文字列は FIXED DECIMAL へ変換する（変換できなければ CONVERSION）。
+    // `+` を恒等演算にすると `+'abc'` が黙って通る
+    if (op === "-") {
+      if (v.t === "float") return { ...v, v: -v.v };
+      return neg(this.toFixed(v, line));
+    }
+    if (op === "+") {
+      if (v.t === "float" || v.t === "fixed") return v;
+      return this.toFixed(v, line);
+    }
+    // NOT: ビット反転。非 BIT は BIT 列へ変換する（規定 p.121 Table 32）
+    const b = this.toBitString(v, line);
     return makeBit([...b].map((c) => (c === "0" ? "1" : "0")).join(""), b.length);
   }
 
@@ -2876,6 +3602,41 @@ export class Interpreter {
       const v = scope.lookupVar(e.name.toUpperCase());
       if (!v?.dims) return undefined;
       return this.dataList([e], scope, line);
+    }
+    // 組込関数の配列引数（規定 p.430）。
+    // 「Specifying an array argument is equivalent to placing the function
+    // reference ... in a do-group」。要素ごとに呼んで配列を返す。
+    // `ADDR` と配列処理関数（`DIM` / `LBOUND` / `HBOUND`）はスカラを返す
+    if (e.kind === "ref" && e.subscripts.length > 0) {
+      const key = e.name.toUpperCase();
+      if (
+        scope.lookupVar(key) !== undefined ||
+        scope.lookupProc(key) !== undefined ||
+        AGGREGATE_SCALAR_BUILTINS.has(key) ||
+        !BUILTIN_NAMES.has(key)
+      ) {
+        return undefined;
+      }
+      const argArrays = e.subscripts.map((a) => this.evalArray(a, scope, line));
+      let n: number | undefined;
+      for (const got of argArrays) {
+        if (got === undefined) continue;
+        if (n === undefined) n = got.length;
+        else if (n !== got.length) {
+          throw new RuntimeError(m`配列式の要素数が一致しません`, line);
+        }
+      }
+      if (n === undefined) return undefined;
+      const out: Value[] = [];
+      for (let i = 0; i < n; i++) {
+        const args = e.subscripts.map(
+          (a, k) => argArrays[k]?.[i] ?? this.eval(a, scope, line),
+        );
+        const got = this.builtin(key, args, line, scope, e.subscripts);
+        if (got === undefined) return undefined;
+        out.push(got);
+      }
+      return out;
     }
     if (e.kind === "binary") return this.tryArrayExpr(e, scope, line);
     if (e.kind === "unary") {
@@ -2927,8 +3688,13 @@ export class Interpreter {
 
   private applyBinary(op: string, a: Value, b: Value, line: number): Value {
 
-    // 連結は文字列として扱う（数値は暗黙変換される）
+    // 連結は文字列として扱う（数値は暗黙変換される）。
+    // ただし**ビット列同士はビット列**になる（規定 p.120 Table 31）
     if (op === "||") {
+      if (a.t === "bit" && b.t === "bit") {
+        const joined = a.v + b.v;
+        return makeBit(joined, joined.length);
+      }
       return makeChar(this.asText(a) + this.asText(b), undefined, true);
     }
 
@@ -2939,22 +3705,27 @@ export class Interpreter {
     // 以前は常に 1 ビットへ潰していたため、`'1100'B & '1010'B` が
     // '1'B になっていた（BIT(1) のときだけブール演算と一致するので、
     // 比較結果しか試していないテストでは気づけなかった）。
-    if (op === "&" || op === "|") {
-      if (a.t === "bit" && b.t === "bit" && (a.v.length > 1 || b.v.length > 1)) {
-        const n = Math.max(a.v.length, b.v.length);
-        const x = a.v.padEnd(n, "0");
-        const y = b.v.padEnd(n, "0");
-        let out = "";
-        for (let i = 0; i < n; i++) {
-          const bitA = x[i] === "1";
-          const bitB = y[i] === "1";
-          out += (op === "&" ? bitA && bitB : bitA || bitB) ? "1" : "0";
-        }
-        return makeBit(out, n);
+    if (op === "&" || op === "|" || op === "¬") {
+      // 非 BIT のオペランドは BIT 列へ変換する（規定 p.121 Table 32)。
+      // 真偽 1 ビットに潰すと `2 & 1` が `'1'B` になり、
+      // ビットごとなら偽（`'0010'B & '0001'B` = `'0000'B`）のはずの
+      // 条件が黙って逆に分岐する
+      const x0 = this.toBitString(a, line);
+      const y0 = this.toBitString(b, line);
+      const n = Math.max(x0.length, y0.length);
+      const x = x0.padEnd(n, "0");
+      const y = y0.padEnd(n, "0");
+      let out = "";
+      for (let i = 0; i < n; i++) {
+        const bitA = x[i] === "1";
+        const bitB = y[i] === "1";
+        const r =
+          op === "&" ? bitA && bitB
+          : op === "|" ? bitA || bitB
+          : bitA !== bitB; // 中置の ¬ は排他的論理和（規定 p.117）
+        out += r ? "1" : "0";
       }
-      const x = this.truth(a, line);
-      const y = this.truth(b, line);
-      return makeBit((op === "&" ? x && y : x || y) ? "1" : "0", 1);
+      return makeBit(out, n);
     }
 
     // 比較
@@ -3056,7 +3827,13 @@ export class Interpreter {
       return a.target === b.target ? 0 : 1;
     }
     if (a.t === "bit" && b.t === "bit") {
-      return a.v === b.v ? 0 : a.v < b.v ? -1 : 1;
+      // 短い側を '0'B で埋めてから比べる（規定 p.119）。
+      // 長さを先に見ると `dcl flags bit(8) init('1'b); flags = '1'b` が
+      // 必ず偽になり、フラグ語の比較が黙って全部外れる
+      const n = Math.max(a.v.length, b.v.length);
+      const x = a.v.padEnd(n, "0");
+      const y = b.v.padEnd(n, "0");
+      return x === y ? 0 : x < y ? -1 : 1;
     }
     if (a.t === "float" || b.t === "float") {
       // FLOAT はこの処理系では JavaScript の数値なので、比較もそれで行う。
@@ -3081,6 +3858,52 @@ export class Interpreter {
     }
   }
 
+  /**
+   * 条件式を評価する。`&` と `|` は**短絡する**（規定 p.278-279）。
+   *
+   * 「If the IF expression consists of a logical OR of 2 expressions and
+   * the first of these expressions is true, the second expression will not
+   * be evaluated」。規定が挙げている例そのものが
+   * `if P = sysnull() | P->BX = 0 then` で、短絡しないと NULL をたどる。
+   *
+   * 短絡するのは**両辺が条件（BIT(1) になる式）のとき**だけ。
+   * ビット列のビットごとの演算（`'1100'B & '1010'B`）は短絡させない。
+   */
+  private evalCondition(e: Expr, scope: Scope, line: number): boolean {
+    if (
+      e.kind === "binary" &&
+      (e.op === "&" || e.op === "|") &&
+      this.conditionLike(e.left, scope) &&
+      this.conditionLike(e.right, scope)
+    ) {
+      const left = this.evalCondition(e.left, scope, line);
+      if (e.op === "|") return left ? true : this.evalCondition(e.right, scope, line);
+      return left ? this.evalCondition(e.right, scope, line) : false;
+    }
+    return this.truth(this.eval(e, scope, line), line);
+  }
+
+  /**
+   * 短絡してよい形か（規定 p.278-279 が挙げる、BIT(1) になる式）。
+   * 比較・1 桁のビット定数・BIT(1) の変数・それらの否定・入れ子。
+   */
+  private conditionLike(e: Expr, scope: Scope): boolean {
+    if (e.kind === "binary") {
+      if (["=", "¬=", "<", "<=", ">", ">=", "¬<", "¬>"].includes(e.op)) return true;
+      if (e.op === "&" || e.op === "|") {
+        return this.conditionLike(e.left, scope) && this.conditionLike(e.right, scope);
+      }
+      return false;
+    }
+    if (e.kind === "unary") return e.op === "¬" && this.conditionLike(e.operand, scope);
+    if (e.kind === "bit") return e.value.length === 1;
+    if (e.kind === "ref" && e.subscripts.length === 0) {
+      const v = scope.lookupVar(e.name.toUpperCase());
+      return v?.attr.type === "bit" && v.attr.length === 1;
+    }
+    return false;
+  }
+
   private truth(v: Value, line: number): boolean {
     if (v.t === "bit") return v.v.includes("1");
     if (v.t === "fixed") return v.v !== 0n;
@@ -3094,6 +3917,12 @@ export class Interpreter {
 
     const v = scope.lookupVar(key);
     if (v) {
+      // 窓を持つ引数（配列の要素などを参照渡しで受けたもの）は窓を見る
+      if (v.window !== undefined) {
+        const cell = cellOf(v, 0);
+        if (cell === undefined) throw new RuntimeError(m`${ref.name} は未初期化です`, line);
+        return cell;
+      }
       const alias = this.resolveDefined(v, ref, scope, line);
       if (alias) {
         const cell = alias.target.cells[alias.index];
@@ -3103,8 +3932,8 @@ export class Interpreter {
         return cell;
       }
       const based = this.basedCells(v, ref, scope, line);
-      const cells = based ?? v.cells;
-      const idx = this.indexOf(v, ref, scope, line);
+      const cells = based?.cells ?? v.cells;
+      const idx = (based?.base ?? 0) + this.indexOf(v, ref, scope, line);
       const cell = cells[idx];
       if (cell === undefined) throw new RuntimeError(m`${ref.name} は未初期化です`, line);
       return cell;
@@ -3159,6 +3988,45 @@ export class Interpreter {
     return zeroOf(implicitAttr(ref.name));
   }
 
+  /**
+   * `CEIL` / `FLOOR` / `TRUNC` に `(y/z)` の形の引数が来たときの特例
+   * （規定 p.473/499/620）。
+   *
+   * 「If the expression x has the form (y/z) where y is an unscaled
+   * FIXED BIN expression and z is an unscaled FIXED expression, then
+   * CEIL(x) will be evaluated by computing the integral quotient and then
+   * rounding it up by one if ... the remainder of (y/z) is not zero」。
+   *
+   * `FIXED BIN` の除算は整数なので、`/` を評価した時点で剰余が消える。
+   * 規定がこの特例を置いているのはそのためで、無いと
+   * 「切り上げ除算」`ceil(n/size)` が黙って切り捨てになる。
+   * 当てはまらない形（10 進・尺度付き・除算でない）では undefined を返す。
+   */
+  private quotientAdjust(
+    name: string,
+    arg: Expr | undefined,
+    scope: Scope,
+    line: number,
+  ): Value | undefined {
+    if (arg === undefined || arg.kind !== "binary" || arg.op !== "/") return undefined;
+    const y = this.eval(arg.left, scope, line);
+    const z = this.eval(arg.right, scope, line);
+    if (y.t !== "fixed" || z.t !== "fixed") return undefined;
+    if (y.base !== "bin" || y.q !== 0 || z.q !== 0) return undefined;
+    if (z.v === 0n) this.raise("ZERODIVIDE", scope, line);
+    const quotient = this.applyBinary("/", y, z, line);
+    if (quotient.t !== "fixed") return undefined;
+    const exact = y.v % z.v === 0n;
+    let v = quotient.v;
+    if (!exact) {
+      // 商は 0 方向へ切り捨てられている
+      const positive = y.v > 0n === z.v > 0n;
+      if (name === "CEIL" && positive) v += 1n;
+      if (name === "FLOOR" && !positive) v -= 1n;
+    }
+    return makeFixed(quotient.base, quotient.p, quotient.q, v);
+  }
+
   /** 組込関数。 */
   private builtin(
     name: string,
@@ -3170,48 +4038,117 @@ export class Interpreter {
     const fx = (i: number) => asFixed(args[i] ?? missing(name, i, line), line);
     const tx = (i: number) => this.asText(args[i] ?? missing(name, i, line));
     const int = (i: number) => Number(render(fx(i)));
+    /** 引数をそのまま。型を保つ必要がある関数で使う。 */
+    const raw = (i: number) => args[i] ?? missing(name, i, line);
+    /** FLOAT の引数か。FIXED の 15 桁の窓に押し込んでよいかの判定。 */
+    const isFloat = (i: number) => raw(i).t === "float";
+    /** FLOAT の値（JavaScript の数値）。 */
+    const fv = (i: number) => numberOfValue(raw(i), line);
+    /** 元の FLOAT と同じ基数・精度で値を入れ替える。 */
+    const asSameFloat = (i: number, v: number): Value => {
+      const src = raw(i);
+      const prec = src.t === "float" ? src.p : 6;
+      const base = src.t === "float" ? src.base : "dec";
+      return { t: "float", base, p: prec, v };
+    };
+
+    // 引数の個数を確かめる。多い分を黙って捨てると、
+    // `index(t,'man',pos+1)` の第 3 引数が無視されていることに気づけない
+    const arity = BUILTIN_ARITY[name];
+    if (arity !== undefined && args.length > arity[1]) {
+      throw new RuntimeError(
+        m`${name} の引数は ${arity[1]} 個までです（${args.length} 個渡されました）`,
+        line,
+      );
+    }
 
     switch (name) {
       case "NULL":
         return makePointer();
       case "ADDR": {
         // 変数の記憶域を指すポインタ。セルの並びを共有するので、
-        // ポインタ越しの書き込みが元の変数に反映される
+        // ポインタ越しの書き込みが元の変数に反映される。
+        // **添字と修飾を反映する**（規定 p.457）。無視すると
+        // `addr(a(2))` が `a(1)` を指し、ポインタ越しの書き込みが
+        // 別の要素を壊す
         const ref = argRefs?.[0];
         if (ref === undefined || ref.kind !== "ref") {
           throw new RuntimeError(m`ADDR の引数は変数でなければなりません`, line);
         }
-        const v = scope.lookupVar(ref.name.toUpperCase());
-        if (!v) throw new RuntimeError(m`変数 ${ref.name} が見つかりません`, line);
-        const based = this.basedCells(v, ref, scope, line);
-        const cells = based ?? v.cells;
-        return makePointer({
-          cells: new Map([[ref.name.toUpperCase(), cells]]),
-          freed: false,
-          group: ref.name.toUpperCase(),
-        });
+        const key = ref.name.toUpperCase();
+        if (scope.lookupVar(key) === undefined) {
+          throw new RuntimeError(m`変数 ${ref.name} が見つかりません`, line);
+        }
+        const slot = this.slotOf(ref, scope, line);
+        if (slot === undefined) {
+          throw new RuntimeError(m`ADDR の引数は変数でなければなりません`, line);
+        }
+        return makePointer(this.addrStorage(key, slot.cells, slot.index));
       }
       case "MOD": {
-        // 除算の精度規則（結果が FIXED(N, N-...) になる）を使うと
-        // MOD(17,5) が 0 になってしまう。整数剰余として直接計算する
-        // （`value.ts` の `mod`。他の演算と同じく基数を揃える）。
+        /*
+         * 除算の精度規則（結果が FIXED(N, N-...) になる）を使うと
+         * MOD(17,5) が 0 になってしまう。整数剰余として直接計算する
+         * （`value.ts` の `mod`。他の演算と同じく基数を揃える）。
+         *
+         * 結果は**非負の最小値**（規定 p.552「MOD returns the smallest
+         * nonnegative value, R, such that (x - R)/y = n」）。規定の例は
+         * `mod(+10,-8)=2` / `mod(-10,-8)=6`（p.553）。
+         * 除数の絶対値で剰余を取れば、その定義になる。
+         * 「結果は第 2 引数と同じ符号」は他方言の定義で、
+         * 突き合わせに使った実機の値（`mod(7,-3)=1`）の方が規定と合っていた。
+         */
+        if (isFloat(0) || isFloat(1)) {
+          const y = Math.abs(fv(1));
+          if (y === 0) this.raise("ZERODIVIDE", scope, line);
+          const x = fv(0);
+          return asSameFloat(isFloat(0) ? 0 : 1, x - y * Math.floor(x / y));
+        }
         const a = fx(0);
         const b = fx(1);
         if (b.v === 0n) this.raise("ZERODIVIDE", scope, line);
-        return mod(a, b);
+        return mod(a, b.v < 0n ? neg(b) : b);
       }
       case "ABS": {
+        // FLOAT は素通し（結果の基数・尺度・精度は引数と同じ。p.456）
+        if (isFloat(0)) return asSameFloat(0, Math.abs(fv(0)));
         const a = fx(0);
         return a.v < 0n ? neg(a) : a;
       }
       case "MAX":
       case "MIN": {
+        // FLOAT が混ざれば FLOAT で比べる（FIXED に落とすと窓の外の値が
+        // 消える）。結果の精度は引数の精度の大きい方（p.538）
+        if (args.some((_, i) => isFloat(i))) {
+          let bestI = 0;
+          for (let i = 1; i < args.length; i++) {
+            const c = fv(i) - fv(bestI);
+            if (name === "MAX" ? c > 0 : c < 0) bestI = i;
+          }
+          let prec = 1;
+          for (let i = 0; i < args.length; i++) {
+            const a = raw(i);
+            prec = Math.max(prec, a.t === "float" ? a.p : a.t === "fixed" ? a.p : 1);
+          }
+          return { t: "float", base: "dec", p: Math.min(MAX_DEC, prec), v: fv(bestI) };
+        }
         let best = fx(0);
         for (let i = 1; i < args.length; i++) {
           const c = compare(fx(i), best);
           if (name === "MAX" ? c > 0 : c < 0) best = fx(i);
         }
-        return best;
+        // 結果の精度は (min(N, max(pi-qi) + max(qi)), max(qi))（p.538）。
+        // 勝った引数の精度をそのまま返すと `max(1.5,2)` が 2 になり、
+        // 規定の 2.0（p=2,q=1）と見た目が変わる
+        let whole = 1;
+        let scale = 0;
+        for (let i = 0; i < args.length; i++) {
+          const a = fx(i);
+          whole = Math.max(whole, a.p - a.q);
+          scale = Math.max(scale, a.q);
+        }
+        const limit = best.base === "bin" ? MAX_BIN : MAX_DEC;
+        return assignTo(best, best.base, Math.min(limit, whole + scale), scale);
       }
       case "LENGTH":
         // 出力幅 9 なので FIXED BIN(15,0)
@@ -3220,15 +4157,39 @@ export class Interpreter {
         const s = tx(0);
         const start = int(1);
         const len = args.length > 2 ? int(2) : s.length - start + 1;
-        return makeChar(s.slice(start - 1, start - 1 + len), undefined, true);
+        const piece = s.slice(start - 1, start - 1 + len);
+        // 引数がビット列ならビット列を返す（規定 p.613）。
+        // 文字で返すと `substr(b,1,1) | (d=5)` のようにビット演算へ
+        // 渡したときに型が食い違う
+        return args[0]?.t === "bit"
+          ? makeBit(piece, piece.length)
+          : makeChar(piece, undefined, true);
       }
       case "INDEX": {
         const hay = tx(0);
         const needle = tx(1);
+        // 第 3 引数は探し始める位置（規定 p.513）。無視すると、規定が
+        // 例として載せている走査ループが同じ位置を返し続ける
+        const from = args.length > 2 ? int(2) : 1;
+        // 長さ 0 の引数では 0（規定 p.513）。`indexOf('')` は 1 を返すので、
+        // 「見つかっていないのに後続の SUBSTR が動く」ことになる
+        if (hay.length === 0 || needle.length === 0) {
+          return makeFixed("bin", 15, 0, 0n);
+        }
+        if (from < 1 || from > hay.length + 1) {
+          // 規定では STRINGRANGE を上げて 0 を返す。この処理系は
+          // STRINGRANGE を起こさないので、結果だけ規定に合わせる
+          return makeFixed("bin", 15, 0, 0n);
+        }
         // LENGTH と同じく FIXED BIN(15,0)
-        return makeFixed("bin", 15, 0, BigInt(hay.indexOf(needle) + 1));
+        return makeFixed("bin", 15, 0, BigInt(hay.indexOf(needle, from - 1) + 1));
       }
       case "TRUNC": {
+        // FLOAT は値だけ整数化して型を保つ（p.619）
+        if (isFloat(0)) return asSameFloat(0, Math.trunc(fv(0)));
+        // FIXED BIN の商の特例（p.620）
+        const quotient = this.quotientAdjust(name, argRefs?.[0], scope, line);
+        if (quotient !== undefined) return quotient;
         // 結果の精度は CEIL / FLOOR と同じ規則。整数化する 3 つが
         // 違う精度を返すと、同じ値でも出力幅が変わる
         // （以前は元の p を保っていたので `trunc(1.23456)` の幅が 9、
@@ -3238,7 +4199,15 @@ export class Interpreter {
       }
       case "CEIL":
       case "FLOOR": {
-        // PL/I: 結果は FIXED(min(N, max(p-q,1)+1), 0)。
+        // FLOAT は値だけ整数化して型を保つ（p.473/498）
+        if (isFloat(0)) {
+          return asSameFloat(0, name === "CEIL" ? Math.ceil(fv(0)) : Math.floor(fv(0)));
+        }
+        // FIXED BIN の商の特例（p.473/499）。`/` の時点で剰余が消えるので、
+        // 式の形から剰余を見て 1 だけ動かす
+        const quotient = this.quotientAdjust(name, argRefs?.[0], scope, line);
+        if (quotient !== undefined) return quotient;
+        // PL/I: 結果は FIXED(min(N, max(p-q+1,1)), 0)。
         // 1 を足し引きして実装すると加算の精度規則で p が広がり、
         // 出力幅（ceil(2.1) で 5）と合わなくなる。
         const a = fx(0);
@@ -3264,6 +4233,13 @@ export class Interpreter {
          *     誤って FIXEDOVERFLOW になる（`ROUND(12.5, 3)`）
          * 結果の精度は「整数桁 + n」で、桁が減ることはない。
          */
+        // FLOAT は値だけ丸めて型を保つ（0 から遠い側へ）
+        if (isFloat(0)) {
+          const n = int(1);
+          const f = 10 ** n;
+          const x = fv(0);
+          return asSameFloat(0, (x < 0 ? -1 : 1) * Math.round(Math.abs(x) * f) / f);
+        }
         const a = fx(0);
         const n = int(1);
         if (n >= a.q) {
@@ -3288,7 +4264,13 @@ export class Interpreter {
         return makeFixed(a.base, roundPrecision(a, n), q, neg ? -v : v);
       }
       case "SIGN": {
-        // 出力幅 9 なので FIXED BIN(15,0)
+        // 出力幅 9 なので FIXED BIN(15,0)。
+        // FLOAT は FIXED に落とさずに符号を見る。落とすと
+        // `sign(1e-30)` が 0 になり、符号判定が黙って壊れる
+        if (isFloat(0)) {
+          const x = fv(0);
+          return makeFixed("bin", 15, 0, x > 0 ? 1n : x < 0 ? -1n : 0n);
+        }
         const a = fx(0);
         const r = a.v > 0n ? 1n : a.v < 0n ? -1n : 0n;
         return makeFixed("bin", 15, 0, r);
@@ -3303,6 +4285,11 @@ export class Interpreter {
         if (b.v === 0n) this.raise("ZERODIVIDE", scope, line);
         const p = int(2);
         const q = args.length > 3 ? int(3) : 0;
+        // 「if not omitted, it must be nonnegative」（規定 p.487）。
+        // 負を通すと結果が黙って 0 になる
+        if (q < 0) {
+          throw new RuntimeError(m`DIVIDE の尺度 ${q} は 0 以上でなければなりません`, line);
+        }
         if (q > p) {
           throw new RuntimeError(
             m`DIVIDE の尺度 ${q} が精度 ${p} を超えています`,
@@ -3312,10 +4299,16 @@ export class Interpreter {
         return divideTo(a, b, p, q);
       }
       case "TRANSLATE": {
-        // TRANSLATE(s, to, from) は from の各文字を to の対応文字に置き換える
+        // TRANSLATE(s, to, from) は from の各文字を to の対応文字に置き換える。
+        // 第 3 引数を省略すると `COLLATE()`（256 文字の照合順序）が既定に
+        // なる（規定 p.618）。`COLLATE` は未実装なので表を作れない。
+        // 省略を「置換表が空」と解釈すると黙って恒等写像になるので断る
+        if (args.length <= 2) {
+          throw new Unsupported(m`TRANSLATE の第 3 引数の省略（COLLATE が既定）`, line);
+        }
         const src = tx(0);
         const to = tx(1);
-        const from = args.length > 2 ? tx(2) : "";
+        const from = tx(2);
         const mapped = [...src]
           .map((c) => {
             const i = from.indexOf(c);
@@ -3325,16 +4318,20 @@ export class Interpreter {
         return makeChar(mapped, undefined, true);
       }
       case "VERIFY": {
-        // VERIFY(s, set) は set に含まれない最初の文字の位置（全て含まれれば 0）
+        // VERIFY(s, set) は set に含まれない最初の文字の位置（全て含まれれば 0）。
+        // 第 3 引数は探し始める位置（規定 p.635）
         const src = tx(0);
         const set = tx(1);
-        for (let i = 0; i < src.length; i++) {
+        const from = args.length > 2 ? int(2) : 1;
+        if (from < 1 || from > src.length) return makeFixed("bin", 15, 0, 0n);
+        for (let i = from - 1; i < src.length; i++) {
           if (!set.includes(src[i]!)) return makeFixed("bin", 15, 0, BigInt(i + 1));
         }
         return makeFixed("bin", 15, 0, 0n);
       }
       case "LBOUND":
       case "HBOUND":
+      case "DIMENSION":
       case "DIM": {
         // 出力幅 14 なので FIXED BIN(31,0)
         const target = argRefs?.[0];
@@ -3345,6 +4342,14 @@ export class Interpreter {
         if (!v?.dims) {
           throw new RuntimeError(m`${target.name} は配列ではありません`, line);
         }
+        // 次元を省略できるのは 1 次元の配列だけ（規定 p.487/504/530）。
+        // 省略を黙って第 1 次元として扱うと、書き忘れたコードが通る
+        if (args.length <= 1 && v.dims.length > 1) {
+          throw new RuntimeError(
+            m`${name} の次元を省略できるのは 1 次元の配列だけです（${target.name} は ${v.dims.length} 次元）`,
+            line,
+          );
+        }
         const dim = args.length > 1 ? int(1) : 1;
         const b = v.dims[dim - 1];
         if (!b) throw new RuntimeError(m`次元 ${dim} がありません`, line);
@@ -3354,6 +4359,10 @@ export class Interpreter {
       }
       case "REPEAT": {
         const s = tx(0);
+        // 「If y is zero or negative, the string x is returned」（規定 p.592）。
+        // 0 と負を同じく「1 個ぶん」にする（以前は負で空文字になり、
+        // 計算で出した回数が負になった場面で文字列が黙って消えていた）
+        if (int(1) <= 0) return makeChar(s, undefined, true);
         const times = int(1) + 1;
         // 結果長を先に確かめる。作ってから確かめると、
         // 1 回の呼び出しでメモリを使い切れる
@@ -3393,9 +4402,16 @@ export function floatWidth(p: number): number {
  * 出力幅が違う、という食い違いが出る（実際に `TRUNC` だけが
  * 元の精度を保っていた）。
  */
+/**
+ * `CEIL` / `FLOOR` / `TRUNC` の結果精度 `min(N, max(p-q+1,1))`
+ * （規定 p.473/498/619）。
+ *
+ * `max(p-q,1)+1` と書くと `p > q` では一致するが、`p = q`（`FIXED DEC(3,3)`
+ * のような純小数）で 1 桁広くなる。実機で測ったのは `p > q` の場合だけ。
+ */
 function integerPrecision(a: FixedVal): number {
   const N = a.base === "bin" ? MAX_BIN : MAX_DEC;
-  return Math.min(N, Math.max(a.p - a.q, 1) + 1);
+  return Math.min(N, Math.max(a.p - a.q + 1, 1));
 }
 
 function roundPrecision(a: FixedVal, n: number): number {
@@ -3569,6 +4585,16 @@ export const BUILTIN_SUBROUTINE_NAMES: ReadonlySet<string> = new Set([
   "CBLTDLI", // COBOL 向け。名指しで断るために載せる
   "ASMTDLI", // アセンブラ向け。同上
   "AIBTDLI", // AIB インタフェース。未実装として断る
+  // 処理系が用意するサブルーチン（規定 p.454）。実装しないが、
+  // 「手続きが見つかりません」では綴り間違いと区別が付かない
+  "PLIRETC",
+  "PLIDUMP",
+  "PLIFILL",
+  "PLIMOVE",
+  "PLISRTA",
+  "PLISRTB",
+  "PLISRTC",
+  "PLISRTD",
 ]);
 
 /** PCB マスクの規定の並び。葉の名前ではなく、この順で結び付ける。 */
@@ -3638,13 +4664,11 @@ function pcbLayout(
  */
 export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
   "ACOS",
-  "ACOSD",
   "ADD",
   "ALL",
   "ALLOCATION",
   "ANY",
   "ASIN",
-  "ASIND",
   "ATAN",
   "ATAND",
   "ATANH",
@@ -3658,6 +4682,7 @@ export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
   "CHARACTER",
   "CHARVAL",
   "COLLATE",
+  "COMPARE",
   "COMPLEX",
   "CONJG",
   "COPY",
@@ -3665,6 +4690,7 @@ export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
   "COSD",
   "COSH",
   "COUNT",
+  "CURRENTSIZE",
   "CURRENTSTORAGE",
   "DATAFIELD",
   "DATE",
@@ -3672,10 +4698,10 @@ export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
   "DAYS",
   "DAYSTODATE",
   "DEC",
-  "DECAT",
   "DECIMAL",
-  "DIMENSION",
+  "EDIT",
   "EMPTY",
+  "ENTRYADDR",
   "ERF",
   "ERFC",
   "EXP",
@@ -3684,11 +4710,13 @@ export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
   "HEX",
   "HEXIMAGE",
   "HIGH",
+  "INDEXR",
   "IAND",
   "IEOR",
   "IMAG",
   "INOT",
   "IOR",
+  "LEFT",
   "LINENO",
   "LOG",
   "LOG10",
@@ -3703,30 +4731,46 @@ export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
   "ONCODE",
   "ONCONDID",
   "ONCOUNT",
+  "ONSUBCODE",
   "ONFILE",
   "ONKEY",
   "ONLOC",
   "ONSOURCE",
   "PAGENO",
   "POINTER",
+  "POINTERADD",
+  "POINTERDIFF",
+  "POINTERVALUE",
   "POLY",
   "PREC",
   "PRECISION",
+  "PRED",
+  "PRESENT",
   "PROD",
   "RANDOM",
   "RANK",
   "REAL",
+  "REM",
+  "REPLACE",
   "REVERSE",
+  "RIGHT",
+  "SAMEKEY",
   "SEARCH",
   "SEARCHR",
   "SIGNED",
+  "SIZE",
+  "SOURCELINE",
   "SIN",
   "SIND",
   "SINH",
   "SQRT",
   "STORAGE",
   "STRING",
+  "SUBTO",
+  "SUBTRACT",
+  "SUCC",
   "SUM",
+  "TALLY",
   "TAN",
   "TAND",
   "TANH",
@@ -3736,6 +4780,48 @@ export const UNIMPLEMENTED_BUILTINS: ReadonlySet<string> = new Set([
   "UNSPEC",
   "UPPERCASE",
   "VALID",
+  "VERIFYR",
+]);
+
+/**
+ * 組込関数の引数の個数（最小・最大）。
+ *
+ * 多い分を黙って捨てると、`index(t,'man',pos+1)` の第 3 引数が
+ * 無視されていることに気づけない（実際にそれで走査が無限ループになった）。
+ */
+const BUILTIN_ARITY: Readonly<Record<string, readonly [number, number]>> = {
+  ABS: [1, 1],
+  ADDR: [1, 1],
+  CEIL: [1, 1],
+  DIM: [1, 2],
+  DIMENSION: [1, 2],
+  DIVIDE: [2, 4],
+  FLOOR: [1, 1],
+  HBOUND: [1, 2],
+  INDEX: [2, 3],
+  LBOUND: [1, 2],
+  LENGTH: [1, 1],
+  MOD: [2, 2],
+  NULL: [0, 0],
+  REPEAT: [2, 2],
+  ROUND: [2, 2],
+  SIGN: [1, 1],
+  SUBSTR: [2, 3],
+  TRANSLATE: [2, 3],
+  TRUNC: [1, 1],
+  VERIFY: [2, 3],
+};
+
+/**
+ * 配列を渡してもスカラを返す組込関数（規定 p.430）。
+ * 「the array handling functions and ADDR return a scalar」。
+ */
+const AGGREGATE_SCALAR_BUILTINS: ReadonlySet<string> = new Set([
+  "ADDR",
+  "DIM",
+  "DIMENSION",
+  "LBOUND",
+  "HBOUND",
 ]);
 
 export const BUILTIN_NAMES: ReadonlySet<string> = new Set([
@@ -3743,6 +4829,9 @@ export const BUILTIN_NAMES: ReadonlySet<string> = new Set([
   "ADDR",
   "CEIL",
   "DIM",
+  // DIMENSION が正式名で DIM が略形（規定 p.487）。
+  // 正式名の方が「未実装」で断られていた
+  "DIMENSION",
   "DIVIDE",
   "FLOOR",
   "HBOUND",

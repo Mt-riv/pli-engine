@@ -81,6 +81,11 @@ export class ListWriter {
    * PUT のたびに全行を走るので、出力が増えるほど二次で遅くなる。
    */
   private flushed = 0;
+  /**
+   * `SKIP(0)` で行頭へ戻ったか（PRINT ファイル。規定 p.303）。
+   * 次の書き込みは現在行を**上書き**する。
+   */
+  private rewound = false;
 
   constructor(opts: WriterOptions = {}) {
     this.lineSize = opts.lineSize ?? LINE_SIZE;
@@ -110,9 +115,31 @@ export class ListWriter {
     return this.linesOnPage + 1;
   }
 
-  /** SKIP: n 行進める。 */
+  /**
+   * SKIP: n 行進める。
+   *
+   * ページの行数を超えたら**改ページする**。ENDPAGE 条件の暗黙動作が
+   * 「A new page is started」（規定 p.409-410）なので、条件を起こさない
+   * この処理系でも改ページそのものは行う必要がある
+   * （`PAGESIZE` を書いた帳票が、見た目だけ静かに違う出力になる）。
+   *
+   * `n <= 0` は PRINT ファイルでは**現在行の先頭へ戻る**（規定 p.303）。
+   * PRINT でないファイルでは 1 行進める。
+   */
   skip(n = 1): void {
-    for (let k = 0; k < n; k++) this.flush();
+    if (n <= 0) {
+      if (this.print) {
+        // 現在行の先頭へ戻る。次の書き込みが上書きになる
+        this.rewound = true;
+        return;
+      }
+      this.flush();
+      return;
+    }
+    for (let k = 0; k < n; k++) {
+      this.flush();
+      if (this.print && this.linesOnPage >= this.pageSize) this.page();
+    }
   }
 
   /**
@@ -129,8 +156,10 @@ export class ListWriter {
   /**
    * 文字データ。左詰めで、後ろに空白1個。
    *
-   * PRINT でないストリーム出力では**引用符で囲む**。
-   * GET LIST で読み戻せる形にするための規定で、数値も同じく囲まれる。
+   * PRINT でないストリーム出力では**引用符で囲む**
+   * （規定 p.316。`GET LIST` で読み戻せる形にするため）。
+   * 囲むのは**文字列だけ**で、算術値には付かない（p.315
+   * 「Arithmetic values are converted to character」）。
    */
   putChar(s: string): void {
     this.place(this.print ? s : quoted(s));
@@ -141,10 +170,13 @@ export class ListWriter {
     this.place(`'${bits}'B`);
   }
 
-  /** 数値データ。幅 width に右詰めする。 */
+  /**
+   * 数値データ。幅 width に右詰めする。
+   * PRINT でないファイルでも**引用符を付けない**（規定 p.315）。
+   * 付けると、他のプログラムが読む前提のファイルが規定と違う形になる。
+   */
   putNumber(rendered: string, width: number): void {
-    const text = rendered.padStart(width);
-    this.place(this.print ? text : quoted(text));
+    this.place(rendered.padStart(width));
   }
 
   /**
@@ -152,6 +184,7 @@ export class ListWriter {
    * 行頭でなければ次のタブストップまで送り、収まらなければ折り返す。
    */
   private place(item: string): void {
+    if (this.takeRewound(item)) return;
     if (!this.print) {
       // PRINT でないストリーム出力は桁揃えをしない。
       // 項目を空白 1 個で区切り、行幅で折り返すだけ。
@@ -210,17 +243,35 @@ export class ListWriter {
    * 現在位置がその桁を過ぎていれば改行してから送る。
    */
   column(at: number): void {
-    const target = Math.max(1, at);
+    // 行幅を超えた桁と 1 未満の桁は桁 1 として扱う（規定 p.321
+    // 「if the specified character position lies beyond the rightmost
+    // character position of the current line … the default character
+    // position is one」）。超えたまま埋めると行幅を超えた行ができる
+    const target = at < 1 || at > this.lineSize ? 1 : at;
     if (this.col > target) this.skip();
     this.cur = this.cur.padEnd(target - 1);
   }
 
-  /** 行の折り返しだけを見て素直に追記する。 */
+  /**
+   * 行の折り返しを見て追記する。
+   *
+   * 行幅を超えた分は**次の行へ送る**（規定 p.317「An attempt to write a
+   * line greater than 110 characters places the excess characters on the
+   * next line」）。項目ごと次行へ送ると桁位置が静かにずれ、しかも
+   * 行幅を超えた行がそのまま出る。
+   */
   private raw(s: string): void {
-    if (this.cur.length + s.length > this.lineSize) {
+    if (this.takeRewound(s)) return;
+    let rest = s;
+    while (this.cur.length + rest.length > this.lineSize) {
+      const room = this.lineSize - this.cur.length;
+      if (room > 0) {
+        this.cur += rest.slice(0, room);
+        rest = rest.slice(room);
+      }
       this.flush();
     }
-    this.cur += s;
+    this.cur += rest;
   }
 
   /**
@@ -230,6 +281,17 @@ export class ListWriter {
    */
   finish(): void {
     if (this.cur !== "") this.flush();
+  }
+
+  /**
+   * `SKIP(0)` の直後の書き込みを、現在行の先頭への上書きにする。
+   * 上書きしたら true。
+   */
+  private takeRewound(s: string): boolean {
+    if (!this.rewound) return false;
+    this.rewound = false;
+    this.cur = s + this.cur.slice(s.length);
+    return true;
   }
 
   /** これまでに書いた文字数。出力上限の判定に使う。 */

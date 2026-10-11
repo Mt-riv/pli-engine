@@ -44,6 +44,8 @@ The tests come in three layers.
 | Layer | Where | What it guarantees |
 |----|---------|--------------|
 | Unit and integration | `test/*.test.ts` | pins one example |
+| A stocktake of the grammar | `test/grammar.test.ts` | laid out **by syntax**, pinning that the forms people use go through and that the ones that do not are refused by name |
+| Against the language reference | `test/ibm-lrm.test.ts` | whether the **answers** agree with the IBM language reference (Enterprise PL/I for z/OS 6.2). Every test carries the page number of the rule |
 | Invariants | `test/invariants.test.ts` | **two paths always agree** (randomised from a fixed seed) |
 | Golden | `test/golden/` (from a real implementation) / `test/screen/` (from the specification) | pins the output byte for byte |
 
@@ -55,6 +57,14 @@ opens the link in the language they read, so they never see it (there really
 were four, and a user pointed them out). The test checks that every target
 exists, that a link does not cross languages, and that the Japanese and
 English versions come in pairs that point at each other.
+
+**The stocktake of the grammar was added because nowhere covered the
+forms themselves; the other tests go feature by feature.** Writing it out
+showed that `DO i = 1 TO 10 WHILE(…)`, `REPEAT`, `STOP`, assignment with
+several targets and `PUT STRING` were **simply missing**, that the
+character-to-`BIT` conversion never checked for 0 and 1, and that a call
+with too many arguments and a `LEAVE` crossing a procedure both went
+through quietly - all of it with every test green.
 
 **The invariant layer was added because disagreements between paths were
 getting through even past a thousand tests.** A FLOAT that printed correctly
@@ -264,6 +274,20 @@ the base variable, and the diagonal example writes into `d` with
 | `SELECT` / `WHEN` / `OTHERWISE` | both the `SELECT(expr)` and the `SELECT;` forms |
 | `LEAVE` / `ITERATE` | controlled by an internal exception. **With a label** (`leave outer;`), only the `DO` carrying that label catches it and the others throw it outwards again. Without giving the loop its own label, the innermost one would always catch it |
 | Several specifications on `DO` | `do i = 1 to 3, 7 to 9;` / `do i = 1, 5, 10;` |
+| `WHILE` / `UNTIL` / `REPEAT` on `DO` | they can go on each specification (`do i = 1 to 10 while(a(i) ¬= '');`). The order is **the TO test, WHILE, the body, UNTIL, the next value**. Both `DO WHILE(a) UNTIL(b);` and walking a chain with `do p = head repeat p->node.next while(p ¬= null());` can be written |
+| `STOP` | ends the whole program on the spot (an internal exception unwinds up to `run()`; open files are closed and written back). It is not an error, so no diagnostic comes out |
+| Assignment with several targets | `a, b = 0;`. The right-hand side is **evaluated once** and handed out from the left (evaluating it per target would call f twice in `a, b = f();`) |
+| `PUT STRING` | takes the result of the format into a character variable. The counterpart of `GET STRING`. It does not align in columns (the 24-column tab is a property of a line, so it is not carried into a string). The control items (`SKIP` / `PAGE` / `LINE`) are refused while parsing, and a result that does not fit the declared length is refused at run time |
+| `CHAR(*)` / `BIT(*)` parameters | the length comes from the caller (`p: proc(s); dcl s char(*);`). Written anywhere but a parameter it is refused. Falling back to the default of 1 would make `LENGTH` return 1 and `SUBSTR` lose the right end |
+| `(*)` bounds on an array parameter | the bounds come from the caller (`dcl x(*) fixed bin(15);`). The only way to pass arrays of differing size to a procedure |
+| Arguments are passed by reference (elements, pointer targets, aliases too) | `call swap(a(1),a(2));` works. A single cell that cannot be shared as a whole is passed as a **window** (`Variable.window`). An argument in parentheses (`call p((x));`) becomes a dummy argument |
+| Short-circuit in conditions | the right side of `if p = null() \| p->bx = 0` is not evaluated (p.278). Only when both sides are conditions (expressions yielding BIT(1)); bit-by-bit operations on bit strings do not short-circuit |
+| `DO LOOP;` / `DO FOREVER;` | infinite iteration, left with `LEAVE` |
+| `UPTHRU` / `DOWNTHRU` | the same limit as `TO`, but tested **after** the body (so the body runs at least once) |
+| Compound assignment (`+=` `-=` `*=` `/=` `**=` `\|\|=` `&=` `\|=`) | `x op= e;` means `x = x op (e);`. `¬=` is not taken, since it is spelled like the comparison |
+| Iteration in a data list | `put list((x(i) do i = 1 to 3));` (a type-3 DO). The `GET` side is refused by name |
+| Multiple closure of `END` | `END label;` closes up to the block of that name. A name belonging to no open block is refused (writing a name on `END` is for letting the machine catch broken nesting) |
+| `READ IGNORE(n)` and a bare `READ` | skips records (a bare `READ` is `IGNORE(1)`) |
 | `GOTO` and statement labels | the label is looked for among the statements and jumped to; if it is not found it propagates outwards |
 | The control variable of a `DO` | both the write and the read-back go through the reference path (`evalRef`). Reading back through a path that does not resolve aliases makes the end test never hold for a `DEFINED` control variable |
 | Structures | the qualified names (`REC.ADDR.CITY`) are built from the level numbers and the leaves are registered. A dimension goes **on a leaf** (`2 a(3) fixed bin(15)`). A dimension on the structure itself (`1 tbl(3)`) is refused at declaration time |
@@ -285,7 +309,7 @@ Worked backwards from the output field widths.
 |---------|---------|-----|
 | `LENGTH` / `INDEX` / `VERIFY` / `SIGN` | `FIXED BIN(15,0)` | 9 |
 | `LBOUND` / `HBOUND` / `DIM` | `FIXED BIN(31,0)` | 14 |
-| `CEIL` / `FLOOR` | `FIXED(min(N, max(p-q,1)+1), 0)` | 5 for `ceil(2.1)` |
+| `CEIL` / `FLOOR` | `FIXED(min(N, max(p-q+1,1)), 0)` | 5 for `ceil(2.1)` |
 | `DIVIDE(a,b,p,q)` | `FIXED DEC(p,q)` | p+3 |
 | `MOD` | `p = min(N, p2-q2+max(q1,q2))` | 4 for `mod(17,5)` |
 
@@ -325,6 +349,15 @@ running the ON unit of a computational condition (`ZERODIVIDE` /
 more useful for learning than producing a program that never stops. This is a
 **deliberate incompatibility**, so it is written down (the exit code is 1).
 
+The phrase "the standard retries and loops forever" was not accurate, though.
+In the IBM reference a normal return from `FIXEDOVERFLOW` or `SIZE` goes to the
+point **immediately after** the operation (p.411/415), with no retry, and a
+normal return from `ZERODIVIDE` raises `ERROR` (p.421) - the same choice this
+implementation makes. The infinite loop is the behaviour of **the real compiler**
+(Iron Spring), not of the standard. What remains as a deliberate difference is
+the single point that the ON-unit for `FIXEDOVERFLOW` or `SIZE` goes to `ERROR`
+instead of back to the operation (rewritten 2026-10-11).
+
 Because of that, the tests use `SIGNAL` and raise `expectRuntimeError` in the
 manifest, requiring only that the standard output agrees.
 
@@ -346,7 +379,7 @@ implementation raises these eight.
 | `FIXEDOVERFLOW` | fixed-point overflow |
 | `SIZE` | it does not fit in the target |
 | `SUBSCRIPTRANGE` | a subscript outside the declared bounds |
-| `CONVERSION` | a character-to-number conversion failed |
+| `CONVERSION` | a character-to-number conversion failed. This includes a **character-to-`BIT`** conversion that meets a character other than 0 or 1 (without that check, `b = 'abc';` would build `'abc00000'B`, a "bit string" that is not bits, and `&` or `|` would then quietly give a wrong answer) |
 | `ENDFILE(f)` | the input ran out |
 | `UNDEFINEDFILE(f)` | the file could not be opened |
 
@@ -355,6 +388,24 @@ An `ON` unit for any other condition name (`OVERFLOW` / `UNDERFLOW` /
 that condition it **never runs**. That is unimplemented. Saying so in a README
 is not visible from the source, so the linter rule `on-never-raised` reports
 it (it does not report one you raise yourself with `SIGNAL`).
+
+**`ENDPAGE` is not raised, but its implicit action, the page break, happens.**
+Losing the rule "Implicit action: A new page is started" (p.409) would make a
+report written with `PAGESIZE` come out **silently different in shape**
+(fixed 2026-10-11).
+
+**Conditions chain to `ERROR`.** A normal return from that condition's ON-unit
+raises `ERROR` (p.418/421, "Normal return: The ERROR condition is raised").
+Using `ON ERROR` as the common clean-up is the main use the reference calls out
+(p.395), so writing a per-condition ON-unit must not make `ON ERROR` be skipped.
+With no ON-unit anywhere, the condition name alone would not say what happened,
+so it stays the ordinary run-time error it was.
+
+**A condition raised by `SIGNAL` returns to the statement after it** (except
+`ERROR`; p.403, "If a condition (except the ERROR condition) has been raised by
+the SIGNAL statement, the normal return is always to the statement immediately
+following SIGNAL"). The deliberate difference below is about computational
+conditions raised **by an operation**; a `SIGNAL` has no operation to retry.
 
 `ON ... SYSTEM;` goes back to the default action (dropping the ON units set so
 far). Unlike an empty ON unit, it **does not resume and carry on**.
@@ -373,11 +424,55 @@ because the name of the condition alone does not say what happened.
 | `UNION` | overlaying storage; it sits badly with a design that has no addresses |
 | `LABEL` variables / `REFER` | little demand for how heavy the scope handling is |
 | Arrays of structures (`1 tbl(3), 2 nm ...`) | flattening does not pass a dimension on an intermediate level down to the leaves. Accepting it would make the leaf a box of one and return a quiet lie, so it is refused at declaration time |
+| Data-directed I/O (`PUT DATA` / `GET DATA`) | reads and writes names together with values, in the `A= 1` form. It saves writing a format, at the price of making the reader depend on the spelling of the names. `LIST` and `EDIT` are enough |
+| `BY NAME` assignment | matches only the items that share a name. It sits badly with holding the leaves flattened (the result depends on which declaration order is walked), and writing each item out is enough |
+| A repetition factor in `INITIAL` (`init((5) 0)`) | hard to tell apart from the parentheses of a declaration (precision, dimensions). Listing the values is enough |
+| String-overlay defining (a `DEFINED` of a different length, `POSITION`) | an alias to **part of a cell**, which storage held by the cell cannot express. Simple defining (same attributes) and iSUB defining do work |
+| Condition prefixes (`(subscriptrange):`) | this implementation always checks `SIZE` and `SUBSCRIPTRANGE`, so it has no enabled/disabled switch to offer |
+| Secondary entry points (the `ENTRY` statement), `PACKAGE`, `ASSERT`, `REINIT`, `RESIGNAL`, `FLUSH` | they do not sit well with a single-file design, or something else already covers them |
+| The type-definition family (`DEFINE` / `TYPE` / `HANDLE` / `ORDINAL` / `XDECLARE` / `QUALIFY`) | bringing in a namespace for types makes scope handling heavy |
+| `UNSIGNED` / `VALUE` / `GENERIC` / `VARYINGZ` / file variables (`FILE VARIABLE`) | each one reaches into the value model or into scope |
+| `*` subscripts (a cross-section), structure expressions (`r = r*2`), nested factoring, a `*` item in `INITIAL` | forms of expressions and declarations; each can be rewritten |
+| `CLOSE FILE(*)` / `GET ... COPY` / the third argument of the `F` and `E` formats | forms of I/O. The third argument used to be **read and dropped**, which is the worst case (writing it changed nothing) |
+| Built-in subroutines (`PLIRETC` / `PLIDUMP` / `PLIFILL` / `PLIMOVE` / `PLISRTA`-`D`) | only the names are known, so they can be refused by name (p.454) |
 | The physical layer of IMS, secondary indexes, logical relationships | see "IMS/DB (DL/I)" below |
 | The 3270 data stream, DBCS, paging | see "Screen I/O (MFS)" below |
 
 When you hit an attribute or a statement that is not implemented, it reports
 what by name.
+
+## What the IBM language reference settled (2026-10-11)
+
+The **Enterprise PL/I for z/OS 6.2 Language Reference** (SC27-8940, 758 pages)
+was read chapter by chapter and compared against the actual behaviour.
+The results are pinned in `test/ibm-lrm.test.ts`, every test carrying the page
+number of the rule.
+
+With every test green, **41 cases of "quietly wrong" were still there**.
+They come down to ten clusters.
+
+| Cluster | Example of the symptom | Rule |
+|---|---|---|
+| Argument binding | `call swap(a(1),a(2));` swaps nothing. `addr(a(2))` points at `a(1)`, and `addr(x) = addr(x)` is always false | p.161-162 / p.457 |
+| `DEFINED` | `dcl b(5) … def(a); b(5)` returns `a(1)`; writing to it breaks the base | p.317-321 |
+| Bit strings | `dcl flags bit(8) init('1'b); flags = '1'b` is false. `2 & 1` is `'1'B`. `dcl a bit(1); a=1` is `'1'B` | p.119 / p.121 / p.137-139 |
+| FLOAT arguments | `sign(1e-30)` is 0, `ceil(1e-30)` is 0, `round(1e18,0)` dies | p.456 and others |
+| Expanding arrays | `put list(a+b)` emits only the first element; `b = abs(a)` fills every element with the same value | p.123 / p.430 |
+| `GET` | reading `12345` with `f(5,2)` is 100 times too large; `a(m)` sees the old `m`; a null field in `,5` shifts the values by one | p.311 / p.314 / p.323 |
+| `PICTURE` | 12 into `ZZ9.99` gives `12.00` (the `.` was treated as the point); `Y` suppressed only leading zeros; a fixed `$` survived the zero suppression | p.332-340 |
+| Conditions | names in an ON-unit resolved where the condition was raised; no chaining to `ON ERROR`; `SIGNAL` did not resume | p.395-403 |
+| Scope of declarations | a `DECLARE` after the statements that use the name was ignored, so earlier assignments vanished | p.201 |
+| Refusing by name | twenty forms in the reference fell out as plain syntax errors (indistinguishable from a typo) | - |
+
+**Three decisions of this implementation disagreed with the reference** and were
+changed too: `MOD` with a negative divisor (see "Where the real compiler was
+broken"), a miscopied precision formula for `CEIL` / `FLOOR` / `TRUNC`, and the
+grounds for "the standard retries and loops forever" (see below).
+
+**The evaluator and the linter held different rules in three places** (a
+trailing `DECLARE`, name resolution in an ON-unit, and an unqualified structure
+member). As long as one of them is right the tests stay green, so running both
+cannot catch it. The reference decided which one is right.
 
 ## What was settled against a real implementation
 
@@ -438,7 +533,7 @@ the code, the security and the documents were put to the real thing again.
 | Comparing arithmetic with characters | **the character is converted to arithmetic and compared algebraically.** Against `i = 12`, `'12'`, `'012'` and `' 12'` are all true | made the same. It used to turn the number into characters and compare by collating sequence, which made all of them false, and left the disagreement that `i + 0 = 12` was true (because `asText` right justifies a number into its output field width, so the comparison was `"       12"` against `"12       "` and never matched) |
 | Suppression in a `PICTURE` when the value is 0 | **if every digit can be suppressed (there is no `9` at all), the whole field, including the decimal point and the insertion characters**, becomes the fill character. `ZZV.ZZ` → five blanks, `ZZ,ZZZ` → the comma goes too, `**V.**` → five stars. With a `9` mixed in, only the usual leading-zero suppression applies (`ZZV.Z9` → `"  .00"`) | made the same. It used to suppress only the integer part |
 | A decimal assignment into `FIXED BIN(p,q)` | **two conversions.** One decimal digit moves to four binary digits, so `0.1` becomes 1/16 = 0.0625, and going back to the declared scale of 10 does not bring the information back | it already agreed → **no change** (exactly as the standard's precision conversion says) |
-| The result precision of `TRUNC` | **the same** as `CEIL` and `FLOOR`: `min(N, max(p-q,1)+1)` | lined up with the standard during the review; agreement confirmed |
+| The result precision of `TRUNC` | **the same** as `CEIL` and `FLOOR`: `min(N, max(p-q+1,1))` | lined up with the standard during the review; agreement confirmed |
 | `DIVIDE(a,b,p,q)` | **builds the quotient at the given precision.** Even with a dividend of `DEC(15,0)`, `divide(a,b,5,4)` is 0.5000 | fixed during the review; agreement confirmed |
 
 The golden cases `char-compare` / `pic-zero` / `bin-scale` /
@@ -454,14 +549,21 @@ not followed** on these.
 | `^` (NOT) | **does nothing.** `^'1100'B` is `'1100'B`, and `if ^('1'b)` is true | inverts, as the standard says (`'0011'B`) |
 | `2**(-1)` | fails with an `ERROR` inside `_pli_EXP` | returns 0.5 (computed in FLOAT, as the standard says) |
 | Input with no trailing newline | stream input fails with an `ERROR` inside `_pli_BufI` | reads to the last item |
-| `MOD` with a fractional divisor | **the value is wrong.** `mod(7, 2.5)` is 0.7 (it should be 2.0), `mod(1, 0.5)` is 0.06 (it should be 0) | follows the IBM definition `x - y*floor(x/y)` |
-| `MOD` with a negative divisor | `mod(7,-3)` is 1. The result of `MOD` has the sign of the second argument, so it should be -2 | -2 |
+| `MOD` with a fractional divisor | **the value is wrong.** `mod(7, 2.5)` is 0.7 (it should be 2.0), `mod(1, 0.5)` is 0.06 (it should be 0) | follows the IBM definition |
 
 Every one of them was judged a mistake on the real side against the IBM
 standard. `^` is the standard NOT operator, and if it does nothing then every
 conditional expression is broken. For `MOD`, `mod(17,5)` and `mod(-7,3)` do
 agree, so it is enough not to put the broken combinations into the goldens
 (`mod(17,5)` in `decimal.pli` goes through as it is).
+
+**The note about `MOD` with a negative divisor is withdrawn.** It used to say
+that the real compiler returning 1 for `mod(7,-3)` was wrong (that it should be
+-2), but **the language reference had been misread**. The rule is "MOD returns
+the smallest **nonnegative** value, R, such that (x - R)/y = n" (p.552), and the
+examples are `mod(+10,-8)=2` and `mod(-10,-8)=6` (p.553). `(7-1)/(-3) = -2` is an
+integer, so **1 is right and the real compiler agreed**. "The result has the sign
+of the second argument" is the definition of another dialect. Fixed 2026-10-11.
 
 ## Where this deliberately differs from the real implementation
 

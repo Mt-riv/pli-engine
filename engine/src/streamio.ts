@@ -67,25 +67,36 @@ export class InputCursor {
   }
 
   /**
-   * LIST 入力の 1 項目を読む。
+   * LIST 入力の 1 項目。
    *
    * 区切りは空白とカンマ。引用符で囲まれた文字列は 1 項目として扱い、
    * 中の `''` は `'` 1 個にする（PL/I の文字列と同じ規則）。
    * 読むものが無ければ undefined（呼び出し側が ENDFILE を起こす）。
+   *
+   * 戻り値が `null` なら**空フィールド**（規定 p.314）。
+   * 「A null field in the stream is indicated either by the first nonblank
+   * character in the data stream being a comma, or by two commas separated
+   * by an arbitrary number of blanks. A null field specifies that the value
+   * of the associated data-list item remains unchanged」。
+   *
+   * そのためカンマは**項目の後ろで**消費する。先に消費すると、
+   * `,5` を `get list(a,b)` に与えたとき 5 が a へ入り、値が 1 つずれる。
    */
-  nextItem(): string | undefined {
+  nextItem(): string | null | undefined {
     if (this.restIsBlank()) {
       this.pos = this.text.length;
       return undefined;
     }
-    // 区切りを読み飛ばす。カンマは 1 個だけ区切りとして消費する
     while (this.pos < this.text.length && /\s/.test(this.text[this.pos]!)) this.pos++;
+    // 項目の前にカンマが来たら空フィールド（前の項目の区切りは
+    // 読んだ直後に消費しているので、ここのカンマは「中身が無い」の印）
     if (this.text[this.pos] === ",") {
       this.pos++;
-      while (this.pos < this.text.length && /\s/.test(this.text[this.pos]!)) this.pos++;
+      return null;
     }
     if (this.pos >= this.text.length) return undefined;
 
+    let item: string;
     if (this.text[this.pos] === "'") {
       this.pos++;
       let out = "";
@@ -103,12 +114,17 @@ export class InputCursor {
         out += c;
         this.pos++;
       }
-      return out;
+      item = out;
+    } else {
+      const begin = this.pos;
+      while (this.pos < this.text.length && !/[\s,]/.test(this.text[this.pos]!)) this.pos++;
+      item = this.text.slice(begin, this.pos);
     }
-
-    const start = this.pos;
-    while (this.pos < this.text.length && !/[\s,]/.test(this.text[this.pos]!)) this.pos++;
-    return this.text.slice(start, this.pos);
+    // 項目に続く区切りのカンマを 1 個だけ消費する
+    let look = this.pos;
+    while (look < this.text.length && /[ \t]/.test(this.text[look]!)) look++;
+    if (this.text[look] === ",") this.pos = look + 1;
+    return item;
   }
 
   /** EDIT 入力。現在位置から n 文字を取る。足りなければ空白で埋める。 */
@@ -361,8 +377,21 @@ export class FileTable {
     const title = attrs.title ?? name;
 
     if (key === SYSPRINT && mode === "output") {
-      const f = this.sysprint();
-      return f;
+      // まだ開いていなければ、OPEN に書いた LINESIZE / PAGESIZE を効かせる。
+      // 既定の書き出し口を先に作ってしまうと、`open file(sysprint)
+      // output pagesize(4);` が黙って無視される
+      if (!this.open.has(SYSPRINT)) {
+        const f = new StreamFile(SYSPRINT, "output", { ...attrs, print: true }, {
+          writerOptions: {
+            print: true,
+            ...(attrs.lineSize === undefined ? {} : { lineSize: attrs.lineSize }),
+            ...(attrs.pageSize === undefined ? {} : { pageSize: attrs.pageSize }),
+          },
+        });
+        this.open.set(SYSPRINT, f);
+        return f;
+      }
+      return this.sysprint();
     }
     if (key === SYSIN && mode === "input") {
       const f = new StreamFile(SYSIN, "input", attrs, { contents: this.stdin });
