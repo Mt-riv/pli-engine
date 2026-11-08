@@ -1815,10 +1815,14 @@ export class Interpreter {
               });
               continue;
             }
-            // スカラを配列全体へ配る
+            // スカラを配列全体へ配る。配列そのものを差し替えないこと。
+            // 差し替えると、参照渡しの引数で共有している
+            // 呼び元の配列に書き戻らない（呼び先の `p = 0;` が消える）
             scalar ??= this.eval(s.value, scope, s.line);
             const one = scalar;
-            lhs.cells = lhs.cells.map(() => this.coerce(one, lhs.attr, s.line));
+            for (let i = 0; i < lhs.cells.length; i++) {
+              lhs.cells[i] = this.coerce(one, lhs.attr, s.line);
+            }
             continue;
           }
           scalar ??= this.eval(s.value, scope, s.line);
@@ -3151,8 +3155,17 @@ export class Interpreter {
       if (to === undefined || from === undefined) {
         throw new RuntimeError(m`構造体の項目 ${destKey} が見つかりません`, line);
       }
-      // 配列の葉は要素ごとに写す
-      to.cells = from.cells.map((c) => this.coerce(c, to.attr, line));
+      // 配列の葉は要素ごとに写す。配列そのものは差し替えない
+      // （引数で渡された構造体の葉は呼び元と記憶域を共有している）
+      if (to.cells.length !== from.cells.length) {
+        throw new RuntimeError(
+          m`構造体の項目 ${destKey} の要素数が合いません（${to.cells.length} 要素と ${from.cells.length} 要素）`,
+          line,
+        );
+      }
+      for (let k = 0; k < to.cells.length; k++) {
+        to.cells[k] = this.coerce(from.cells[k]!, to.attr, line);
+      }
     }
     return true;
   }

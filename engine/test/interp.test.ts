@@ -1067,6 +1067,20 @@ end m;`;
     expect(out(src).replace(/\s+/g, " ").trim()).toBe("2 4 6");
   });
 
+  it("配列の引数にスカラを配っても呼び元に戻る（p = 0;）", () => {
+    // 配列そのものを作り直すと共有が切れ、呼び元の配列が元のまま残っていた
+    const src = `${prelude}  do i = 1 to 3; arr(i) = i; end;
+  call clear(arr);
+  put list(arr(1), arr(2), arr(3));
+  clear: proc(v);
+    dcl v(*) fixed bin(15);
+    v = 0;
+    v(2) = 9;
+  end clear;
+end m;`;
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("0 9 0");
+  });
+
   it("宣言した型が違えばダミー引数になる（呼び元は変わらない）", () => {
     const src = `${prelude}  a = 5;
   call conv(a);

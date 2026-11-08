@@ -181,6 +181,7 @@ export const EN: Record<string, string> = {
   "{0} は構造体ではありません（{1} は構造体です）": "{0} is not a structure ({1} is)",
   "構造体の形が違います: {0} は項目 {1} 個、{2} は {3} 個": "The structures differ in shape: {0} has {1} items, {2} has {3}",
   "構造体の項目 {0} が見つかりません": "Cannot find the structure item {0}",
+  "構造体の項目 {0} の要素数が合いません（{1} 要素と {2} 要素）": "The structure item {0} has a different number of elements ({1} and {2})",
   "{0} は VARYING なので{1}で扱えません（長さ前置きを持たないため桁がずれます。CHAR(n) で宣言してください）": "{0} is VARYING, so it cannot be used in {1} (it carries no length prefix, so the columns shift; declare it CHAR(n))",
   "{0} は{1}で扱えません（文字か PICTURE の項目にしてください）": "{0} cannot be used in {1} (make it a character or PICTURE item)",
   "{0} は BASED です。p -> {1} の形か、宣言で based(p) を指定してください": "{0} is BASED. Write it as p -> {1}, or give based(p) in the declaration",
