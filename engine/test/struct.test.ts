@@ -121,3 +121,78 @@ describe("未宣言の名前", () => {
     expect(out("  i = 3;\n  put list(i);")).toBe("3");
   });
 });
+
+describe("構造体を引数に渡す", () => {
+  const GAME = `  dcl 1 game, 2 total fixed bin(31), 2 hist(5) fixed bin(31), 2 st, 3 n fixed bin(31);`;
+  const ADD = `add: proc(g, pts);
+  dcl 1 g, 2 total fixed bin(31), 2 hist(5) fixed bin(31), 2 st, 3 n fixed bin(31);
+  dcl pts fixed bin(31);
+  g.st.n = g.st.n + 1;
+  g.hist(g.st.n) = pts;
+  g.total = g.total + pts;
+end add;`;
+
+  it("参照渡しで、呼び先の書き換えが呼び元へ戻る", () => {
+    expect(
+      out(`${GAME}
+  game.total = 0; game.st.n = 0;
+  call add(game, 5);
+  call add(game, 7);
+  put list(game.total, game.st.n, game.hist(1), game.hist(2));
+${ADD}`),
+    ).toBe("12 2 5 7");
+  });
+
+  it("関数の引数にも渡せ、項目名が違っても宣言順で結び付く", () => {
+    expect(
+      out(`${GAME}
+  game.total = 3; game.st.n = 4;
+  put list(score(game));
+score: proc(x) returns(fixed bin(31));
+  dcl 1 x, 2 t fixed bin(31), 2 h(5) fixed bin(31), 2 s, 3 c fixed bin(31);
+  return(x.t * 10 + x.s.c);
+end score;`),
+    ).toBe("34");
+  });
+
+  it("受け取った構造体をさらに別の手続きへ渡せる", () => {
+    expect(
+      out(`${GAME}
+  game.total = 0; game.st.n = 0;
+  call outer(game);
+  put list(game.total);
+outer: proc(g);
+  dcl 1 g, 2 total fixed bin(31), 2 hist(5) fixed bin(31), 2 st, 3 n fixed bin(31);
+  call add(g, 100);
+end outer;
+${ADD}`),
+    ).toBe("100");
+  });
+
+  it("形が違えば断る（黙って詰めると別の項目を書き換える）", () => {
+    expect(
+      fails(`${GAME}
+  call bad(game);
+bad: proc(g);
+  dcl 1 g, 2 total fixed bin(31), 2 hist(3) fixed bin(31), 2 st, 3 n fixed bin(31);
+end bad;`),
+    ).toMatch(/2 番目の項目 G\.HIST の属性が、渡された構造体と合いません/);
+    expect(
+      fails(`${GAME}
+  call bad(game);
+bad: proc(g);
+  dcl 1 g, 2 total fixed bin(31), 2 hist(5) fixed bin(31);
+end bad;`),
+    ).toMatch(/項目の数（2）が、渡された構造体（3）と合いません/);
+  });
+
+  it("構造体を渡したのに引数をスカラで宣言していれば断る", () => {
+    expect(
+      fails(`${GAME}
+  call bad(game);
+bad: proc(g);
+  dcl g fixed bin(31);
+end bad;`),
+    ).toMatch(/構造体として宣言されていません/);
+  });
+});

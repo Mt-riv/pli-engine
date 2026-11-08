@@ -126,7 +126,7 @@ if db_pcb.stat_code = '  ' then put list(seg_io);
   `SELECT` / `GOTO` / `LEAVE` / `ITERATE`
 - 手続き（入れ子・再帰・戻り値）、`BEGIN` ブロック、構造体、配列、`DEFINED` + iSUB。
   引数は PL/I の規定どおり**参照渡し**で、宣言した属性が渡した値と違うときだけ
-  一時変数（ダミー引数）になります
+  一時変数（ダミー引数）になります。構造体もまるごと渡せます（形が違えば断ります）
 - `PUT LIST` / `PUT EDIT` / `GET LIST` / `GET EDIT`（規定どおりの桁揃え）
 - **10 進固定小数点の正確な算術**（`123.45 * 6.7 = 827.115` が誤差なく出る）
 - `ON` 単位と条件。発火するのは `ERROR` / `ZERODIVIDE` / `FIXEDOVERFLOW` / `SIZE` /
@@ -259,12 +259,12 @@ xdg-open dist-web/index.html
 #### リリースから入手する（手軽）
 
 [Releases](https://github.com/Mt-riv/pli-engine/releases) から
-`pli-lang-0.5.0.vsix` をダウンロードします。ビルドは要りません。
+`pli-lang-0.5.1.vsix` をダウンロードします。ビルドは要りません。
 
 `gh` が使えるなら次でも取れます。
 
 ```bash
-gh release download vscode-v0.5.0 --repo Mt-riv/pli-engine
+gh release download vscode-v0.5.1 --repo Mt-riv/pli-engine
 ```
 
 #### 自分でビルドする
@@ -273,14 +273,14 @@ gh release download vscode-v0.5.0 --repo Mt-riv/pli-engine
 cd ../vscode-pli        # pli-engine/engine から
 npm ci
 npm run build
-npx @vscode/vsce package      # pli-lang-0.5.0.vsix ができる
+npx @vscode/vsce package      # pli-lang-0.5.1.vsix ができる
 ```
 
 #### インストール
 
 VSCode の拡張ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）→ 右上の `…` →
-**「VSIX からのインストール」** で `pli-lang-0.5.0.vsix` を選びます。
-`code` コマンドが使えるなら `code --install-extension pli-lang-0.5.0.vsix` でも入ります。
+**「VSIX からのインストール」** で `pli-lang-0.5.1.vsix` を選びます。
+`code` コマンドが使えるなら `code --install-extension pli-lang-0.5.1.vsix` でも入ります。
 
 使い方は [`docs/vscode-manual.md`](docs/vscode-manual.md)。
 
