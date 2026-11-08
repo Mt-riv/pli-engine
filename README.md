@@ -310,6 +310,7 @@ Windows でも同じコマンドが動きます（`npm run` 経由なのでパ�
 | `--allow-outside` | `pli` | ソースのディレクトリの外も読み書きできるようにする |
 | `--write` | `plitest` | テストの書き出しを実ファイルへ反映する（既定は反映しない） |
 | `--all` | `plitest` | 名前が規約に合わないファイルも中身で判定する |
+| `--pass-with-no-tests` | `plitest` | テストファイルが 1 つも無くても終了コード 0 にする（既定は失敗） |
 | `--strict` | `plilint` | warning も失敗として扱う |
 | `--lang ja\|en` | 3 本とも | メッセージの言語（既定 `ja`。環境変数 `PLI_LANG` でも指定できる） |
 

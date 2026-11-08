@@ -41,6 +41,7 @@ const USAGE = msg(`使い方: plitest <ファイル/ディレクトリ...> [オ�
   --write              テストの書き出しを実ファイルへ反映する
   --all                名前が規約に合わないファイルも中身で判定する
   --quiet, -q          失敗したファイルだけ表示する
+  --pass-with-no-tests テストファイルが 1 つも無くても終了コード 0 にする
   --lang ja|en         メッセージの言語（既定 ja。環境変数 PLI_LANG でも指定できる）
   -h, --help           この使い方を表示する`);
 
@@ -89,6 +90,7 @@ main(() => {
   let write = false;
   let quiet = false;
   let all = false;
+  let passWithNoTests = false;
 
   const argv = applyLangOption(process.argv.slice(2));
   for (let i = 0; i < argv.length; i++) {
@@ -100,6 +102,7 @@ main(() => {
     else if (a === "--write") write = true;
     else if (a === "--all") all = true;
     else if (a === "--quiet" || a === "-q") quiet = true;
+    else if (a === "--pass-with-no-tests") passWithNoTests = true;
     else if (a.startsWith("-")) fail(m`不明なオプション: ${a}\n\n${tr(USAGE)}`);
     else targets.push(a);
   }
@@ -107,6 +110,12 @@ main(() => {
 
   const files = targets.flatMap((t) => collect(resolve(t), all));
   if (files.length === 0) {
+    // まだテストを書いていない場所でも CI のゲートを通したいときの逃げ道。
+    // 既定では落とす（テストの置き場所や名前を間違えたときに、黙って通さない）
+    if (passWithNoTests) {
+      console.log(m`テストファイルが見つかりません（*_test.pli / test_*.pli / *.test.pli）`);
+      return;
+    }
     fail(m`テストファイルが見つかりません（*_test.pli / test_*.pli / *.test.pli）`);
   }
 

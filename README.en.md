@@ -342,6 +342,7 @@ path separator does not matter).
 | `--allow-outside` | `pli` | allow reading and writing outside the source directory |
 | `--write` | `plitest` | let writes from the tests reach real files (by default they do not) |
 | `--all` | `plitest` | judge by content even when the file name breaks the convention |
+| `--pass-with-no-tests` | `plitest` | exit with 0 even if no test file is found (fails by default) |
 | `--strict` | `plilint` | treat warnings as failures too |
 | `--lang ja\|en` | all three | the language of the messages (default `ja`; `PLI_LANG` works too) |
 
