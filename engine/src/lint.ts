@@ -524,11 +524,16 @@ class Linter {
           existing.attr = item.attr;
           continue;
         }
+        // 構造体の引数（`proc(g); dcl 1 g, 2 a ...;`）の項目は、呼ぶ側の記憶域である。
+        // ふつうの変数として数えると、書くだけの項目が「読んでいない」、
+        // 読むだけの項目が「値を入れる前に読まれている」になる
+        const root = key.split(".")[0]!;
+        const ofParam = key.includes(".") && scope.vars.get(root)?.isParam === true;
         scope.vars.set(key, {
           name,
           line,
           attr: item.attr,
-          isParam: false,
+          isParam: ofParam,
           hasInit: item.init !== undefined,
           isAlias: item.defined !== undefined,
           reads: 0,
@@ -582,8 +587,10 @@ class Linter {
       else v.reads++;
       if (ref.locator === undefined) this.readBasedLocator(v, scope);
     } else if (scope.lookupProc(key)) {
-      // 関数としての呼び出し
+      // 関数としての呼び出し。引数は手続きの引数として数える
       scope.lookupProc(key)!.calls++;
+      for (const a of ref.subscripts) this.procArg(a, scope, line);
+      return;
     } else if (!BUILTIN_NAMES.has(key) && !this.injected.has(key) && !scope.hasName(key)) {
       this.implicit(ref.name, line, scope, ref.subscripts.length > 0);
     }
@@ -989,7 +996,7 @@ class Linter {
           });
           return;
         }
-        for (const a of s.args) this.expr(a, scope, s.line);
+        for (const a of s.args) this.procArg(a, scope, s.line);
         return;
       }
       case "return":
@@ -1007,6 +1014,36 @@ class Linter {
       default:
         return;
     }
+  }
+
+  /**
+   * 手続きの引数を数える。
+   *
+   * 構造体を名前だけで渡すと、呼び先が葉を読み書きする（参照渡し）。
+   * 向きは呼び先の中身で決まるので、葉を読んだことにも書いたことにもする。
+   * 数えないと、呼び先で初期化する構造体が「値を入れる前に読まれている」になる。
+   */
+  private procArg(a: Expr, scope: LintScope, line: number): void {
+    if (
+      a.kind === "ref" &&
+      a.parens !== true &&
+      a.subscripts.length === 0 &&
+      a.locator === undefined &&
+      scope.lookupVar(a.name.toUpperCase()) === undefined &&
+      this.isGroup(a.name.toUpperCase(), scope)
+    ) {
+      this.writeWhole(a, scope, line);
+      this.readWhole(a, scope, line);
+      return;
+    }
+    this.expr(a, scope, line);
+  }
+
+  private isGroup(name: string, scope: LintScope): boolean {
+    for (let sc: LintScope | undefined = scope; sc; sc = sc.parent) {
+      if (sc.groups.has(name)) return true;
+    }
+    return false;
   }
 
   /** 構造体なら葉も含めて書き込み扱いにする（READ INTO(rec) など）。 */

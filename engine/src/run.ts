@@ -20,7 +20,7 @@ import {
   type RunOptions,
 } from "./interp.js";
 
-export const VERSION = "0.5.0";
+export const VERSION = "0.5.1";
 
 export type DiagnosticPhase = "preprocess" | "lex" | "parse" | "runtime";
 

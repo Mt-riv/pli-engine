@@ -189,6 +189,16 @@ describe("plitest", () => {
     expect(r.stdout).toMatch(/読み込み不能 1/);
   });
 
+  it("テストファイルが無ければ失敗、--pass-with-no-tests なら 0", () => {
+    const empty = join(dir, "no-tests");
+    mkdirSync(empty, { recursive: true });
+    writeFileSync(join(empty, "main.pli"), "m: proc options(main);\nend m;\n");
+    expect(run("plitest.ts", [empty]).code).not.toBe(0);
+    const r = run("plitest.ts", [empty, "--pass-with-no-tests"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/テストファイルが見つかりません/);
+  });
+
   it("通るテストは終了コード 0", () => {
     const r = run("plitest.ts", [join(dir, "nested")]);
     expect(r.code).toBe(0);

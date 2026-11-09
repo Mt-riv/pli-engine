@@ -110,6 +110,7 @@ npm run plitest -- examples/tests                  # ディレクトリを再帰
 npm run plitest -- a_test.pli b_test.pli           # ファイルを並べて
 npm run plitest -- examples/tests --xml out/     # テストファイルごとに out/<名前>.xml を出す
 npm run plitest -- examples/tests --quiet          # 失敗したファイルだけ表示
+npm run plitest -- src --pass-with-no-tests        # テストファイルが無くても終了コード 0
 npm run plitest -- a_test.pli --max-steps 100000   # 文の実行数の上限
 npm run plitest -- examples/tests --psb STUPSB     # DL/I（IMS/DB）を使うテスト
 npm run plitest -- a_test.pli --write              # 書き出しを実ファイルへ反映する

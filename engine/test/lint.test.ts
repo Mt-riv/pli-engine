@@ -556,3 +556,28 @@ describe("未宣言の名前に括弧を付けて読んだとき", () => {
     expect(found[0]?.message).toMatch(/暗黙に/);
   });
 });
+
+describe("構造体の引数", () => {
+  /*
+   * 構造体を名前だけで渡すと参照渡しになり、呼び先が葉を読み書きする。
+   * 呼ぶ側でも呼び先でも、葉をふつうの変数として数えると誤検出になる。
+   */
+  const src = MAIN(`  dcl 1 game, 2 total fixed bin(31), 2 hist(5) fixed bin(31);
+  call init(game);
+  put list(game.total, score(game));
+init: proc(g);
+  dcl 1 g, 2 total fixed bin(31), 2 hist(5) fixed bin(31);
+  g.total = 0;
+  g.hist = 0;
+end init;
+score: proc(g) returns(fixed bin(31));
+  dcl 1 g, 2 total fixed bin(31), 2 hist(5) fixed bin(31);
+  return(g.total + g.hist(1));
+end score;`);
+
+  for (const rule of ["never-assigned", "assigned-but-never-read", "unused-variable"]) {
+    it(`${rule} を出さない`, () => {
+      expect(only(lint(src), rule)).toEqual([]);
+    });
+  }
+});

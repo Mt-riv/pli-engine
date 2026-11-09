@@ -113,6 +113,7 @@ npm run plitest -- examples/tests                  # a directory, recursively
 npm run plitest -- a_test.pli b_test.pli           # files, listed
 npm run plitest -- examples/tests --xml out/       # write out/<name>.xml per test file
 npm run plitest -- examples/tests --quiet          # show only the files that failed
+npm run plitest -- src --pass-with-no-tests        # exit with 0 even if no test file is found
 npm run plitest -- a_test.pli --max-steps 100000   # limit on the statements executed
 npm run plitest -- examples/tests --psb STUPSB     # tests that use DL/I (IMS/DB)
 npm run plitest -- a_test.pli --write              # let writes reach real files

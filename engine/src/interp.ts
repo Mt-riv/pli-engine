@@ -293,6 +293,13 @@ interface ArgBinding {
   shared: boolean;
   /** 1 枡だけを共有する場合の窓（配列の要素・ポインタ先・別名）。 */
   window?: { cells: Value[]; index: number };
+  /**
+   * 構造体を渡す場合の、葉の変数（宣言順）。
+   *
+   * 構造体は葉の修飾名に潰してあるので、記憶域は葉ごとにある。
+   * 引数の構造体の宣言を実行するときに、宣言順で 1 つずつ対応させる。
+   */
+  group?: Variable[];
 }
 
 function isArgBinding(x: Value | ArgBinding): x is ArgBinding {
@@ -312,6 +319,19 @@ interface ProcDef {
   defScope?: Scope;
 }
 
+/**
+ * 置かれた ON 単位。本体と、ON 文を実行したブロックのスコープ。
+ *
+ * ON 単位は **ON 文のあるブロックの中の手続き**として扱われる（規定）。
+ * 本体の名前はそのスコープから解決する。条件を起こした側のスコープで
+ * 解決すると、`on condition(c) found = '1'b;` の `found` が、呼び先の
+ * 同名の変数（無ければ暗黙宣言の変数）に化け、置いた側の旗が立たない。
+ */
+interface OnUnit {
+  body: Stmt;
+  scope: Scope;
+}
+
 class Scope {
   readonly vars = new Map<string, Variable>();
   /**
@@ -325,8 +345,8 @@ class Scope {
    */
   readonly hoisted = new Set<Stmt>();
   readonly procs = new Map<string, ProcDef>();
-  /** ON 単位。条件名から実行する文への対応。 */
-  readonly onUnits = new Map<string, Stmt>();
+  /** ON 単位。条件名から、本体と置いたスコープへの対応。 */
+  readonly onUnits = new Map<string, OnUnit>();
   /**
    * 構造体のグループ名から、その配下の葉の修飾名（宣言順）への対応。
    *
@@ -347,20 +367,27 @@ class Scope {
   returns?: DataAttr;
   /** 手続きの入口で作られたスコープか（`RETURNS` を探す範囲の境界）。 */
   isProcScope?: boolean;
+  /**
+   * 構造体を受け取った引数。引数名から、渡された構造体の葉（宣言順）へ。
+   * 引数の構造体の宣言を実行したときに葉を対応させて消す。
+   */
+  structArgs?: Map<string, Variable[]>;
 
   constructor(readonly parent?: Scope) {}
 
   /**
    * ON 単位を探す。
    *
-   * まずレキシカルに外へ、見つからなければ呼び出し元へたどる。
-   * PL/I の ON 単位は動的に有効になるので、呼び元が置いた
-   * `ON ENDFILE` が呼び先でも効く必要がある。
+   * **動的な連鎖**をたどる。手続きのスコープなら呼び出し元へ、
+   * それ以外（BEGIN など）は外側のブロックへ。PL/I の ON 単位は、
+   * 置いたブロックと、そこから動的に呼ばれたブロックの全体で有効になる
+   * （規定）。定義された位置（レキシカル）を先に見ると、兄弟の手続きから
+   * 呼ばれたときに、呼び元が後から置いた ON 単位より外側の古いものが勝つ。
    */
-  lookupOn(condition: string): Stmt | undefined {
+  lookupOn(condition: string): OnUnit | undefined {
     const own = this.onUnits.get(condition);
     if (own !== undefined) return own;
-    return this.parent?.lookupOn(condition) ?? this.caller?.lookupOn(condition);
+    return (this.caller ?? this.parent)?.lookupOn(condition);
   }
 
   lookupVar(name: string): Variable | undefined {
@@ -867,6 +894,20 @@ export class Interpreter {
       // 必ず括弧を伴うので、弾くと `a(2)` が値渡しに落ちる
       if (a.kind === "ref" && a.parens !== true) {
         const v = scope.lookupVar(a.name.toUpperCase());
+        // 構造体の名前だけを書いた引数は、構造体まるごとの参照渡し
+        if (v === undefined && a.subscripts.length === 0 && a.locator === undefined) {
+          const leaves = scope.lookupGroup(a.name.toUpperCase());
+          if (leaves !== undefined) {
+            const group = leaves.map((leaf) => {
+              const lv = scope.lookupVar(leaf);
+              if (lv === undefined) {
+                throw new RuntimeError(m`構造体 ${a.name} の項目 ${leaf} が見つかりません`, line);
+              }
+              return lv;
+            });
+            return { attr: { type: "implicit" }, cells: [], shared: true, group };
+          }
+        }
         if (v !== undefined) {
           const plain =
             a.subscripts.length === 0 &&
@@ -941,6 +982,12 @@ export class Interpreter {
       }
       const b: ArgBinding =
         isArgBinding(a) ? a : { attr: attrOfValue(a), cells: [a], shared: false };
+      if (b.group !== undefined) {
+        // 構造体は引数の宣言を実行するときに葉を対応させる（declareAll）
+        scope.structArgs ??= new Map();
+        scope.structArgs.set(p.toUpperCase(), b.group);
+        return;
+      }
       scope.vars.set(p.toUpperCase(), {
         attr: b.attr,
         // 共有する場合は配列そのものを渡す（書き戻しが呼び元へ届く）
@@ -959,6 +1006,14 @@ export class Interpreter {
       // 宣言はブロックに入る時点でまとめて実行する（規定 p.201）。
       // 引数の属性宣言も含むので、引数を束縛したあとに行う
       this.hoistDeclares(def.stmt.body, scope);
+      // 構造体を渡したのに、引数を構造体として宣言していない。
+      // 黙って通すと、引数の名前が暗黙宣言のスカラになって渡した値が消える
+      for (const name of scope.structArgs?.keys() ?? []) {
+        throw new RuntimeError(
+          m`引数 ${name} には構造体が渡されましたが、手続き ${def.stmt.name} の中で構造体として宣言されていません`,
+          def.stmt.line,
+        );
+      }
       this.execBlock(def.stmt.body, scope);
     } catch (e) {
       if (e instanceof ReturnSignal) return e.value;
@@ -1583,10 +1638,23 @@ export class Interpreter {
     const prev = this.inCondition;
     this.inCondition = true;
     try {
-      this.exec(unit, scope);
+      this.runOnUnit(unit, scope);
     } finally {
       this.inCondition = prev;
     }
+  }
+
+  /**
+   * ON 単位を実行する。
+   *
+   * 本体は **ON 文を置いたスコープ**の内側で動かす（名前はそこから解決する）。
+   * 動的な連鎖は条件を起こした側へつなぐ。ON 単位の中で起きた条件は、
+   * 起こした側から見て有効な ON 単位で受けるため。
+   */
+  private runOnUnit(unit: OnUnit, raisedIn: Scope): void {
+    const s = new Scope(unit.scope);
+    s.caller = raisedIn;
+    this.exec(unit.body, s);
   }
 
   /**
@@ -1619,7 +1687,7 @@ export class Interpreter {
           scope.lookupOn(c);
         if (!unit) continue;
         try {
-          this.exec(unit, scope);
+          this.runOnUnit(unit, scope);
         } catch (e) {
           // ON 単位の中で終了が起きた場合は、元の条件名で終える
           if (e instanceof FinishSignal) break;
@@ -1747,10 +1815,14 @@ export class Interpreter {
               });
               continue;
             }
-            // スカラを配列全体へ配る
+            // スカラを配列全体へ配る。配列そのものを差し替えないこと。
+            // 差し替えると、参照渡しの引数で共有している
+            // 呼び元の配列に書き戻らない（呼び先の `p = 0;` が消える）
             scalar ??= this.eval(s.value, scope, s.line);
             const one = scalar;
-            lhs.cells = lhs.cells.map(() => this.coerce(one, lhs.attr, s.line));
+            for (let i = 0; i < lhs.cells.length; i++) {
+              lhs.cells[i] = this.coerce(one, lhs.attr, s.line);
+            }
             continue;
           }
           scalar ??= this.eval(s.value, scope, s.line);
@@ -1867,7 +1939,7 @@ export class Interpreter {
           scope.onUnits.delete(key);
           return;
         }
-        scope.onUnits.set(key, s.body);
+        scope.onUnits.set(key, { body: s.body, scope });
         return;
       }
       case "open": {
@@ -1993,7 +2065,7 @@ export class Interpreter {
             const prev = this.inCondition;
             this.inCondition = true;
             try {
-              this.exec(unit, scope);
+              this.runOnUnit(unit, scope);
             } finally {
               this.inCondition = prev;
             }
@@ -2057,7 +2129,51 @@ export class Interpreter {
         }
       }
       scope.groups.set(upper, leaves);
+      const passed = scope.structArgs?.get(upper);
+      if (passed !== undefined) {
+        this.bindStructArg(upper, leaves, passed, scope, line);
+        scope.structArgs?.delete(upper);
+      }
     }
+  }
+
+  /**
+   * 構造体の引数の葉を、渡された構造体の葉に対応させる（参照渡し）。
+   *
+   * 対応は**宣言順**で、名前は問わない（引数と実引数の構造体は
+   * 同じ形でなければならない）。形が違えば断る。黙って先頭から詰めると、
+   * 項目が 1 つずれた宣言が誤りも出さずに別の項目を書き換える。
+   */
+  private bindStructArg(
+    name: string,
+    leaves: string[],
+    passed: Variable[],
+    scope: Scope,
+    line: number,
+  ): void {
+    if (leaves.length !== passed.length) {
+      throw new RuntimeError(
+        m`構造体の引数 ${name} の項目の数（${leaves.length}）が、渡された構造体（${passed.length}）と合いません`,
+        line,
+      );
+    }
+    leaves.forEach((leaf, i) => {
+      const mine = scope.vars.get(leaf)!;
+      const theirs = passed[i]!;
+      const sameDims =
+        (mine.dims ?? []).length === (theirs.dims ?? []).length &&
+        (mine.dims ?? []).every(
+          (d, k) => d.lo === theirs.dims?.[k]?.lo && d.hi === theirs.dims?.[k]?.hi,
+        );
+      if (!sameAttr(mine.attr, theirs.attr) || !sameDims) {
+        throw new RuntimeError(
+          m`構造体の引数 ${name} の ${i + 1} 番目の項目 ${leaf} の属性が、渡された構造体と合いません`,
+          line,
+        );
+      }
+      // 同じ記憶域を指す（呼び先の書き換えが呼び元へ戻る）
+      scope.vars.set(leaf, theirs);
+    });
   }
 
   private declare(itemIn: DeclItem, scope: Scope, line: number): void {
@@ -3039,8 +3155,17 @@ export class Interpreter {
       if (to === undefined || from === undefined) {
         throw new RuntimeError(m`構造体の項目 ${destKey} が見つかりません`, line);
       }
-      // 配列の葉は要素ごとに写す
-      to.cells = from.cells.map((c) => this.coerce(c, to.attr, line));
+      // 配列の葉は要素ごとに写す。配列そのものは差し替えない
+      // （引数で渡された構造体の葉は呼び元と記憶域を共有している）
+      if (to.cells.length !== from.cells.length) {
+        throw new RuntimeError(
+          m`構造体の項目 ${destKey} の要素数が合いません（${to.cells.length} 要素と ${from.cells.length} 要素）`,
+          line,
+        );
+      }
+      for (let k = 0; k < to.cells.length; k++) {
+        to.cells[k] = this.coerce(from.cells[k]!, to.attr, line);
+      }
     }
     return true;
   }

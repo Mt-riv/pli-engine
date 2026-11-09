@@ -51,6 +51,15 @@ describe("構造体全体の代入", () => {
     ).toMatch(/形が違います/);
   });
 
+  it("葉の配列の要素数が違えば断る", () => {
+    expect(
+      fails(`  dcl 1 a, 2 v(3) fixed bin(15);
+  dcl 1 b, 2 v(2) fixed bin(15);
+  a.v = 1;
+  b = a;`),
+    ).toMatch(/要素数が合いません/);
+  });
+
   it("構造体にスカラは代入できない", () => {
     expect(
       fails(`  dcl 1 a, 2 n char(3), 2 m fixed bin(15);
@@ -119,5 +128,108 @@ describe("未宣言の名前", () => {
   it("ふつうの未宣言のスカラは暗黙宣言のまま（PL/I の規定）", () => {
     // I〜N は FIXED BIN(15,0)、それ以外は FLOAT DEC(6)
     expect(out("  i = 3;\n  put list(i);")).toBe("3");
+  });
+});
+
+describe("構造体を引数に渡す", () => {
+  const GAME = `  dcl 1 game, 2 total fixed bin(31), 2 hist(5) fixed bin(31), 2 st, 3 n fixed bin(31);`;
+  const ADD = `add: proc(g, pts);
+  dcl 1 g, 2 total fixed bin(31), 2 hist(5) fixed bin(31), 2 st, 3 n fixed bin(31);
+  dcl pts fixed bin(31);
+  g.st.n = g.st.n + 1;
+  g.hist(g.st.n) = pts;
+  g.total = g.total + pts;
+end add;`;
+
+  it("参照渡しで、呼び先の書き換えが呼び元へ戻る", () => {
+    expect(
+      out(`${GAME}
+  game.total = 0; game.st.n = 0;
+  call add(game, 5);
+  call add(game, 7);
+  put list(game.total, game.st.n, game.hist(1), game.hist(2));
+${ADD}`),
+    ).toBe("12 2 5 7");
+  });
+
+  it("関数の引数にも渡せ、項目名が違っても宣言順で結び付く", () => {
+    expect(
+      out(`${GAME}
+  game.total = 3; game.st.n = 4;
+  put list(score(game));
+score: proc(x) returns(fixed bin(31));
+  dcl 1 x, 2 t fixed bin(31), 2 h(5) fixed bin(31), 2 s, 3 c fixed bin(31);
+  return(x.t * 10 + x.s.c);
+end score;`),
+    ).toBe("34");
+  });
+
+  it("受け取った構造体をさらに別の手続きへ渡せる", () => {
+    expect(
+      out(`${GAME}
+  game.total = 0; game.st.n = 0;
+  call outer(game);
+  put list(game.total);
+outer: proc(g);
+  dcl 1 g, 2 total fixed bin(31), 2 hist(5) fixed bin(31), 2 st, 3 n fixed bin(31);
+  call add(g, 100);
+end outer;
+${ADD}`),
+    ).toBe("100");
+  });
+
+  it("形が違えば断る（黙って詰めると別の項目を書き換える）", () => {
+    expect(
+      fails(`${GAME}
+  call bad(game);
+bad: proc(g);
+  dcl 1 g, 2 total fixed bin(31), 2 hist(3) fixed bin(31), 2 st, 3 n fixed bin(31);
+end bad;`),
+    ).toMatch(/2 番目の項目 G\.HIST の属性が、渡された構造体と合いません/);
+    expect(
+      fails(`${GAME}
+  call bad(game);
+bad: proc(g);
+  dcl 1 g, 2 total fixed bin(31), 2 hist(5) fixed bin(31);
+end bad;`),
+    ).toMatch(/項目の数（2）が、渡された構造体（3）と合いません/);
+  });
+
+  it("受け取った構造体へ構造体を代入しても呼び元に戻る（配列の葉も）", () => {
+    // 葉の配列を作り直すと共有が切れ、呼び元の hist が元のまま残っていた
+    expect(
+      out(`${GAME}
+  game.total = 1; game.hist = 1; game.st.n = 1;
+  call reset(game);
+  put list(game.total, game.hist(1), game.hist(5), game.st.n);
+reset: proc(g);
+  dcl 1 g, 2 total fixed bin(31), 2 hist(5) fixed bin(31), 2 st, 3 n fixed bin(31);
+  dcl 1 zero, 2 t fixed bin(31) init(0), 2 h(5) fixed bin(31) init(0, 0, 0, 0, 0), 2 s, 3 c fixed bin(31) init(0);
+  g = zero;
+end reset;`),
+    ).toBe("0 0 0 0");
+  });
+
+  it("受け取った構造体の配列の葉にスカラを配っても呼び元に戻る", () => {
+    expect(
+      out(`${GAME}
+  game.hist = 3;
+  call clear(game);
+  put list(game.hist(1), game.hist(5));
+clear: proc(g);
+  dcl 1 g, 2 total fixed bin(31), 2 hist(5) fixed bin(31), 2 st, 3 n fixed bin(31);
+  g.hist = 0;
+end clear;`),
+    ).toBe("0 0");
+  });
+
+  it("構造体を渡したのに引数をスカラで宣言していれば断る", () => {
+    expect(
+      fails(`${GAME}
+  call bad(game);
+bad: proc(g);
+  dcl g fixed bin(31);
+end bad;`),
+    ).toMatch(/構造体として宣言されていません/);
   });
 });

@@ -1067,6 +1067,20 @@ end m;`;
     expect(out(src).replace(/\s+/g, " ").trim()).toBe("2 4 6");
   });
 
+  it("配列の引数にスカラを配っても呼び元に戻る（p = 0;）", () => {
+    // 配列そのものを作り直すと共有が切れ、呼び元の配列が元のまま残っていた
+    const src = `${prelude}  do i = 1 to 3; arr(i) = i; end;
+  call clear(arr);
+  put list(arr(1), arr(2), arr(3));
+  clear: proc(v);
+    dcl v(*) fixed bin(15);
+    v = 0;
+    v(2) = 9;
+  end clear;
+end m;`;
+    expect(out(src).replace(/\s+/g, " ").trim()).toBe("0 9 0");
+  });
+
   it("宣言した型が違えばダミー引数になる（呼び元は変わらない）", () => {
     const src = `${prelude}  a = 5;
   call conv(a);
@@ -1518,5 +1532,67 @@ end m;`;
   put list(f);
 end m;`;
     expect(run(src, { stdin: "5.\n" }).stdout.trim()).toMatch(/5\.00000E\+0000/);
+  });
+});
+
+describe("ON 単位の名前と、探す順番", () => {
+  /*
+   * ON 単位は ON 文のあるブロックの中の手続きとして扱われる。
+   * 本体の名前は ON 文の位置から解決し、条件を起こした手続きの位置からは解決しない。
+   * 例外の表明の代わりに「ON 単位と旗」を使うテスト（docs/test.md）がこれに依存する。
+   */
+  it("ON 単位の中の変数は、ON を置いた手続きのものを指す", () => {
+    const src = `m: proc options(main);
+  call q;
+q: proc;
+  dcl raised bit(1);
+  raised = '0'b;
+  on condition(bad) raised = '1'b;
+  call p;
+  put skip list(raised);
+end q;
+p: proc;
+  dcl raised bit(1);
+  raised = '0'b;
+  signal condition(bad);
+  put skip list(raised);
+end p;
+end m;`;
+    // p の raised は変わらず、q の raised が立つ
+    expect(out(src).split(/\s+/).filter(Boolean)).toEqual(["'0'B", "'1'B"]);
+  });
+
+  it("関数の中で起こした条件も、呼んだ側の旗を立てる", () => {
+    const src = `m: proc options(main);
+  call q;
+q: proc;
+  dcl raised bit(1);
+  dcl r fixed bin(31);
+  raised = '0'b;
+  on condition(bad) raised = '1'b;
+  r = f();
+  put skip list(raised, r);
+end q;
+f: proc returns(fixed bin(31));
+  signal condition(bad);
+  return(1);
+end f;
+end m;`;
+    expect(out(src).split(/\s+/).filter(Boolean)).toEqual(["'1'B", "1"]);
+  });
+
+  it("後から置いた呼び元の ON 単位が、外側の古い ON 単位より先に効く", () => {
+    const src = `m: proc options(main);
+  on condition(bad) put skip list('outer');
+  call q;
+q: proc;
+  on condition(bad) put skip list('caller');
+  call p;
+end q;
+p: proc;
+  signal condition(bad);
+end p;
+end m;`;
+    expect(out(src).trim()).toBe("caller");
   });
 });
